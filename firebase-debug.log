@@ -1,0 +1,22 @@
+[debug] [2026-07-08T09:39:07.848Z] ----------------------------------------------------------------------
+[debug] [2026-07-08T09:39:07.850Z] Command:       C:\Program Files\nodejs\node.exe C:\Users\thees\AppData\Roaming\npm\node_modules\firebase-tools\lib\bin\firebase.js apps:list --project focusdesk-95385
+[debug] [2026-07-08T09:39:07.851Z] CLI Version:   15.10.1
+[debug] [2026-07-08T09:39:07.851Z] Platform:      win32
+[debug] [2026-07-08T09:39:07.851Z] Node Version:  v22.22.0
+[debug] [2026-07-08T09:39:07.851Z] Time:          Wed Jul 08 2026 15:09:07 GMT+0530 (India Standard Time)
+[debug] [2026-07-08T09:39:07.851Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2026-07-08T09:39:07.883Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2026-07-08T09:39:07.883Z] > authorizing via signed-in user (garvc0029@gmail.com)
+[debug] [2026-07-08T09:39:07.886Z] Checked if tokens are valid: true, expires at: 1783505215752
+[debug] [2026-07-08T09:39:07.886Z] Checked if tokens are valid: true, expires at: 1783505215752
+[debug] [2026-07-08T09:39:07.887Z] >>> [apiv2][query] GET https://firebase.googleapis.com/v1beta1/projects/focusdesk-95385:searchApps pageSize=100
+[debug] [2026-07-08T09:39:10.184Z] <<< [apiv2][status] GET https://firebase.googleapis.com/v1beta1/projects/focusdesk-95385:searchApps 403
+[debug] [2026-07-08T09:39:10.184Z] <<< [apiv2][body] GET https://firebase.googleapis.com/v1beta1/projects/focusdesk-95385:searchApps {"error":{"code":403,"message":"The caller does not have permission","status":"PERMISSION_DENIED"}}
+[debug] [2026-07-08T09:39:10.184Z] Request to https://firebase.googleapis.com/v1beta1/projects/focusdesk-95385:searchApps?pageSize=100 had HTTP Error: 403, The caller does not have permission
+[debug] [2026-07-08T09:39:10.661Z] FirebaseError: Request to https://firebase.googleapis.com/v1beta1/projects/focusdesk-95385:searchApps?pageSize=100 had HTTP Error: 403, The caller does not have permission
+    at responseToError (C:\Users\thees\AppData\Roaming\npm\node_modules\firebase-tools\lib\responseToError.js:53:12)
+    at RetryOperation._fn (C:\Users\thees\AppData\Roaming\npm\node_modules\firebase-tools\lib\apiv2.js:333:77)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+[error] 
+[error] Error: Failed to list Firebase apps. See firebase-debug.log for more info.

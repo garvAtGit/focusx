@@ -1,0 +1,523 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                          String             @id @default(uuid())
+  authId                      String?            @unique
+  role                        Role               @default(STUDENT)
+  email                       String?            @unique
+  name                        String
+  phone                       String?            @unique
+  area                        String?
+  uniqueId                    String?            @unique
+  createdAt                   DateTime           @default(now())
+  updatedAt                   DateTime           @updatedAt
+  password                    String?
+  address                     String?
+  dob                         DateTime?
+  gender                      String?
+  profilePhotoUrl             String?
+  locality                    String?
+  organization                String?
+  qualification               String?
+  digilockerVerified          Boolean            @default(false)
+  employerLibraryId           String?
+  consecutiveFailures         Int                @default(0)
+  failureReasons              String?
+  rfidTag                     String?            @unique
+  kycAadhaarDob               DateTime?
+  kycAadhaarDocumentConsent   String?
+  kycAadhaarDocumentRequested String?
+  kycAadhaarGender            String?
+  kycAadhaarMobile            String?
+  kycAadhaarName              String?
+  kycAadhaarProfilePhotoUrl   String?
+  kycAadhaarReferenceId       String?
+  kycAadhaarStatus            String?
+  kycAadhaarVerificationId    String?
+  kycEAadhaar                 String?
+  crmNote                     String?
+  isExpiredLead               Boolean            @default(false)
+  referralCode                String?            @unique
+  referredById                String?
+  walletBalance               Int                @default(0)
+  currentStreak               Int                @default(0)
+  lastActiveDate              DateTime?
+  bookings                    Booking[]
+  bookingIntents              BookingIntent[]
+  canvasState                 CanvasState?
+  checkins                    CheckinLog[]       @relation("StudentCheckins")
+  entryLogs                   EntryLog[]
+  libraries                   Library[]          @relation("LibrarianLibraries")
+  notifications               Notification[]
+  platformFeedbacks           PlatformFeedback[] @relation("SubmitterPlatformFeedback")
+  queries                     Query[]
+  employerLibrary             Library?           @relation("LibraryStaff", fields: [employerLibraryId], references: [id])
+  referredBy                  User?              @relation("UserReferrals", fields: [referredById], references: [id])
+  referredUsers               User[]             @relation("UserReferrals")
+
+  @@index([name])
+  @@index([phone])
+}
+
+model Library {
+  id                String             @id @default(uuid())
+  librarianId       String
+  name              String
+  managerName       String?
+  managerPhone      String?
+  address           String
+  metroStation      String?
+  googleMapsUrl     String?
+  facilities        String[]
+  paymentAccountId  String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  city              String?
+  closingTime       String?
+  description       String?
+  district          String?
+  locality          String?
+  metroDistance     Float?
+  openingTime       String?
+  photos            String[]
+  pinCode           String?
+  seatsAvailable    Int?
+  state             String?
+  whatsapp          String?
+  kycStatus         KycStatus          @default(PENDING)
+  passbookPhoto     String?
+  compactSeatMap    Boolean            @default(false)
+  seatNaming        SeatNaming         @default(ALPHANUMERIC)
+  adminNotes        String?
+  bookings          Booking[]
+  bookingIntents    BookingIntent[]
+  checkinLogs       CheckinLog[]
+  entryLogs         EntryLog[]
+  expenses          Expense[]
+  inquiries         Inquiry[]
+  librarian         User               @relation("LibrarianLibraries", fields: [librarianId], references: [id])
+  plans             Plan[]
+  queries           Query[]
+  relays            Relay[]
+  seats             Seat[]
+  standaloneLockers StandaloneLocker[]
+  staff             User[]             @relation("LibraryStaff")
+
+  @@index([librarianId])
+  @@index([kycStatus])
+}
+
+model Seat {
+  id                String          @id @default(uuid())
+  libraryId         String
+  name              String
+  type              SeatType        @default(NORMAL)
+  gridX             Int
+  gridY             Int
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  hasLocker         Boolean         @default(false)
+  syncPremiumOffers Boolean         @default(true)
+  lockerPriceDaily  Float?
+  premiumPriceDaily Float?
+  bookings          Booking[]
+  bookingIntents    BookingIntent[]
+  library           Library         @relation(fields: [libraryId], references: [id])
+
+  @@index([libraryId])
+}
+
+model Plan {
+  id             String          @id @default(uuid())
+  libraryId      String
+  name           String
+  type           PlanType
+  durationHours  Int?
+  validityDays   Int
+  price          Float
+  discount       Float?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  isActive       Boolean         @default(true)
+  bookings       Booking[]
+  bookingIntents BookingIntent[]
+  library        Library         @relation(fields: [libraryId], references: [id])
+
+  @@index([libraryId])
+}
+
+model StandaloneLocker {
+  id             String          @id @default(uuid())
+  libraryId      String
+  name           String
+  price          Float
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  bookings       Booking[]
+  bookingIntents BookingIntent[]
+  library        Library         @relation(fields: [libraryId], references: [id])
+
+  @@index([libraryId])
+}
+
+model Booking {
+  id                    String            @id @default(uuid())
+  studentId             String
+  libraryId             String
+  seatId                String?
+  planId                String
+  startTime             DateTime
+  endTime               DateTime
+  status                BookingStatus     @default(PENDING_PAYMENT)
+  paymentRef            String?           @unique
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  hasLocker             Boolean           @default(false)
+  standaloneLockerId    String?
+  isPaused              Boolean           @default(false)
+  pausedAt              DateTime?
+  totalPausedDays       Int               @default(0)
+  revokedReason         String?
+  amountDuePaise        Int?
+  amountPaidCashPaise   Int?
+  amountPaidOnlinePaise Int?
+  library               Library           @relation(fields: [libraryId], references: [id])
+  plan                  Plan              @relation(fields: [planId], references: [id])
+  seat                  Seat?             @relation(fields: [seatId], references: [id])
+  standaloneLocker      StandaloneLocker? @relation(fields: [standaloneLockerId], references: [id])
+  student               User              @relation(fields: [studentId], references: [id])
+  bookingIntent         BookingIntent?
+  refundTasks           RefundTask[]
+
+  @@index([libraryId, status])
+  @@index([libraryId, status, endTime])
+  @@index([libraryId, studentId])
+  @@index([libraryId, studentId, createdAt])
+  @@index([libraryId, startTime])
+  @@index([libraryId, status, isPaused])
+  @@index([studentId])
+  @@index([studentId, status])
+  @@index([seatId])
+  @@index([standaloneLockerId])
+  @@index([endTime])
+}
+
+model BookingIntent {
+  id                  String              @id @default(uuid())
+  referenceId         String              @unique
+  idempotencyKey      String?             @unique
+  source              BookingIntentSource
+  status              BookingIntentStatus @default(HOLDING)
+  studentId           String
+  libraryId           String
+  planId              String
+  seatId              String?
+  standaloneLockerId  String?
+  hasLocker           Boolean             @default(false)
+  expectedAmountPaise Int
+  currency            String              @default("INR")
+  startsAt            DateTime
+  endsAt              DateTime
+  holdExpiresAt       DateTime?
+  providerLinkId      String?             @unique
+  providerShortUrl    String?
+  providerPaymentId   String?             @unique
+  providerPaidAt      DateTime?
+  bookingId           String?             @unique
+  failureReason       String?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  booking             Booking?            @relation(fields: [bookingId], references: [id])
+  library             Library             @relation(fields: [libraryId], references: [id])
+  plan                Plan                @relation(fields: [planId], references: [id])
+  seat                Seat?               @relation(fields: [seatId], references: [id])
+  standaloneLocker    StandaloneLocker?   @relation(fields: [standaloneLockerId], references: [id])
+  student             User                @relation(fields: [studentId], references: [id])
+  refundTasks         RefundTask[]
+  leases              ResourceLease[]
+
+  @@index([libraryId, status])
+  @@index([studentId, createdAt])
+  @@index([holdExpiresAt])
+}
+
+model ResourceLease {
+  resourceType LeaseResourceType
+  resourceId   String
+  intentId     String
+  libraryId    String
+  studentId    String
+  expiresAt    DateTime
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  intent       BookingIntent     @relation(fields: [intentId], references: [id], onDelete: Cascade)
+
+  @@id([resourceType, resourceId])
+  @@index([intentId])
+  @@index([libraryId, expiresAt])
+}
+
+model RefundTask {
+  id               String           @id @default(uuid())
+  paymentId        String           @unique
+  amountPaise      Int
+  currency         String           @default("INR")
+  reason           String
+  status           RefundTaskStatus @default(PENDING)
+  attempts         Int              @default(0)
+  nextAttemptAt    DateTime         @default(now())
+  lockedAt         DateTime?
+  lastError        String?
+  providerRefundId String?          @unique
+  completedAt      DateTime?
+  intentId         String?
+  bookingId        String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  booking          Booking?         @relation(fields: [bookingId], references: [id])
+  intent           BookingIntent?   @relation(fields: [intentId], references: [id])
+
+  @@index([status, nextAttemptAt])
+}
+
+model ProcessedWebhookEvent {
+  id          String   @id
+  eventType   String
+  payloadHash String
+  processedAt DateTime @default(now())
+}
+
+model Query {
+  id        String    @id @default(uuid())
+  type      QueryType
+  content   String
+  rating    Int?
+  studentId String
+  libraryId String
+  createdAt DateTime  @default(now())
+  library   Library   @relation(fields: [libraryId], references: [id])
+  student   User      @relation(fields: [studentId], references: [id])
+
+  @@index([libraryId])
+  @@index([studentId])
+}
+
+model Relay {
+  id         String       @id @default(uuid())
+  libraryId  String
+  macAddress String?
+  nfcTagId   String       @unique
+  status     String       @default("ONLINE")
+  lastSync   DateTime     @default(now())
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  logs       CheckinLog[]
+  library    Library      @relation(fields: [libraryId], references: [id])
+
+  @@index([libraryId])
+}
+
+model CheckinLog {
+  id            String        @id @default(uuid())
+  studentId     String
+  libraryId     String
+  relayId       String?
+  status        CheckinStatus
+  timestamp     DateTime      @default(now())
+  isOfflineSync Boolean       @default(false)
+  createdAt     DateTime      @default(now())
+  library       Library       @relation(fields: [libraryId], references: [id])
+  relay         Relay?        @relation(fields: [relayId], references: [id])
+  student       User          @relation("StudentCheckins", fields: [studentId], references: [id])
+
+  @@index([libraryId, timestamp])
+  @@index([studentId, libraryId])
+}
+
+model PlatformFeedback {
+  id           String   @id @default(uuid())
+  targetType   String
+  libraryId    String?
+  submitterId  String
+  studentName  String?
+  studentPhone String?
+  content      String
+  createdAt    DateTime @default(now())
+  submitter    User     @relation("SubmitterPlatformFeedback", fields: [submitterId], references: [id])
+
+  @@index([targetType])
+  @@index([submitterId])
+}
+
+model Expense {
+  id        String   @id @default(uuid())
+  libraryId String
+  name      String
+  amount    Float
+  date      DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  library   Library  @relation(fields: [libraryId], references: [id])
+
+  @@index([libraryId])
+}
+
+model Inquiry {
+  id        String        @id @default(uuid())
+  libraryId String
+  name      String
+  phone     String
+  message   String?
+  status    InquiryStatus @default(NEW)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  library   Library       @relation(fields: [libraryId], references: [id])
+
+  @@index([libraryId])
+  @@index([status])
+}
+
+model EntryLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  libraryId String
+  doorId    String?
+  timestamp DateTime
+  createdAt DateTime @default(now())
+  reason    String?
+  status    String   @default("SUCCESS")
+  library   Library  @relation(fields: [libraryId], references: [id])
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([libraryId])
+  @@index([libraryId, timestamp])
+  @@index([timestamp])
+}
+
+model Notification {
+  id          String   @id @default(uuid())
+  studentId   String
+  title       String
+  message     String
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  actionLabel String?
+  actionUrl   String?
+  type        String?
+  student     User     @relation(fields: [studentId], references: [id])
+
+  @@index([studentId])
+}
+
+model CanvasState {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  widgets   Json     @default("[]")
+  theme     String   @default("pastel-pink")
+  font      String   @default("inter")
+  bgUrl     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+enum Role {
+  STUDENT
+  LIBRARIAN
+  ADMIN
+  RECEPTIONIST
+}
+
+enum KycStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum SeatType {
+  RESERVED
+  NORMAL
+  NON_RESERVABLE
+  PREMIUM
+}
+
+enum SeatNaming {
+  ALPHANUMERIC
+  NUMERIC
+}
+
+enum PlanType {
+  FIXED
+  FLEXIBLE
+}
+
+enum PlanSeatCategory {
+  GENERAL
+  PREMIUM
+}
+
+enum BookingStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+enum BookingIntentSource {
+  RAZORPAY
+  RECEPTION
+  MANUAL
+  HARDWARE
+  RENEWAL
+}
+
+enum BookingIntentStatus {
+  HOLDING
+  AWAITING_PAYMENT
+  AWAITING_MANUAL_PAYMENT
+  CONFIRMED
+  EXPIRED
+  CANCELLED
+  FAILED
+  REFUND_PENDING
+  REFUNDED
+}
+
+enum LeaseResourceType {
+  SEAT
+  STANDALONE_LOCKER
+}
+
+enum RefundTaskStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum QueryType {
+  FEEDBACK
+  COMPLAINT
+  REVIEW
+}
+
+enum CheckinStatus {
+  CHECK_IN
+  CHECK_OUT
+}
+
+enum InquiryStatus {
+  NEW
+  CONTACTED
+  CONVERTED
+  CLOSED
+}

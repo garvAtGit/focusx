@@ -1,0 +1,32 @@
+{
+  "background_color": "#2960f9",
+  "description": "Find and book premium study libraries. Compare seats, amenities, ratings on FocusX study space platform.",
+  "dir": "ltr",
+  "display": "standalone",
+  "name": "FocusX",
+  "orientation": "any",
+  "scope": "/",
+  "short_name": "FocusX",
+  "start_url": "/",
+  "theme_color": "#2960f9",
+  "icons": [
+    {
+      "src": "/icon-192x192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512x512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://ik.imagekit.io/focusdesk/logo.png",
+      "type": "image/jpeg",
+      "sizes": "4089x4089"
+    }
+  ],
+  "id": "focusx"
+}

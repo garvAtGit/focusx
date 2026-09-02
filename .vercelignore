@@ -1,0 +1,32 @@
+# Keep secret-bearing local tooling and scratch work out of Vercel deployments.
+local-scripts/
+scratch/
+preserved_before_testing/
+
+# One-off root scripts that touch the DB or hold credentials.
+onboard-kripa-seats.ts
+seed-kripa.ts
+seed-kripa.mjs
+seed-gyan.ts
+seed-students.ts
+seed.ts
+seed-plans.ts
+fix-dates.js
+fix-phones.ts
+fix_phones.ts
+check_lib.ts
+scratch.ts
+scratch-seed.js
+query.mjs
+refactor.js
+inspect.json
+compile_out.txt
+
+# Firmware / hardware
+arduino-cli*
+esp32_qr_access/
+esp32_qr_access_changed/
+nodemcu_qr_access/
+
+# Never ship key material
+*.pem
