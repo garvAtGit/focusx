@@ -68,13 +68,28 @@ export async function POST(request: Request) {
     if (validEntries.length > 0) {
       await prisma.checkinLog.createMany({ data: validEntries, skipDuplicates: true });
       
-      // Check duration for users checking out
+      // Fire checkout rules for checking-out students
       const checkoutEntries = validEntries.filter(e => e.status === "CHECK_OUT");
       if (checkoutEntries.length > 0) {
         const { checkDurationAndNotify } = require("@/lib/notification-utils");
-        // Use Promise.allSettled to not block response
         Promise.allSettled(
           checkoutEntries.map(e => checkDurationAndNotify(e.studentId, e.libraryId))
+        ).catch(console.error);
+      }
+
+      // Fire checkin rules for checking-in students
+      const checkinEntries = validEntries.filter(e => e.status === "CHECK_IN");
+      if (checkinEntries.length > 0) {
+        const { fireRules } = require("@/lib/rule-engine");
+        Promise.allSettled(
+          checkinEntries.map(e =>
+            fireRules({
+              trigger: 'CHECKIN',
+              libraryId: e.libraryId,
+              studentId: e.studentId,
+              context: {},
+            })
+          )
         ).catch(console.error);
       }
     }
