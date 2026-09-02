@@ -53,6 +53,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { AssignRFIDModal } from "@/components/AssignRFIDModal"
 import { StudentProfileModal } from "@/components/StudentProfileModal"
 import { AttendanceCalendar } from "@/components/AttendanceCalendar"
+import { ManualNotifyModal } from "@/components/ManualNotifyModal"
+import { AutoActionsLog } from "@/components/AutoActionsLog"
 
 type BookingWithDetails = Prisma.BookingGetPayload<{
   include: {
@@ -1176,6 +1178,15 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                                     View Profile
                                   </DropdownMenuItem>
 
+                                  <DropdownMenuItem asChild>
+                                    <div className="px-2 py-1">
+                                      <ManualNotifyModal
+                                        studentId={booking.student.id}
+                                        studentName={booking.student.name}
+                                      />
+                                    </div>
+                                  </DropdownMenuItem>
+
                                   <DropdownMenuItem onClick={() => {
                                       setSeatChangeBookingId(booking.id);
                                       setSelectedNewSeatId(booking.seatId || "NONE");
@@ -1287,6 +1298,14 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                           </div>
                         )}
 
+                        {/* Auto Actions Log — list view */}
+                        <div className="px-6 py-3 border-t border-slate-100 bg-slate-50/20">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">
+                            Auto Actions
+                          </p>
+                          <AutoActionsLog studentId={booking.student.id} />
+                        </div>
+
                       </motion.div>
                     );
                   })}
@@ -1365,6 +1384,15 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                                 
                                 <DropdownMenuItem onClick={() => setProfileStudentId(booking.student.id)} className="cursor-pointer px-2 py-2 text-sm font-semibold rounded-lg hover:bg-slate-100 text-slate-700 focus:bg-slate-100 focus:text-slate-900">
                                   View Profile
+                                </DropdownMenuItem>
+
+                                <DropdownMenuItem asChild>
+                                  <div className="px-2 py-1">
+                                    <ManualNotifyModal
+                                      studentId={booking.student.id}
+                                      studentName={booking.student.name}
+                                    />
+                                  </div>
                                 </DropdownMenuItem>
 
                                 <DropdownMenuItem onClick={() => {
@@ -1514,6 +1542,14 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                                 />
                               </div>
                             )}
+
+                            {/* Auto Actions Log */}
+                            <div className="mt-3 pt-3 border-t border-slate-100">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">
+                                Auto Actions
+                              </p>
+                              <AutoActionsLog studentId={booking.student.id} />
+                            </div>
                             
                           </div>
                         </div>

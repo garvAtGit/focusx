@@ -1097,8 +1097,9 @@ export { createManualConfirmedBookingInTransaction }
 export async function createManualConfirmedBooking(
   input: ManualBookingInput,
 ): Promise<Booking> {
+  let booking: Booking
   try {
-    return await serializable((tx) =>
+    booking = await serializable((tx) =>
       createManualConfirmedBookingInTransaction(tx, input))
   } catch (error) {
     if (isUniqueConstraintFailure(error)) {
@@ -1112,6 +1113,21 @@ export async function createManualConfirmedBooking(
     }
     throw error
   }
+
+  // Fire BOOKING_CREATED rules non-blocking (don't hold up the caller)
+  try {
+    const { fireRules } = await import("@/lib/rule-engine")
+    fireRules({
+      trigger: "BOOKING_CREATED",
+      libraryId: booking.libraryId,
+      studentId: booking.studentId,
+      context: {},
+    }).catch((e) => console.error("[RuleEngine] BOOKING_CREATED failed:", e))
+  } catch {
+    // Non-fatal: rule engine unavailable
+  }
+
+  return booking
 }
 
 async function findIdempotentReceptionBooking(

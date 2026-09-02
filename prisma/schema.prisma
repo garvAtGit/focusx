@@ -105,6 +105,7 @@ model Library {
   plans             Plan[]
   queries           Query[]
   relays            Relay[]
+  rules             LibraryRule[]
   seats             Seat[]
   standaloneLockers StandaloneLocker[]
   staff             User[]             @relation("LibraryStaff")
@@ -430,6 +431,48 @@ model CanvasState {
   @@index([userId])
 }
 
+// ---------------------------------------------------------------------------
+// Workflow Automation — LibraryRule + RuleExecution
+// ---------------------------------------------------------------------------
+
+model LibraryRule {
+  id                String            @id @default(uuid())
+  libraryId         String
+  name              String
+  isActive          Boolean           @default(true)
+  trigger           RuleTrigger
+  conditionField    RuleConditionField
+  conditionOperator RuleOperator
+  conditionValue    Float
+  action            RuleAction
+  actionMessage     String?           // Optional template with {name}, {overstay_hours} etc.
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  library           Library           @relation(fields: [libraryId], references: [id])
+  executions        RuleExecution[]
+
+  @@index([libraryId])
+  @@index([libraryId, isActive, trigger])
+}
+
+model RuleExecution {
+  id          String      @id @default(uuid())
+  ruleId      String
+  libraryId   String
+  studentId   String
+  trigger     RuleTrigger
+  action      RuleAction
+  status      RuleExecutionStatus @default(SUCCESS)
+  errorMessage String?
+  executedAt  DateTime    @default(now())
+  rule        LibraryRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([ruleId])
+  @@index([libraryId, executedAt])
+  @@index([studentId, executedAt])
+  @@index([ruleId, studentId, executedAt]) // for cooldown checks
+}
+
 enum Role {
   STUDENT
   LIBRARIAN
@@ -520,4 +563,45 @@ enum InquiryStatus {
   CONTACTED
   CONVERTED
   CLOSED
+}
+
+enum RuleTrigger {
+  OVERSTAY
+  BOOKING_EXPIRING
+  ABSENT
+  PAYMENT_DUE
+  CHECKIN
+  CHECKOUT
+  BOOKING_CREATED
+}
+
+enum RuleConditionField {
+  overstay_hours
+  days_left
+  absence_days
+  amount_due
+  session_count
+}
+
+enum RuleOperator {
+  gt
+  lt
+  gte
+  lte
+  eq
+}
+
+enum RuleAction {
+  NOTIFY_STUDENT
+  NOTIFY_LIBRARIAN
+  REVOKE_BOOKING
+  ADD_CRM_NOTE
+  FLAG_FOR_REVIEW
+  MARK_EXPIRED_LEAD
+}
+
+enum RuleExecutionStatus {
+  SUCCESS
+  FAILED
+  SKIPPED
 }

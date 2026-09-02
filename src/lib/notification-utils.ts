@@ -1,5 +1,11 @@
 import prisma from "@/lib/prisma";
+import { fireRules } from "@/lib/rule-engine";
 
+/**
+ * Called after a student checks out (relay sync or direct checkin route).
+ * Calculates today's session duration and fires OVERSTAY rules if applicable.
+ * Falls back to the old hardcoded notification when no rules are configured.
+ */
 export async function checkDurationAndNotify(studentId: string, libraryId: string) {
   try {
     const startOfDay = new Date();
@@ -19,13 +25,9 @@ export async function checkDurationAndNotify(studentId: string, libraryId: strin
 
     if (!activeBooking || !activeBooking.plan.durationHours) return;
 
-    // Calculate today's duration
+    // Calculate today's duration from checkin + entry logs
     const todayLogs = await prisma.checkinLog.findMany({
-      where: {
-        studentId,
-        libraryId,
-        timestamp: { gte: startOfDay }
-      },
+      where: { studentId, libraryId, timestamp: { gte: startOfDay } },
       orderBy: { timestamp: 'asc' }
     });
 
@@ -64,35 +66,54 @@ export async function checkDurationAndNotify(studentId: string, libraryId: strin
       }
     }
 
-    // If still checked in, add duration until now
     if (currentIn) {
       totalDurationMs += (new Date().getTime() - currentIn.getTime());
     }
 
     const durationHrs = totalDurationMs / (1000 * 60 * 60);
+    const overstayHrs = Math.max(0, durationHrs - activeBooking.plan.durationHours);
 
-    if (durationHrs > activeBooking.plan.durationHours) {
-      // Check if we already notified them today
-      const today = new Date();
-      today.setHours(0,0,0,0);
-      const existingNotif = await prisma.notification.findFirst({
-        where: {
-          studentId,
-          title: { startsWith: "Plan Limit Exceeded" },
-          createdAt: { gte: today }
-        }
+    if (overstayHrs > 0) {
+      // Try to fire configured OVERSTAY rules first
+      const fired = await fireRules({
+        trigger: 'OVERSTAY',
+        libraryId,
+        studentId,
+        context: { overstay_hours: overstayHrs },
       });
 
-      if (!existingNotif) {
-        await prisma.notification.create({
-          data: {
+      // Fallback: if no rules are configured, use the old hardcoded notification
+      if (fired === 0) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const existingNotif = await prisma.notification.findFirst({
+          where: {
             studentId,
-            title: "Plan Limit Exceeded ⚠️",
-            message: `You've exceeded the ${activeBooking.plan.durationHours} hr limit of your plan today. [Upgrade Plan](/student/dashboard)`,
+            title: { startsWith: "Plan Limit Exceeded" },
+            createdAt: { gte: today }
           }
         });
+
+        if (!existingNotif) {
+          await prisma.notification.create({
+            data: {
+              studentId,
+              title: "Plan Limit Exceeded ⚠️",
+              message: `You've exceeded the ${activeBooking.plan.durationHours} hr limit of your plan today. [Upgrade Plan](/student/dashboard)`,
+            }
+          });
+        }
       }
     }
+
+    // Also fire CHECKOUT rules regardless of overstay
+    await fireRules({
+      trigger: 'CHECKOUT',
+      libraryId,
+      studentId,
+      context: { overstay_hours: overstayHrs, session_count: todayLogs.filter(l => l.status === 'CHECK_IN').length },
+    });
+
   } catch (error) {
     console.error("Error in checkDurationAndNotify:", error);
   }
