@@ -12,6 +12,7 @@ interface ExtendPlanModalProps {
   seatId: string | null;
   standaloneLockerId: string | null;
   studentId: string;
+  bookingId?: string | null;
 }
 
 export default function ExtendPlanModal({ 
@@ -19,7 +20,8 @@ export default function ExtendPlanModal({
   planId, 
   seatId, 
   standaloneLockerId, 
-  studentId 
+  studentId,
+  bookingId,
 }: ExtendPlanModalProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [step, setStep] = useState<"CHOICE" | "ASK_LOCKER" | "PAYMENT_METHOD">("CHOICE");
@@ -74,7 +76,12 @@ export default function ExtendPlanModal({
             seatId: draft.seatId,
             planId: draft.planId,
             hasLocker: draft.attachedLockerSelected,
-            standaloneLockerId: draft.standaloneLockerId
+            standaloneLockerId: draft.standaloneLockerId,
+            // Must send operation + sourceBookingId so the server uses RENEW semantics:
+            // - excludes the student's own active booking from conflict detection
+            // - allows the new plan to chain from the existing plan's endTime
+            operation: 'RENEW',
+            sourceBookingId: bookingId ?? null,
           })
         });
         const data = await res.json();
@@ -105,7 +112,9 @@ export default function ExtendPlanModal({
           planId: draft.planId,
           seatId: draft.seatId,
           hasLocker: draft.attachedLockerSelected,
-          standaloneLockerId: draft.standaloneLockerId
+          standaloneLockerId: draft.standaloneLockerId,
+          operation: 'RENEW',
+          sourceBookingId: bookingId ?? null,
         })
       });
       const data = await orderRes.json();
