@@ -66,13 +66,17 @@ export async function GET(req: NextRequest) {
     },
   })
   if (!intent || (intent.providerLinkId && intent.providerLinkId !== linkId)) {
+    // referenceId exists but intent doesn't match — tampered callback
     return NextResponse.redirect(`${appUrl}/?payment=invalid`, { status: 303 })
   }
 
   if (linkStatus !== "paid") {
-    return NextResponse.redirect(`${appUrl}/?payment=${encodeURIComponent(linkStatus)}`, {
-      status: 303,
-    })
+    // Payment was cancelled or failed — redirect to the status page so the
+    // student can see what happened instead of landing on the home page.
+    return NextResponse.redirect(
+      `${appUrl}/student/payment/${encodeURIComponent(intent.referenceId)}`,
+      { status: 303 },
+    )
   }
 
   return NextResponse.redirect(

@@ -100,7 +100,10 @@ export async function loadBookingFacts(
       where: {
         studentId: draft.studentId,
         libraryId,
-        status: 'CONFIRMED'
+        status: 'CONFIRMED',
+        // Only consider bookings that are still active — past bookings must not
+        // be used as the chain base, or new plans would start in the past.
+        endTime: { gt: authoritativeCurrentTime },
       },
       orderBy: { endTime: 'desc' },
       select: { startTime: true, endTime: true }

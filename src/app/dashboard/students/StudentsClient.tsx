@@ -2095,11 +2095,15 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
             <label className="text-sm font-medium text-foreground block">Start Date (Optional)</label>
             <Input 
               type="date" 
-              value={renewStartDate ? `${renewStartDate.getFullYear()}-${String(renewStartDate.getMonth() + 1).padStart(2, '0')}-${String(renewStartDate.getDate()).padStart(2, '0')}` : ''}
+              value={renewStartDate ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(renewStartDate) : ''}
               onChange={(e) => {
                 if (e.target.value) {
-                  const [y, m, d] = e.target.value.split('-').map(Number);
-                  setRenewStartDate(new Date(y, m - 1, d));
+                  // Parse the date string as IST midnight (UTC+05:30) so that
+                  // the resulting UTC timestamp always lands on the correct
+                  // calendar day when the server reads it.
+                  // new Date(y, m-1, d) would use the browser's local timezone
+                  // and shift the date one day back for IST (+05:30) users.
+                  setRenewStartDate(new Date(`${e.target.value}T00:00:00+05:30`));
                 } else {
                   setRenewStartDate(undefined);
                 }

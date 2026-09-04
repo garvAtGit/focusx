@@ -420,8 +420,8 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
         (item) => item.id === selectedStandaloneLockerId,
       );
       if (locker) {
-        // Prorate standalone lockers based on 28-day month since they weren't migrated
-        lockerCost = Math.round((locker.price / 30) * selectedPlan.validityDays);
+        // Prorate standalone lockers based on 28-day month (matches server pricing-policy.ts)
+        lockerCost = Math.round((locker.price / 28) * selectedPlan.validityDays);
       }
     }
     
@@ -440,12 +440,16 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
 
   let startDate = new Date();
   if (dynamicState.currentPlanEndDate && !upgradeBookingId) {
-    startDate = new Date(dynamicState.currentPlanEndDate);
+    // currentPlanEndDate is an ISO UTC timestamp (the booking's endTime stored in DB as UTC).
+    // The server bookingWindow chains the new plan to start 1ms after endTime, so the
+    // display "Valid From" date should show the day after the current plan ends in IST.
+    const planEnd = new Date(dynamicState.currentPlanEndDate);
+    startDate = new Date(planEnd.getTime() + 1); // 1ms after current plan ends (mirrors bookingWindow logic)
   }
-  const endDate = new Date(startDate);
-  if (selectedPlan) {
-    endDate.setDate(endDate.getDate() + selectedPlan.validityDays - 1);
-  }
+  // Compute endDate by adding validityDays in UTC milliseconds to avoid DST/timezone drift.
+  const endDate = selectedPlan
+    ? new Date(startDate.getTime() + (selectedPlan.validityDays - 1) * 24 * 60 * 60 * 1000)
+    : new Date(startDate);
 
   const executeCheckout = async (idToken?: string, overrideMode?: "ONLINE" | "RECEPTION") => {
     if (!selectedPlan) {
@@ -488,7 +492,11 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
       libraryId: library.id,
       seatId: checkoutSeatId,
       planId: selectedPlan.id,
-      hasLocker: seatHasMandatoryLocker,
+      // hasLocker maps to attachedLockerSelected on the server. Send true only
+      // when the selected seat actually has a locker — never for flexible plans
+      // (which have no seat). This ensures the pricing engine charges the locker
+      // add-on correctly and does not prompt NEEDS_INPUT for the tri-state field.
+      hasLocker: seatHasMandatoryLocker === true,
       standaloneLockerId: !seatHasMandatoryLocker && selectedStandaloneLockerId ? selectedStandaloneLockerId : null,
       idToken,
       ...(upgradeBookingId ? {

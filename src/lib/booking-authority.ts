@@ -1310,7 +1310,10 @@ export async function confirmPendingReceptionBooking(
         studentId: booking.studentId,
         libraryId: booking.libraryId,
         planId: booking.planId,
-        requestedStart: new Date(),
+        // Do NOT pass requestedStart here: bookingWindow will auto-chain from
+        // the student's latest active confirmed booking at this library.
+        // Passing new Date() would bypass the chain and break the
+        // "new plan starts when existing plan ends" invariant.
       },
       booking.plan.validityDays,
     )
@@ -1758,12 +1761,6 @@ export async function pauseConfirmedBooking(bookingId: string): Promise<Booking>
     if (booking.status !== BookingStatus.CONFIRMED) {
       throw new BookingAuthorityError(
         "INVALID_BOOKING_STATE",
-        "Only confirmed bookings can be resumed",
-      )
-    }
-    if (booking.status !== BookingStatus.CONFIRMED) {
-      throw new BookingAuthorityError(
-        "BOOKING_NOT_PENDING",
         "Only confirmed bookings can be paused",
       )
     }

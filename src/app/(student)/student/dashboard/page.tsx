@@ -57,18 +57,22 @@ export default async function StudentDashboardPage() {
 
   // Calculate Streak
   let currentStreak = 0;
+  // Helper: get YYYY-MM-DD in IST for a given Date
+  const toISTDateStr = (d: Date) =>
+    new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d);
+
   const uniqueCheckinDates = new Set(
     recentLogs
       .filter(l => l.status === 'CHECK_IN')
-      .map(l => new Date(l.timestamp).toISOString().split('T')[0])
+      .map(l => toISTDateStr(new Date(l.timestamp)))
   );
   
-  const todayStr = now.toISOString().split('T')[0];
+  const todayStr = toISTDateStr(now);
   const yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = yesterday.toISOString().split('T')[0];
+  const yesterdayStr = toISTDateStr(yesterday);
 
-  let checkDate = new Date();
+  let checkDate = new Date(now);
   if (uniqueCheckinDates.has(todayStr)) {
     // start from today
   } else if (uniqueCheckinDates.has(yesterdayStr)) {
@@ -80,7 +84,7 @@ export default async function StudentDashboardPage() {
 
   if (checkDate) {
     while (true) {
-      const dateStr = checkDate.toISOString().split('T')[0];
+      const dateStr = toISTDateStr(checkDate);
       if (uniqueCheckinDates.has(dateStr)) {
         currentStreak++;
         checkDate.setDate(checkDate.getDate() - 1);
@@ -116,10 +120,8 @@ export default async function StudentDashboardPage() {
     return displayAmount;
   };
 
-  // Calculate IST Greeting
-  const nowIST = new Date();
-  nowIST.setMinutes(nowIST.getMinutes() + 330);
-  const hour = nowIST.getUTCHours();
+  // Calculate IST Greeting — use getTime() offset, not setMinutes overflow
+  const hour = new Date(Date.now() + 5.5 * 60 * 60 * 1000).getUTCHours();
   let greeting = 'Good evening';
   if (hour >= 5 && hour < 12) greeting = 'Good morning';
   else if (hour >= 12 && hour < 17) greeting = 'Good afternoon';
@@ -263,11 +265,16 @@ export default async function StudentDashboardPage() {
             ) : (
               <div className="space-y-4">
                 {activeBookings.map((booking) => {
-                  const endOfDay = new Date(booking.endTime);
-                  endOfDay.setHours(0,0,0,0);
-                  const today = new Date();
-                  today.setHours(0,0,0,0);
-                  const daysLeft = Math.ceil((endOfDay.getTime() - today.getTime()) / (1000 * 3600 * 24)) + 1;
+                  // Calculate days left entirely in IST to avoid off-by-one errors.
+                  // Both endTime (stored as UTC) and now are converted to their IST
+                  // calendar date, then compared as whole days — no UTC parsing tricks.
+                  const endISTStr = toISTDateStr(new Date(booking.endTime));
+                  const todayISTStr = toISTDateStr(new Date());
+                  // Parse as UTC noon to guarantee both sides land on the right day
+                  // regardless of local timezone (avoids new Date("YYYY-MM-DD") = UTC midnight bug)
+                  const endIST = new Date(`${endISTStr}T12:00:00Z`);
+                  const todayIST = new Date(`${todayISTStr}T12:00:00Z`);
+                  const daysLeft = Math.round((endIST.getTime() - todayIST.getTime()) / (1000 * 3600 * 24)) + 1;
 
                   return (
                   <div key={booking.id} className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm flex flex-col">
@@ -339,6 +346,7 @@ export default async function StudentDashboardPage() {
                         seatId={booking.seatId}
                         standaloneLockerId={booking.standaloneLockerId}
                         studentId={session.userId}
+                        bookingId={booking.id}
                       />
                       <Link
                         href={`/library/${booking.libraryId}?upgrade=${booking.id}`}
@@ -382,6 +390,7 @@ export default async function StudentDashboardPage() {
                         seatId={booking.seatId}
                         standaloneLockerId={booking.standaloneLockerId}
                         studentId={session.userId}
+                        bookingId={booking.id}
                       />
                     </div>
                   </div>

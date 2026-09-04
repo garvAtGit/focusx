@@ -79,12 +79,14 @@ export async function getSession(): Promise<SessionData | null> {
 
     try {
       if (await redis.get(`revoked:${authId}`)) {
-        console.warn(`Stale revoked flag found for ${authId} (bypassing due to rate limit issues)`);
-        // We temporarily bypass this to prevent stale flags from locking users out 
-        // after Upstash rate limits prevent flag deletion during login.
+        // Session has been explicitly revoked (e.g. logout on another device).
+        // Reject it immediately. The session/route.ts clears this flag on fresh
+        // login, so a new login will restore access cleanly.
+        return null;
       }
     } catch {
-      // Redis unavailable: fall through
+      // Redis unavailable: fall through — Firebase cookie verification still
+      // happened above so the session is at least cryptographically valid.
     }
 
     const cacheKey = `usersess:${authId}`;
