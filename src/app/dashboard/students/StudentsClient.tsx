@@ -1384,14 +1384,12 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                                   View Profile
                                 </DropdownMenuItem>
 
-                                <DropdownMenuItem asChild>
-                                  <div className="px-2 py-1">
-                                    <ManualNotifyModal
-                                      studentId={booking.student.id}
-                                      studentName={booking.student.name}
-                                    />
-                                  </div>
-                                </DropdownMenuItem>
+                                <div className="px-2 py-1">
+                                  <ManualNotifyModal
+                                    studentId={booking.student.id}
+                                    studentName={booking.student.name}
+                                  />
+                                </div>
 
                                 <DropdownMenuItem onClick={() => {
                                     setSeatChangeBookingId(booking.id);
