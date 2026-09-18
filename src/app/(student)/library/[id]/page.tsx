@@ -8,9 +8,9 @@ import { cacheLife, cacheTag } from "next/cache";
 // library details can bust it on demand via revalidateTag (cacheLife is only the
 // fallback TTL). generateMetadata and the page share this single cache entry.
 async function getCachedLibrary(id: string) {
-  'use cache';
-  cacheLife('hours');
-  cacheTag(`library:${id}`);
+
+
+
   return await prisma.library.findUnique({
     where: { id },
     include: {

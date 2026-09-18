@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
 import { adminAuth } from '@/lib/firebase/firebaseAdmin';
 import prisma from "@/lib/prisma";
@@ -151,13 +152,20 @@ export async function GET(req: Request) {
       heatmap[dateStr] = totalMs / (1000 * 60 * 60); // convert to hours
     });
 
+      // Get the absolute latest log to determine current state, regardless of midnight rollovers
+      const lastLog = recentLogs[recentLogs.length - 1];
+      const isCheckedIn = lastLog ? lastLog.status === 'CHECK_IN' : false;
+
     return NextResponse.json({ 
       activeBookings, 
       leaderboards, 
-      heatmap 
+      heatmap,
+      recentLogs,
+      isCheckedIn
     });
   } catch (error) {
     console.error("Mobile myspace fetch error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
+

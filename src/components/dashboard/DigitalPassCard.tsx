@@ -3,6 +3,7 @@
 import { ScanLine, Camera, QrCode } from 'lucide-react';
 import { AccessQRModal } from '@/components/AccessQRModal';
 import Link from 'next/link';
+import { BluetoothUnlockButton } from './BluetoothUnlockButton';
 
 interface DigitalPassCardProps {
   student: {
@@ -116,6 +117,8 @@ export function DigitalPassCard({ student, currentStreak, libraryId, studentId, 
               </div>
             </AccessQRModal>
           </div>
+
+          <BluetoothUnlockButton libraryId={libraryId} />
 
         </div>
       </div>

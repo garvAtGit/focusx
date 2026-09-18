@@ -210,6 +210,7 @@ model Booking {
 }
 
 model BookingIntent {
+  providerOrderId String? @unique
   id                  String              @id @default(uuid())
   referenceId         String              @unique
   idempotencyKey      String?             @unique
@@ -314,6 +315,7 @@ model Relay {
   libraryId  String
   macAddress String?
   nfcTagId   String       @unique
+  bleReaderId String?     @unique
   status     String       @default("ONLINE")
   lastSync   DateTime     @default(now())
   createdAt  DateTime     @default(now())
@@ -325,10 +327,12 @@ model Relay {
 }
 
 model CheckinLog {
+  realtimeOutbox RealtimeOutbox?
   id            String        @id @default(uuid())
   studentId     String
   libraryId     String
   relayId       String?
+  eventId       String?       @unique
   status        CheckinStatus
   timestamp     DateTime      @default(now())
   isOfflineSync Boolean       @default(false)
@@ -605,3 +609,36 @@ enum RuleExecutionStatus {
   FAILED
   SKIPPED
 }
+
+
+
+
+model RealtimeOutbox {
+  id String @id @default(uuid())
+  eventId String @unique
+  topic String?
+  payload Json
+  status String @default("PENDING")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+  checkinLogId String? @unique
+  checkinLog CheckinLog? @relation(fields: [checkinLogId], references: [id])
+  studentId String?
+  isPublished Boolean @default(false)
+  attempts Int @default(0)
+  nextAttemptAt DateTime?
+  lastError String?
+}
+
+model HardwareClaim {
+  id          String   @id @default(uuid())
+  claimCode   String   @unique
+  macAddress  String
+  bleReaderId String?
+  nfcTagId    String?
+  isClaimed   Boolean  @default(false)
+  libraryId   String?  // Once claimed, store which library took it
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+

@@ -1,6 +1,6 @@
 "use client"
 
-import { LogOut, User, Heart, Calendar, LayoutDashboard, Share2 } from "lucide-react"
+import { LogOut, User, Heart, Calendar, LayoutDashboard, Share2, Download } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -63,6 +63,12 @@ export function UserNav({ user }: { user: UserRecord }) {
             <Calendar className="mr-3 h-[18px] w-[18px] text-muted-foreground" />
             <span className="font-medium text-[14px]">My Bookings</span>
           </DropdownMenuItem>
+          <a href="/focusx.apk" download className="w-full">
+            <DropdownMenuItem className="rounded-lg cursor-pointer py-2.5 focus:bg-muted focus:text-black text-black">
+              <Download className="mr-3 h-[18px] w-[18px] text-muted-foreground" />
+              <span className="font-medium text-[14px]">Download App</span>
+            </DropdownMenuItem>
+          </a>
           <DropdownMenuItem onClick={() => router.push("/student/profile")} className="rounded-lg cursor-pointer py-2.5 focus:bg-muted focus:text-black text-black">
             <User className="mr-3 h-[18px] w-[18px] text-muted-foreground" />
             <span className="font-medium text-[14px]">Profile</span>

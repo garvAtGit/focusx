@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
+import { after } from "next/server";
 import prisma from "@/lib/prisma";
 import { verifyRelayKey } from "@/lib/relay-auth";
+import { supabaseServer } from "@/lib/supabase-server";
+import { updateStreak } from "@/lib/streak-utils";
 
 type HardwareLog = {
   uid?: string;
@@ -168,47 +171,84 @@ export async function POST(request: Request) {
           });
 
           // Toggle CheckinLog state so realtime UI updates and tracking works
-          await prisma.$transaction(async (tx) => {
-            const lastLog = await tx.checkinLog.findFirst({
-              where: { 
-                studentId: log.userId as string, 
-                libraryId: log.libraryId, 
-                timestamp: { gte: startOfDay } 
-              },
-              orderBy: { timestamp: 'desc' },
-            });
-
-            let newStatus: "CHECK_IN" | "CHECK_OUT" = "CHECK_IN";
-            if (log.status === "IN") {
-              newStatus = "CHECK_IN";
-            } else if (log.status === "OUT") {
-              newStatus = "CHECK_OUT";
-            } else {
-              // Fallback to toggling if status is just "SUCCESS"
-              newStatus = (lastLog && lastLog.status === "CHECK_IN") ? "CHECK_OUT" : "CHECK_IN";
-            }
-
-            // Only insert if it represents an actual change, or if it's the first log
-            if (!lastLog || lastLog.status !== newStatus) {
-              await tx.checkinLog.create({
-                data: {
-                  studentId: log.userId as string,
-                  libraryId: log.libraryId,
-                  status: newStatus,
-                  isOfflineSync: false,
-                  timestamp: log.timestamp // Use the hardware timestamp to match exactly
+          let transactionResult;
+          try {
+            transactionResult = await prisma.$transaction(async (tx) => {
+              const lastLog = await tx.checkinLog.findFirst({
+                where: { 
+                  studentId: log.userId as string, 
+                  libraryId: log.libraryId, 
+                  timestamp: { gte: startOfDay } 
                 },
+                orderBy: { timestamp: 'desc' },
               });
+
+              let newStatus: "CHECK_IN" | "CHECK_OUT" = "CHECK_IN";
+              if (log.status === "IN") {
+                newStatus = "CHECK_IN";
+              } else if (log.status === "OUT") {
+                newStatus = "CHECK_OUT";
+              } else {
+                // Fallback to toggling if status is just "SUCCESS"
+                newStatus = (lastLog && lastLog.status === "CHECK_IN") ? "CHECK_OUT" : "CHECK_IN";
+              }
+
+              // Only insert if it represents an actual change, or if it's the first log
+              if (!lastLog || lastLog.status !== newStatus) {
+                const newCheckinLog = await tx.checkinLog.create({
+                  data: {
+                    studentId: log.userId as string,
+                    libraryId: log.libraryId,
+                    status: newStatus,
+                    isOfflineSync: false,
+                    timestamp: log.timestamp // Use the hardware timestamp to match exactly
+                  },
+                });
+
+                const logicalEventId = `checkinlog_${newCheckinLog.id}`;
+
+                await tx.realtimeOutbox.create({
+                  data: {
+                    eventId: logicalEventId,
+                    studentId: log.userId as string,
+                    checkinLogId: newCheckinLog.id,
+                    payload: {
+                      status: 'ALLOW',
+                      passType: newStatus === 'CHECK_IN' ? 'IN' : 'OUT',
+                      state: newStatus === 'CHECK_IN' ? 'INSIDE' : 'OUTSIDE',
+                      scanId: logicalEventId,
+                      timestamp: log.timestamp.toISOString(),
+                    },
+                    // Give the immediate after() publisher a 10s head-start before Cron 
+                    // picks it up for durable recovery. This is not a lock; overlapping 
+                    // publishes are safely deduplicated by the mobile app.
+                    nextAttemptAt: new Date(Date.now() + 10000) 
+                  }
+                });
+
+                return { newStatus, changed: true, outboxEventId: logicalEventId };
+              }
+              return { newStatus, changed: false };
+            }, { isolationLevel: 'Serializable' });
+          } catch (error: any) {
+            if (error.code === 'P2034') {
+              // Exact 200 OK match to prevent ESP32 retry/toggle loops
+              return NextResponse.json({ success: true, inserted: 0, note: "Concurrent request ignored" }, { status: 200 });
             }
-            return { newStatus, changed: !lastLog || lastLog.status !== newStatus };
-          }, { isolationLevel: 'Serializable' })
-          .then(async (result) => {
-            if (result.changed && result.newStatus === "CHECK_IN") {
-              const { updateStreak } = require("@/lib/streak-utils");
-              await updateStreak(log.userId as string, log.timestamp);
-            }
-          })
-          .catch(err => console.error("Failed to insert CheckinLog:", err));
+            throw error;
+          }
+
+          if (transactionResult?.changed && transactionResult?.outboxEventId) {
+             const outboxEventId = transactionResult.outboxEventId;
+             after(async () => {
+                const { publishOutbox } = await import("@/lib/realtime-publisher");
+                await publishOutbox(outboxEventId);
+             });
+
+             if (transactionResult.newStatus === "CHECK_IN") {
+               await updateStreak(log.userId as string, new Date(log.timestamp));
+             }
+          }
         }
       }
     }

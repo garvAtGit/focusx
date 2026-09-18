@@ -39,10 +39,17 @@ type RefundEntity = {
   notes?: Record<string, unknown>
 }
 
+type OrderEntity = {
+  id?: string
+  receipt?: string
+  status?: string
+}
+
 type RazorpayWebhookEvent = {
   event?: string
   payload?: {
     payment_link?: { entity?: PaymentLinkEntity }
+    order?: { entity?: OrderEntity }
     payment?: { entity?: PaymentEntity }
     account?: { entity?: AccountEntity }
     refund?: { entity?: RefundEntity }
@@ -184,11 +191,13 @@ export async function POST(req: Request) {
       })
     }
 
-    if (eventType === "payment_link.paid") {
+    if (eventType === "payment_link.paid" || eventType === "order.paid") {
       const paymentLink = event.payload?.payment_link?.entity
+      const order = event.payload?.order?.entity
       const payment = event.payload?.payment?.entity
-      const referenceId = paymentLink?.reference_id
+      const referenceId = paymentLink?.reference_id ?? order?.receipt
       const providerLinkId = paymentLink?.id
+      const providerOrderId = order?.id
       const paymentId = payment?.id
       const paidAmountPaise = Number(payment?.amount)
       const currency = payment?.currency
@@ -196,16 +205,17 @@ export async function POST(req: Request) {
 
       if (
         !referenceId
-        || !providerLinkId
+        || (!providerLinkId && !providerOrderId)
         || !paymentId
         || !Number.isFinite(paidAmountPaise)
         || !currency
         || !Number.isFinite(paidAtSeconds)
         || payment?.status !== "captured"
-        || paymentLink?.status !== "paid"
+        || (eventType === "payment_link.paid" && paymentLink?.status !== "paid")
+        || (eventType === "order.paid" && order?.status !== "paid")
       ) {
         return NextResponse.json(
-          { error: "Incomplete paid Payment Link payload" },
+          { error: "Incomplete paid payload" },
           { status: 400 },
         )
       }
@@ -215,6 +225,7 @@ export async function POST(req: Request) {
         result = await confirmOnlinePayment({
           referenceId,
           providerLinkId,
+          providerOrderId,
           paymentId,
           paidAmountPaise,
           paidAt: new Date(paidAtSeconds * 1000),

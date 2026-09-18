@@ -1,4 +1,5 @@
 "use server";
+import { after } from "next/server";
 import { getSession } from "./auth-actions";
 import prisma from "@/lib/prisma";
 import crypto from "crypto";
@@ -113,6 +114,21 @@ export async function generateEntryQR(libraryId: string, doorId: string = "MAIN_
     isCheckedIn: latestLog?.status === 'CHECK_IN',
     firstIn: firstIn ? firstIn.timestamp : null,
     lastOut: lastOut ? lastOut.timestamp : null
+  };
+}
+
+export async function getCheckinStatus(libraryId: string) {
+  const session = await getSession();
+  if (!session || !session.userId) return { error: "Unauthorized" };
+
+  const latestLog = await prisma.checkinLog.findFirst({
+    where: { studentId: session.userId, libraryId: libraryId },
+    orderBy: { timestamp: 'desc' }
+  });
+
+  return { 
+    success: true, 
+    isCheckedIn: latestLog?.status === 'CHECK_IN',
   };
 }
 
@@ -398,4 +414,12 @@ export async function addOfflineStudentWithRFID(formData: FormData) {
       error: e instanceof Error ? e.message : "Failed to register offline student",
     };
   }
+}
+
+
+export async function processWebScan(qrDataString: string, libraryId: string, doorId: string = "MAIN_GATE") {
+  const session = await getSession();
+  if (!session) return { error: "Unauthorized" };
+  const { processWebScanCore } = await import("@/lib/web-scanner");
+  return processWebScanCore(qrDataString, libraryId, doorId, session);
 }

@@ -5,7 +5,7 @@ import QRCode from "react-qr-code";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { QrCode, Loader2, CheckCircle2 } from "lucide-react";
-import { generateEntryQR } from "@/app/actions/hardware-actions";
+import { generateEntryQR, getCheckinStatus } from "@/app/actions/hardware-actions";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 
@@ -23,6 +23,19 @@ export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: ini
   const [successType, setSuccessType] = useState<boolean | null>(null);
   const [supabaseToken, setSupabaseToken] = useState<string | null>(null);
 
+  // DIAGNOSTIC STATE
+  const diagRenderCount = useRef(0);
+  const t0Ref = useRef<number>(0);
+  
+  // Track mount/unmount
+  useEffect(() => {
+    t0Ref.current = performance.now();
+    console.log(`[Diagnostic][Global][+0ms] Component MOUNTED`);
+    return () => {
+      console.log(`[Diagnostic][Global][+${(performance.now() - t0Ref.current).toFixed(0)}ms] Component UNMOUNTED`);
+    };
+  }, []);
+
   const qrDataRef = useRef<string | null>(initialQrPayload || null);
   const [firstIn, setFirstIn] = useState<Date | null>(null);
   const [lastOut, setLastOut] = useState<Date | null>(null);
@@ -31,19 +44,62 @@ export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: ini
   // Fetch Supabase Token securely using Firebase Auth Listener
   useEffect(() => {
     if (!open) return;
+    const tStart = performance.now();
     
+    console.log(`[Diagnostic][Auth][+${(performance.now() - t0Ref.current).toFixed(0)}ms] QR modal opened. Fetching Firebase token...`);
     const unsubscribe = auth.onIdTokenChanged(async (user) => {
       if (user) {
         try {
+          console.log(`[Diagnostic][Auth][+${(performance.now() - t0Ref.current).toFixed(0)}ms] onIdTokenChanged fired`);
           const idToken = await user.getIdToken();
-          setSupabaseToken(idToken);
+          
+          // Safely decode and log JWT claims without logging the signature or full token
+          try {
+            const base64Url = idToken.split('.')[1];
+            const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+            const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+                return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+            }).join(''));
+            const claims = JSON.parse(jsonPayload);
+            // Log only safe claims (no PII, just auth/role metadata)
+            console.log(`[Diagnostic][Auth] JWT Claims present:`, Object.keys(claims).join(', '));
+            console.log(`[Diagnostic][Auth] JWT Audience (aud):`, claims.aud);
+            console.log(`[Diagnostic][Auth] JWT Issuer (iss):`, claims.iss);
+            if (claims.role || claims.supabase) {
+              console.log(`[Diagnostic][Auth] JWT Supabase/Role claims:`, { role: claims.role, supabase: claims.supabase });
+            }
+          } catch (decodeErr) {
+            console.log(`[Diagnostic][Auth] Failed to decode JWT claims:`, decodeErr);
+          }
+
+          try {
+            console.log(`[Diagnostic][Auth][+${(performance.now() - t0Ref.current).toFixed(0)}ms] Exchanging Firebase token for Supabase JWT...`);
+            const res = await fetch('/api/auth/supabase-token', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ idToken })
+            });
+            const data = await res.json();
+            
+            if (data.supabaseToken) {
+              console.log(`[Diagnostic][Auth][+${(performance.now() - t0Ref.current).toFixed(0)}ms] Supabase Token obtained, setting state`);
+              setSupabaseToken(data.supabaseToken);
+            } else {
+              console.error("[Diagnostic][Auth] Failed to obtain Supabase token:", data.error);
+            }
+          } catch (exchangeErr) {
+            console.error("[Diagnostic][Auth] Token exchange failed:", exchangeErr);
+          }
         } catch (err) {
           console.error("Failed to fetch Firebase ID token", err);
         }
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      console.log(`[Diagnostic][Auth][+${(performance.now() - t0Ref.current).toFixed(0)}ms] Auth cleanup called`);
+      unsubscribe();
+    };
   }, [open]);
 
   // Sync ref with state
@@ -52,113 +108,141 @@ export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: ini
   }, [isCheckedIn]);
 
   const triggerSuccess = (newStatus: boolean) => {
+    console.log(`[Diagnostic][UI][+${(performance.now() - t0Ref.current).toFixed(0)}ms] triggerSuccess() CALLED`);
     setSuccessType(newStatus);
     setShowSuccess(true);
     
     // Single satisfying vibration
     if (typeof navigator !== "undefined" && navigator.vibrate) {
-      navigator.vibrate([200]);
+      navigator.vibrate(100);
     }
     
-    // Confetti burst
-    confetti({
-      particleCount: 100,
-      spread: 70,
-      origin: { y: 0.6 },
-      colors: ['#22c55e', '#3b82f6', '#f59e0b']
-    });
-
     setTimeout(() => {
       setOpen(false);
       setShowSuccess(false);
       setIsCheckedIn(newStatus);
+      console.log(`[Diagnostic][UI][+${(performance.now() - t0Ref.current).toFixed(0)}ms] Modal closed by timeout`);
     }, 3000);
   };
 
   // PRIMARY NOTIFICATION: Supabase Realtime Broadcast (Zero Latency)
+  const channelInstanceId = useRef(0);
   useEffect(() => {
     if (!open || !studentId || !supabaseToken) return;
 
-    // Authenticate the realtime socket with the student's JWT
+    channelInstanceId.current += 1;
+    const cid = `channel-${channelInstanceId.current}`;
+    
+    console.log(`[Diagnostic][${cid}][+${(performance.now() - t0Ref.current).toFixed(0)}ms] CREATE`);
     supabase.realtime.setAuth(supabaseToken);
-
+    
     const channel = supabase
       .channel(`scan:${studentId}`, { config: { private: true } }) // Secure private channel
       .on(
         'broadcast', 
         { event: 'scan_result' }, 
         (payload) => {
+          console.log(`[Diagnostic][${cid}][+${(performance.now() - t0Ref.current).toFixed(0)}ms] scan_result RECEIVED`, { passType: payload.payload?.passType });
           const data = payload.payload;
           if (data && data.status === 'ALLOW') {
             const newStatus = data.passType === 'IN';
             if (newStatus !== isCheckedInRef.current && qrDataRef.current) {
+              console.log(`[Diagnostic][${cid}][+${(performance.now() - t0Ref.current).toFixed(0)}ms] triggerSuccess() called from Realtime`);
               triggerSuccess(newStatus);
             }
           }
         }
       )
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'CheckinLog', filter: `studentId=eq.${studentId}` },
-        (payload) => {
-          const newStatus = payload.new.status === 'CHECK_IN';
-          // Fallback in case broadcast was missed
-          if (newStatus !== isCheckedInRef.current && qrDataRef.current && !showSuccess) {
-            triggerSuccess(newStatus);
-          }
-        }
-      )
       .subscribe((status, err) => {
-        if (err) console.error("Supabase realtime error:", err);
+        if (status === 'SUBSCRIBED') {
+          console.log(`[Diagnostic][${cid}][+${(performance.now() - t0Ref.current).toFixed(0)}ms] SUBSCRIBED`);
+        } else {
+          // Log exact error payload if available
+          let errStr = '';
+          try {
+            errStr = err ? JSON.stringify(err) : 'no-error-payload';
+          } catch (e) {
+            errStr = String(err);
+          }
+          console.log(`[Diagnostic][${cid}][+${(performance.now() - t0Ref.current).toFixed(0)}ms] ${status} reason=${errStr}`);
+        }
       });
 
+    console.log(`[Diagnostic][${cid}][+${(performance.now() - t0Ref.current).toFixed(0)}ms] subscribe called`);
+
     return () => {
+      console.log(`[Diagnostic][${cid}][+${(performance.now() - t0Ref.current).toFixed(0)}ms] CLEANUP / unsubscribe`);
       supabase.removeChannel(channel);
     };
   }, [open, studentId, supabaseToken]);
 
   // Generate secure QR payload
+  // Import getCheckinStatus at the top of the file
   useEffect(() => {
     if (!open) return;
 
-    const fetchQR = async () => {
-      // Don't poll if we're already showing success
+    let active = true;
+    let isPolling = false;
+
+    const initQR = async () => {
       if (showSuccess) return;
-      
       if (!qrDataRef.current) setLoading(true);
       setError(null);
       try {
         const res = await generateEntryQR(libraryId);
+        if (!active) return;
+        
         if (res.error) {
           setError(res.error);
         } else if (res.qrPayload) {
           if (res.firstIn) setFirstIn(new Date(res.firstIn));
           if (res.lastOut) setLastOut(new Date(res.lastOut));
           
-          // Fallback check (in case realtime failed)
           if (res.isCheckedIn !== undefined && res.isCheckedIn !== isCheckedInRef.current && qrDataRef.current && !showSuccess) {
             triggerSuccess(res.isCheckedIn);
           } else {
             qrDataRef.current = res.qrPayload;
             setQrData(res.qrPayload);
-            // Sync the initial check-in state silently on load
             if (res.isCheckedIn !== undefined && res.isCheckedIn !== isCheckedInRef.current) {
               setIsCheckedIn(res.isCheckedIn);
             }
           }
         }
       } catch {
-        setError("Failed to generate secure QR");
+        if (active) setError("Failed to generate secure QR");
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     };
 
-    fetchQR();
-    // 20 second refresh for security and fallback polling
-    const interval = setInterval(fetchQR, 20000);
+    const pollStatus = async () => {
+      if (showSuccess || !active || !qrDataRef.current || isPolling) return;
+      isPolling = true;
+      try {
+        const res = await getCheckinStatus(libraryId);
+        if (!active) return;
+        if (res.success && res.isCheckedIn !== undefined && res.isCheckedIn !== isCheckedInRef.current && !showSuccess) {
+          console.log(`[Diagnostic][Fallback][+${(performance.now() - t0Ref.current).toFixed(0)}ms] triggerSuccess() called from Fallback Polling`);
+          triggerSuccess(res.isCheckedIn);
+        }
+      } catch (err) {
+        // silently ignore polling errors
+      } finally {
+        isPolling = false;
+      }
+    };
 
-    return () => clearInterval(interval);
+    initQR();
+    // Ultra-fast polling for 100% reliability if Realtime is completely broken
+    const pollInterval = setInterval(pollStatus, 1500);
+    // Regenerate QR every 4.5 mins for security
+    const qrInterval = setInterval(initQR, 270000); 
+
+    return () => {
+      active = false;
+      clearInterval(pollInterval);
+      clearInterval(qrInterval);
+    };
   }, [open, libraryId, showSuccess]);
 
   // Wake Lock and Theme Color

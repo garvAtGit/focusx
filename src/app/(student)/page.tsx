@@ -11,9 +11,9 @@ import { PartnerCTA } from "@/components/home/partner-cta"
 import { cacheLife, cacheTag } from "next/cache"
 
 async function getFeaturedLibraries() {
-  'use cache';
-  cacheLife('hours');
-  cacheTag('libraries:featured');
+
+
+
   const libs = await prisma.library.findMany({
     where: {
       kycStatus: "APPROVED",

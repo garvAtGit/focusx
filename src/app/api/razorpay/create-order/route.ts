@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
   let paymentLinkClaimed = false
 
   try {
-    const body = await req.json() as CheckoutBody
+    const body = await req.json() as CheckoutBody & { date?: string }
     const planId = typeof body.planId === "string" ? body.planId : null
     const seatId = typeof body.seatId === "string" ? body.seatId : null
     const standaloneLockerId =
@@ -69,6 +69,16 @@ export async function POST(req: NextRequest) {
     ).trim().slice(0, 128)
     const operation = typeof body.operation === "string" ? (body.operation as any) : undefined
     const sourceBookingId = typeof body.sourceBookingId === "string" ? body.sourceBookingId : undefined
+
+    let requestedStart: Date | undefined = undefined;
+    if (body.date) {
+      const { startOfDayIST } = await import("@/lib/date-utils");
+      requestedStart = startOfDayIST(new Date(body.date));
+      const today = startOfDayIST(new Date());
+      if (requestedStart.getTime() > today.getTime()) {
+        return NextResponse.json({ error: 'Cannot start a plan on a future date' }, { status: 400 });
+      }
+    }
 
     if (!planId) {
       return NextResponse.json({ error: "Plan ID is required" }, { status: 400 })
@@ -146,6 +156,7 @@ export async function POST(req: NextRequest) {
       idempotencyKey: suppliedIdempotencyKey,
       operation,
       sourceBookingId,
+      requestedStart,
     })
     createdIntentId = intent.id
 

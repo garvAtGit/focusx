@@ -61,6 +61,11 @@ export async function NavbarAuth() {
   return (
     <div className="flex items-center gap-1 sm:gap-2">
       <AccessQRModal libraryId="" studentId="" iconOnly />
+      <a href="/focusx.apk" download>
+        <Button variant="outline" className="h-9 px-4 rounded-full font-bold text-sm ml-1 sm:ml-2">
+          Download App
+        </Button>
+      </a>
       <Link href="/login" className="ml-1 sm:ml-2">
         <Button className="h-9 px-5 rounded-full font-bold text-sm shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
           Sign In

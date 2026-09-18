@@ -1178,12 +1178,14 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                                     View Profile
                                   </DropdownMenuItem>
 
+                                  {/*
                                   <div className="px-2 py-1">
                                     <ManualNotifyModal
                                       studentId={booking.student.id}
                                       studentName={booking.student.name}
                                     />
                                   </div>
+                                  */}
 
                                   <DropdownMenuItem onClick={() => {
                                       setSeatChangeBookingId(booking.id);
@@ -1296,13 +1298,14 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                           </div>
                         )}
 
-                        {/* Auto Actions Log — list view */}
+                        {/* Auto Actions Log — list view 
                         <div className="px-6 py-3 border-t border-slate-100 bg-slate-50/20">
                           <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">
                             Auto Actions
                           </p>
                           <AutoActionsLog studentId={booking.student.id} />
                         </div>
+                        */}
 
                       </motion.div>
                     );
@@ -1384,12 +1387,14 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                                   View Profile
                                 </DropdownMenuItem>
 
+                                {/*
                                 <div className="px-2 py-1">
                                   <ManualNotifyModal
                                     studentId={booking.student.id}
                                     studentName={booking.student.name}
                                   />
                                 </div>
+                                */}
 
                                 <DropdownMenuItem onClick={() => {
                                     setSeatChangeBookingId(booking.id);
@@ -1539,13 +1544,14 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                               </div>
                             )}
 
-                            {/* Auto Actions Log */}
+                            {/* Auto Actions Log 
                             <div className="mt-3 pt-3 border-t border-slate-100">
                               <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">
                                 Auto Actions
                               </p>
                               <AutoActionsLog studentId={booking.student.id} />
                             </div>
+                            */}
                             
                           </div>
                         </div>

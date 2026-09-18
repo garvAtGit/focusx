@@ -196,73 +196,107 @@ export default async function LibrarianDashboardPage() {
 
   const todaysStudentIds = [...new Set(todaysLogs.map(log => log.studentId).filter(Boolean))] as string[];
   
-  const studentsWithHistory = await prisma.user.findMany({
+  const studentsWithBookings = await prisma.user.findMany({
     where: { id: { in: todaysStudentIds } },
-    include: {
+    select: {
+      id: true,
+      kycAadhaarProfilePhotoUrl: true,
+      profilePhotoUrl: true,
       bookings: {
         where: { libraryId: library.id, status: 'CONFIRMED' },
-        include: { plan: true },
+        select: { createdAt: true, plan: { select: { durationHours: true } } },
         orderBy: { createdAt: 'desc' },
         take: 1
-      },
-      checkins: { where: { libraryId: library.id }, orderBy: { timestamp: 'asc' } },
-      entryLogs: { where: { libraryId: library.id }, orderBy: { timestamp: 'asc' } }
+      }
     }
   });
 
   const studentAvgMap = new Map();
-  for (const stu of studentsWithHistory) {
-     const currentBooking = stu.bookings[0];
-     if (!currentBooking) {
-       studentAvgMap.set(stu.id, { avgHrs: 0, optedHrs: 24, overstayHrs: 0 });
-       continue;
-     }
-     
-     const bookingStart = new Date(currentBooking.createdAt).getTime();
-     const stuLogs = [
-       ...(stu.checkins || []).map(log => ({
-         status: log.status === 'CHECK_IN' || log.status === 'CHECK_OUT' ? log.status : 'CHECK_IN',
-         timestamp: log.timestamp
-       })),
-       ...(stu.entryLogs || []).map(log => ({
-         status: (log.status === 'OUT' ? 'CHECK_OUT' : 'CHECK_IN') as 'CHECK_IN' | 'CHECK_OUT',
-         timestamp: log.timestamp
-       }))
-     ].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-     
-     const activeLogs = stuLogs.filter(l => new Date(l.timestamp).getTime() >= bookingStart);
-     const daysMap = new Map<string, { in: Date | null, durationMs: number }>();
-     
-     for (const log of activeLogs) {
-       const date = new Date(log.timestamp);
-       const dayKey = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
-       let dayData = daysMap.get(dayKey);
-       if (!dayData) { dayData = { in: null, durationMs: 0 }; daysMap.set(dayKey, dayData); }
-       if (log.status === 'CHECK_IN') {
-         if (!dayData.in) dayData.in = date;
-       } else if (log.status === 'CHECK_OUT') {
-         if (dayData.in) {
-           dayData.durationMs += (date.getTime() - dayData.in.getTime());
-           dayData.in = null;
+  
+  if (todaysStudentIds.length > 0) {
+    const earliestBookingStart = new Date(Math.min(...studentsWithBookings.map(s => s.bookings[0]?.createdAt.getTime() || Date.now())));
+    
+    // Opt: Fetch only the specific columns needed, and only since the earliest active booking.
+    // This eliminates fetching years of historical logs for active students.
+    const [allCheckins, allEntryLogs] = await Promise.all([
+      prisma.checkinLog.findMany({
+        where: { studentId: { in: todaysStudentIds }, libraryId: library.id, timestamp: { gte: earliestBookingStart } },
+        select: { studentId: true, status: true, timestamp: true }
+      }),
+      prisma.entryLog.findMany({
+        where: { userId: { in: todaysStudentIds }, libraryId: library.id, timestamp: { gte: earliestBookingStart }, status: { in: ['IN', 'OUT'] } },
+        select: { userId: true, status: true, timestamp: true }
+      })
+    ]);
+
+    const checkinsByStudent = new Map<string, any[]>();
+    const entryLogsByStudent = new Map<string, any[]>();
+    todaysStudentIds.forEach(id => {
+      checkinsByStudent.set(id, []);
+      entryLogsByStudent.set(id, []);
+    });
+    allCheckins.forEach(log => checkinsByStudent.get(log.studentId)?.push(log));
+    allEntryLogs.forEach(log => {
+      if (log.userId) entryLogsByStudent.get(log.userId)?.push(log);
+    });
+
+    for (const stu of studentsWithBookings) {
+       const currentBooking = stu.bookings[0];
+       const image = stu.kycAadhaarProfilePhotoUrl || stu.profilePhotoUrl || null;
+       
+       if (!currentBooking) {
+         studentAvgMap.set(stu.id, { avgHrs: 0, optedHrs: 24, overstayHrs: 0, image });
+         continue;
+       }
+       
+       const bookingStart = new Date(currentBooking.createdAt).getTime();
+       const stuCheckins = checkinsByStudent.get(stu.id) || [];
+       const stuEntryLogs = entryLogsByStudent.get(stu.id) || [];
+       
+       const stuLogs = [
+         ...stuCheckins.map(log => ({
+           status: log.status === 'CHECK_IN' || log.status === 'CHECK_OUT' ? log.status : 'CHECK_IN',
+           timestamp: log.timestamp
+         })),
+         ...stuEntryLogs.map(log => ({
+           status: (log.status === 'OUT' ? 'CHECK_OUT' : 'CHECK_IN') as 'CHECK_IN' | 'CHECK_OUT',
+           timestamp: log.timestamp
+         }))
+       ].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+       
+       const activeLogs = stuLogs.filter(l => new Date(l.timestamp).getTime() >= bookingStart);
+       const daysMap = new Map<string, { in: Date | null, durationMs: number }>();
+       
+       for (const log of activeLogs) {
+         const date = new Date(log.timestamp);
+         const dayKey = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+         let dayData = daysMap.get(dayKey);
+         if (!dayData) { dayData = { in: null, durationMs: 0 }; daysMap.set(dayKey, dayData); }
+         if (log.status === 'CHECK_IN') {
+           if (!dayData.in) dayData.in = date;
+         } else if (log.status === 'CHECK_OUT') {
+           if (dayData.in) {
+             dayData.durationMs += (date.getTime() - dayData.in.getTime());
+             dayData.in = null;
+           }
          }
        }
-     }
-     
-     let totalDurationMs = 0;
-     let daysCount = 0;
-     Array.from(daysMap.values()).forEach(data => {
-       if (data.durationMs > 0) {
-         totalDurationMs += data.durationMs;
-         daysCount++;
-       }
-     });
-     
-     const avgMs = daysCount > 0 ? totalDurationMs / daysCount : 0;
-     const avgHrs = avgMs / (1000 * 60 * 60);
-     const optedHrs = currentBooking.plan?.durationHours || 24;
-     const overstayHrs = Math.max(0, avgHrs - optedHrs);
-     const image = stu.kycAadhaarProfilePhotoUrl || stu.profilePhotoUrl || null;
-     studentAvgMap.set(stu.id, { avgHrs, optedHrs, overstayHrs, image });
+       
+       let totalDurationMs = 0;
+       let daysCount = 0;
+       Array.from(daysMap.values()).forEach(data => {
+         if (data.durationMs > 0) {
+           totalDurationMs += data.durationMs;
+           daysCount++;
+         }
+       });
+       
+       const avgMs = daysCount > 0 ? totalDurationMs / daysCount : 0;
+       const avgHrs = avgMs / (1000 * 60 * 60);
+       const optedHrs = currentBooking.plan?.durationHours || 24;
+       const overstayHrs = Math.max(0, avgHrs - optedHrs);
+       studentAvgMap.set(stu.id, { avgHrs, optedHrs, overstayHrs, image });
+    }
   }
 
   function formatHrs(hrs: number) {

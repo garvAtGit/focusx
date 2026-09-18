@@ -38,7 +38,7 @@ export default function ExtendPlanModal({
     seatId,
     standaloneLockerId,
     attachedLockerSelected: undefined
-  });
+  }, isOpen);
 
   const handleRepeatCurrentPlan = () => {
     if (workflowState?.status === 'NEEDS_INPUT' && workflowState.requiredFields.includes('attachedLockerSelected')) {

@@ -83,14 +83,19 @@ async function DashboardAuthWrapper({ children }: { children: ReactNode }) {
           <NavItem href="/dashboard/approvals" icon={<ShieldCheck />}>
             Pending Approvals
           </NavItem>
-          {session.role !== 'RECEPTIONIST' && (
+          {/* session.role !== 'RECEPTIONIST' && (
             <NavItem href="/dashboard/rules" icon={<Zap />}>
               Automations
             </NavItem>
-          )}
+          ) */}
           <NavItem href="/dashboard/scanner" icon={<ScanLine />}>
             Web Scanner
           </NavItem>
+          {session.role !== 'RECEPTIONIST' && (
+            <NavItem href="/dashboard/hardware" icon={<ScanLine />}>
+              Hardware Setup
+            </NavItem>
+          )}
         </nav>
 
         <div className="p-4 border-t border-sidebar-border mt-auto">

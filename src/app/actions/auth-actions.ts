@@ -182,19 +182,21 @@ export async function syncUserOnSignup(idToken: string, phone: string, name?: st
       return { success: true, isNewUser: false };
     }
 
-    // 2. Try to find by phone (Fallback for manual admin creations without country code)
-    const normalizedPhone = phone.startsWith('+91') ? phone.slice(3) : phone;
-    const phoneWithCode = phone.startsWith('+91') ? phone : `+91${phone}`;
+    let userByPhone = null;
+    if (phone && phone.trim() !== '' && phone !== '+91') {
+      const normalizedPhone = phone.startsWith('+91') ? phone.slice(3) : phone;
+      const phoneWithCode = phone.startsWith('+91') ? phone : `+91${phone}`;
 
-    const userByPhone = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { phone: phone },
-          { phone: normalizedPhone },
-          { phone: phoneWithCode }
-        ]
-      } 
-    });
+      userByPhone = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { phone: phone },
+            { phone: normalizedPhone },
+            { phone: phoneWithCode }
+          ]
+        } 
+      });
+    }
 
     if (userByPhone) {
       // Prevent account hijacking
@@ -215,7 +217,7 @@ export async function syncUserOnSignup(idToken: string, phone: string, name?: st
     await prisma.user.create({
       data: {
         authId,
-        phone,
+        phone: (phone && phone.trim() !== '' && phone !== '+91') ? phone : null,
         name,
         role: "STUDENT",
         uniqueId: await generateFocusXId()

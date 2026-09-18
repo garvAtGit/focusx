@@ -3,6 +3,8 @@ import prisma from '@/lib/prisma';
 import { adminAuth } from '@/lib/firebase/firebaseAdmin';
 import { syncUserOnSignup } from '@/app/actions/auth-actions';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: Request) {
   try {
     const authHeader = req.headers.get('Authorization');
@@ -26,7 +28,12 @@ export async function GET(req: Request) {
       const phone = decodedToken.phone_number || '';
       // Try to link existing offline account to this authId without changing their name
       const syncResult = await syncUserOnSignup(token, phone);
-      if (syncResult.success && !syncResult.isNewUser) {
+      
+      if (syncResult.error) {
+        return NextResponse.json({ error: syncResult.error }, { status: 409 });
+      }
+      
+      if (syncResult.success) {
         user = await prisma.user.findUnique({
           where: { authId: decodedToken.uid },
         });
@@ -92,6 +99,7 @@ export async function POST(req: Request) {
       success: true,
       id: user.id,
       name: user.name,
+      profilePhotoUrl: user.profilePhotoUrl,
       role: user.role,
       uniqueId: user.uniqueId,
     });

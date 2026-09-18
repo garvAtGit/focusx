@@ -98,7 +98,8 @@ export type ManualBookingInput = BookingSelection & {
 
 export type ConfirmOnlinePaymentInput = {
   referenceId: string
-  providerLinkId: string
+  providerLinkId?: string | null
+  providerOrderId?: string | null
   paymentId: string
   paidAmountPaise: number
   paidAt: Date
@@ -236,7 +237,14 @@ async function bookingWindow(
   input: BookingSelection,
   validityDays: number,
 ): Promise<{ startsAt: Date; endsAt: Date }> {
-  const requestedStart = input.requestedStart ?? new Date()
+  if (input.requestedStart) {
+    return {
+      startsAt: input.requestedStart,
+      endsAt: endOfDayIST(input.requestedStart, Math.max(0, validityDays - 1)),
+    }
+  }
+
+  const requestedStart = new Date()
   const activeBooking = await tx.booking.findFirst({
     where: {
       studentId: input.studentId,
@@ -728,6 +736,7 @@ export async function claimPaymentLinkCreation(intentId: string): Promise<boolea
       id: intentId,
       status: BookingIntentStatus.HOLDING,
       providerLinkId: null,
+      providerOrderId: null,
       providerShortUrl: null,
       holdExpiresAt: { gt: new Date() },
     },
@@ -745,6 +754,7 @@ export async function attachPaymentLink(
       id: intentId,
       status: BookingIntentStatus.AWAITING_PAYMENT,
       providerLinkId: null,
+      providerOrderId: null,
       providerShortUrl: null,
       holdExpiresAt: { gt: new Date() },
     },
@@ -757,6 +767,37 @@ export async function attachPaymentLink(
     throw new BookingAuthorityError(
       "INTENT_EXPIRED",
       "Checkout expired before its payment link was ready",
+    )
+  }
+
+  const intent = await prisma.bookingIntent.findUnique({ where: { id: intentId } })
+  if (!intent) {
+    throw new BookingAuthorityError("INTENT_NOT_FOUND", "Booking intent was not found")
+  }
+  return intent
+}
+
+export async function attachPaymentOrder(
+  intentId: string,
+  input: { providerOrderId: string },
+): Promise<BookingIntent> {
+  const attached = await prisma.bookingIntent.updateMany({
+    where: {
+      id: intentId,
+      status: BookingIntentStatus.AWAITING_PAYMENT,
+      providerLinkId: null,
+      providerOrderId: null,
+      providerShortUrl: null,
+      holdExpiresAt: { gt: new Date() },
+    },
+    data: {
+      providerOrderId: input.providerOrderId,
+    },
+  })
+  if (attached.count !== 1) {
+    throw new BookingAuthorityError(
+      "INTENT_EXPIRED",
+      "Checkout expired before its payment order was ready",
     )
   }
 
@@ -942,7 +983,8 @@ export async function confirmOnlinePayment(
         return { status: "REFUND_PENDING", reason: "DUPLICATE_PAYMENT" }
       }
       if (
-        (intent.providerLinkId && intent.providerLinkId !== input.providerLinkId)
+        (input.providerLinkId && intent.providerLinkId && intent.providerLinkId !== input.providerLinkId)
+        || (input.providerOrderId && intent.providerOrderId && intent.providerOrderId !== input.providerOrderId)
         || input.currency !== intent.currency
         || !amountMatches(input.paidAmountPaise, intent.expectedAmountPaise)
       ) {
@@ -987,15 +1029,17 @@ export async function confirmOnlinePayment(
         ? `INTENT_${intent.status}`
         : intent.source !== BookingIntentSource.RAZORPAY
         ? "INVALID_INTENT_SOURCE"
-        : intent.providerLinkId && intent.providerLinkId !== input.providerLinkId
+        : input.providerLinkId && intent.providerLinkId && intent.providerLinkId !== input.providerLinkId
           ? "PAYMENT_LINK_MISMATCH"
-          : input.currency !== intent.currency
-            ? "CURRENCY_MISMATCH"
-            : !amountMatches(input.paidAmountPaise, intent.expectedAmountPaise)
-              ? "AMOUNT_MISMATCH"
-              : intent.holdExpiresAt && input.paidAt > intent.holdExpiresAt
-                ? "HOLD_EXPIRED"
-                : null
+          : input.providerOrderId && intent.providerOrderId && intent.providerOrderId !== input.providerOrderId
+            ? "ORDER_ID_MISMATCH"
+            : input.currency !== intent.currency
+              ? "CURRENCY_MISMATCH"
+              : !amountMatches(input.paidAmountPaise, intent.expectedAmountPaise)
+                ? "AMOUNT_MISMATCH"
+                : intent.holdExpiresAt && input.paidAt > intent.holdExpiresAt
+                  ? "HOLD_EXPIRED"
+                  : null
 
     if (!rejectionReason) {
       await lockResources(tx, resourcesFor(intent))
@@ -1310,10 +1354,7 @@ export async function confirmPendingReceptionBooking(
         studentId: booking.studentId,
         libraryId: booking.libraryId,
         planId: booking.planId,
-        // Do NOT pass requestedStart here: bookingWindow will auto-chain from
-        // the student's latest active confirmed booking at this library.
-        // Passing new Date() would bypass the chain and break the
-        // "new plan starts when existing plan ends" invariant.
+        requestedStart: booking.startTime,
       },
       booking.plan.validityDays,
     )

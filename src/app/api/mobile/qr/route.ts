@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
 import { adminAuth } from '@/lib/firebase/firebaseAdmin';
 import prisma from '@/lib/prisma';
@@ -37,12 +38,29 @@ export async function GET(req: Request) {
       orderBy: { createdAt: 'desc' }
     });
 
-    if (!activeBooking) {
+    let libraryIdToUse = activeBooking?.libraryId;
+
+    if (!libraryIdToUse) {
+      // Check if user is staff or librarian
+      const managedLibrary = await prisma.library.findFirst({
+        where: {
+          OR: [
+            { librarianId: user.id },
+            { staff: { some: { id: user.id } } }
+          ]
+        }
+      });
+      if (managedLibrary) {
+        libraryIdToUse = managedLibrary.id;
+      }
+    }
+
+    if (!libraryIdToUse) {
       return NextResponse.json({ error: "No active plan found" }, { status: 403 });
     }
 
     const { generateEntryQR } = await import('@/app/actions/hardware-actions');
-    const qrResult = await generateEntryQR(activeBooking.libraryId, "MAIN_GATE", user.id);
+    const qrResult = await generateEntryQR(libraryIdToUse, "MAIN_GATE", user.id);
 
     if (qrResult.error) {
       return NextResponse.json({ error: qrResult.error }, { status: 400 });
@@ -57,3 +75,4 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
+

@@ -3,7 +3,7 @@ import { getBookingFacts } from '@/app/actions/booking-actions';
 import { evaluateBookingSelection } from '@/lib/booking-engine/evaluate-selection';
 import type { BookingDraft, BookingResult, BookingFacts } from '@/lib/booking-engine/types';
 
-export function useBookingWorkflow(initialDraft: Partial<BookingDraft>) {
+export function useBookingWorkflow(initialDraft: Partial<BookingDraft>, enabled: boolean = true) {
   const [draft, setDraft] = useState<Partial<BookingDraft>>(initialDraft);
   const [facts, setFacts] = useState<BookingFacts | null>(null);
   const [isLoadingFacts, setIsLoadingFacts] = useState(false);
@@ -25,7 +25,7 @@ export function useBookingWorkflow(initialDraft: Partial<BookingDraft>) {
   // 1. Fetch Facts once (or when primary context changes)
   useEffect(() => {
     let active = true;
-    if (!draft.libraryId) return;
+    if (!draft.libraryId || !enabled) return;
 
     async function fetchFacts() {
       setIsLoadingFacts(true);
@@ -56,7 +56,7 @@ export function useBookingWorkflow(initialDraft: Partial<BookingDraft>) {
     // We intentionally only depend on libraryId and studentId for facts fetching.
     // If the user selects a new plan or seat, we evaluate locally.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft.libraryId, draft.studentId]);
+  }, [draft.libraryId, draft.studentId, enabled]);
 
   // 2. Synchronous local evaluation
   const workflowState = useMemo<BookingResult | null>(() => {

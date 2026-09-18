@@ -134,6 +134,16 @@ export async function POST(req: Request) {
       }
     }
 
+    let requestedStart: Date | undefined = undefined;
+    if (body.date) {
+      const { startOfDayIST } = await import("@/lib/date-utils");
+      requestedStart = startOfDayIST(new Date(body.date));
+      const today = startOfDayIST(new Date());
+      if (requestedStart.getTime() > today.getTime()) {
+        return NextResponse.json({ error: 'Cannot start a plan on a future date' }, { status: 400 });
+      }
+    }
+
     const selection = {
       studentId,
       libraryId,
@@ -143,6 +153,7 @@ export async function POST(req: Request) {
       standaloneLockerId: standaloneLockerId || null,
       operation: typeof operation === 'string' ? (operation as any) : undefined,
       sourceBookingId: typeof sourceBookingId === 'string' ? sourceBookingId : undefined,
+      requestedStart,
     };
     
     // Parse payment details from body (expected in Paise)

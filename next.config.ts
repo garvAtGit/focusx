@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["firebase-admin"],
-  cacheComponents: true,
+
   turbopack: {
     root: process.cwd(),
   },
@@ -51,7 +51,7 @@ const nextConfig: NextConfig = {
             // Disable browser features this app never uses. `payment=*` is kept
             // open so Razorpay Checkout (which may use the Payment Request API in
             // a nested context) continues to work.
-            value: 'camera=(), microphone=(), geolocation=(), browsing-topics=(), payment=*',
+            value: 'camera=*, microphone=(), geolocation=(), browsing-topics=(), payment=*',
           },
           {
             key: 'Content-Security-Policy',
@@ -72,7 +72,7 @@ const nextConfig: NextConfig = {
               "font-src 'self' data: https:",
               "connect-src 'self' https: wss:",
               "frame-src 'self' https://*.razorpay.com https://api.razorpay.com https://www.google.com https://maps.google.com https://*.firebaseapp.com",
-              "media-src 'self' https:",
+              "media-src 'self' https: data:",
               "worker-src 'self' blob:",
               "object-src 'none'",
               "base-uri 'self'",
