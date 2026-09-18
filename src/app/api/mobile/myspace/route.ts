@@ -152,9 +152,8 @@ export async function GET(req: Request) {
       heatmap[dateStr] = totalMs / (1000 * 60 * 60); // convert to hours
     });
 
-      // Get the absolute latest log to determine current state, regardless of midnight rollovers
-      const lastLog = recentLogs[recentLogs.length - 1];
-      const isCheckedIn = lastLog ? lastLog.status === 'CHECK_IN' : false;
+    const lastLog = recentLogs.length > 0 ? recentLogs[recentLogs.length - 1] : null;
+    const isCheckedIn = lastLog ? lastLog.status === 'CHECK_IN' : false;
 
     return NextResponse.json({ 
       activeBookings, 
@@ -168,4 +167,3 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
-
