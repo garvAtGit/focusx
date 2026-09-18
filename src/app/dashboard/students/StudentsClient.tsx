@@ -1804,7 +1804,7 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                         )}
                         {log.reason?.startsWith("Unregistered RFID") && (
                           <button 
-                            onClick={() => setRfidTagToAssign(log.reason?.split(":")[1]?.trim() ?? null)}
+                            onClick={() => setRfidTagToAssign(log.reason?.replace("Unregistered RFID:", "").trim() ?? null)}
                             className="mt-1 block text-xs bg-primary text-primary-foreground font-bold px-2 py-1 rounded-md hover:opacity-90"
                           >
                             Assign RFID
