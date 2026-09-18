@@ -66,6 +66,16 @@ export async function POST(request: NextRequest) {
         where: { rfidTag: payload }
       });
       if (!user) {
+        // Log unknown card so it appears in dashboard!
+        await prisma.entryLog.create({
+          data: {
+            libraryId,
+            doorId: readerId,
+            timestamp: new Date(),
+            status: "DENIED",
+            reason: `Unregistered RFID: ${payload}`
+          }
+        });
         return NextResponse.json({ status: "DENY", message: "UNKNOWN CARD" }, { status: 200 });
       }
       studentId = user.id;
