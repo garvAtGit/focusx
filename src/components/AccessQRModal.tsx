@@ -10,7 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 
 import confetti from "canvas-confetti";
-
+import { auth } from '@/lib/firebase/clientApp';
 import { supabase } from "@/lib/supabase-client";
 
 export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: initialIsCheckedIn, initialQrPayload, children }: { libraryId: string; studentId: string; iconOnly?: boolean; isCheckedIn?: boolean; initialQrPayload?: string; children?: React.ReactNode }) {
@@ -20,11 +20,31 @@ export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: ini
   const [open, setOpen] = useState(false);
   const [isCheckedIn, setIsCheckedIn] = useState(initialIsCheckedIn ?? false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [successType, setSuccessType] = useState<boolean | null>(null);
+  const [supabaseToken, setSupabaseToken] = useState<string | null>(null);
 
   const qrDataRef = useRef<string | null>(initialQrPayload || null);
   const [firstIn, setFirstIn] = useState<Date | null>(null);
   const [lastOut, setLastOut] = useState<Date | null>(null);
   const isCheckedInRef = useRef(isCheckedIn);
+
+  // Fetch Supabase Token securely using Firebase Auth Listener
+  useEffect(() => {
+    if (!open) return;
+    
+    const unsubscribe = auth.onIdTokenChanged(async (user) => {
+      if (user) {
+        try {
+          const idToken = await user.getIdToken();
+          setSupabaseToken(idToken);
+        } catch (err) {
+          console.error("Failed to fetch Firebase ID token", err);
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, [open]);
 
   // Sync ref with state
   useEffect(() => {
@@ -32,6 +52,7 @@ export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: ini
   }, [isCheckedIn]);
 
   const triggerSuccess = (newStatus: boolean) => {
+    setSuccessType(newStatus);
     setShowSuccess(true);
     
     // Single satisfying vibration
@@ -54,18 +75,35 @@ export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: ini
     }, 3000);
   };
 
-  // Real-time listener for instant feedback
+  // PRIMARY NOTIFICATION: Supabase Realtime Broadcast (Zero Latency)
   useEffect(() => {
-    if (!open || !studentId) return;
+    if (!open || !studentId || !supabaseToken) return;
+
+    // Authenticate the realtime socket with the student's JWT
+    supabase.realtime.setAuth(supabaseToken);
 
     const channel = supabase
-      .channel('checkin-logs-modal')
+      .channel(`scan:${studentId}`, { config: { private: true } }) // Secure private channel
+      .on(
+        'broadcast', 
+        { event: 'scan_result' }, 
+        (payload) => {
+          const data = payload.payload;
+          if (data && data.status === 'ALLOW') {
+            const newStatus = data.passType === 'IN';
+            if (newStatus !== isCheckedInRef.current && qrDataRef.current) {
+              triggerSuccess(newStatus);
+            }
+          }
+        }
+      )
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'CheckinLog', filter: `studentId=eq.${studentId}` },
         (payload) => {
           const newStatus = payload.new.status === 'CHECK_IN';
-          if (newStatus !== isCheckedInRef.current && qrDataRef.current) {
+          // Fallback in case broadcast was missed
+          if (newStatus !== isCheckedInRef.current && qrDataRef.current && !showSuccess) {
             triggerSuccess(newStatus);
           }
         }
@@ -77,7 +115,7 @@ export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: ini
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [open, studentId]);
+  }, [open, studentId, supabaseToken]);
 
   // Generate secure QR payload
   useEffect(() => {
@@ -247,10 +285,10 @@ export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: ini
               </motion.div>
               <div className="text-center space-y-2">
                 <h3 className="text-2xl font-black text-foreground">
-                  {isCheckedIn ? "Checked In!" : "Checked Out!"}
+                  {successType ? "Checked In!" : "Checked Out!"}
                 </h3>
                 <p className="text-muted-foreground font-medium">
-                  {isCheckedIn ? "Have a productive session." : "See you next time!"}
+                  {successType ? "Have a productive session." : "See you next time!"}
                 </p>
               </div>
             </motion.div>
@@ -266,7 +304,6 @@ export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: ini
                   size={220}
                   level="Q"
                   className="rounded-md" 
-                  fgColor={isCheckedIn ? "#ea580c" : "#059669"}
                 />
                 
                 {/* Scanning animation overlay */}

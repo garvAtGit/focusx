@@ -45,14 +45,14 @@ export function ManualNotifyModal({ studentId, studentName }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <button
-          className="flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 px-3 py-1.5 rounded-lg border border-primary/20 bg-primary/5 hover:bg-primary/10 transition-colors"
+      <DialogTrigger>
+        <div
+          className="flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 px-3 py-1.5 rounded-lg border border-primary/20 bg-primary/5 hover:bg-primary/10 transition-colors cursor-pointer"
           title="Send notification to this student"
         >
           <Bell className="w-3.5 h-3.5" />
           Notify
-        </button>
+        </div>
       </DialogTrigger>
 
       <DialogContent className="sm:max-w-md">

@@ -7,7 +7,7 @@ import { MobileNav } from "./MobileNav";
 import { logout, getSession } from "@/app/actions/auth-actions";
 import { Suspense } from "react";
 import { CommandPalette } from "@/components/command/CommandPalette";
-import { Search, LayoutDashboard, Users, MessageSquare, HelpCircle, Wallet, Grid, List, ShieldCheck, UserCheck, AppWindow, Settings, LogOut, Zap } from "lucide-react";
+import { Search, LayoutDashboard, Users, MessageSquare, HelpCircle, Wallet, Grid, List, ShieldCheck, UserCheck, AppWindow, Settings, LogOut, Zap, ScanLine } from "lucide-react";
 import prisma from "@/lib/prisma";
 import { getActiveLibrary } from "@/lib/dashboard-utils";
 import { AdminLibrarySwitcher } from "@/components/AdminLibrarySwitcher";
@@ -88,6 +88,9 @@ async function DashboardAuthWrapper({ children }: { children: ReactNode }) {
               Automations
             </NavItem>
           )}
+          <NavItem href="/dashboard/scanner" icon={<ScanLine />}>
+            Web Scanner
+          </NavItem>
         </nav>
 
         <div className="p-4 border-t border-sidebar-border mt-auto">
