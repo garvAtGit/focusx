@@ -142,10 +142,10 @@ export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: ini
         'broadcast', 
         { event: 'scan_result' }, 
         (payload) => {
-          console.log(`[Diagnostic][${cid}][+${(performance.now() - t0Ref.current).toFixed(0)}ms] scan_result RECEIVED`, { passType: payload.payload?.passType });
+          console.log(`[Diagnostic][${cid}][+${(performance.now() - t0Ref.current).toFixed(0)}ms] scan_result RECEIVED`, payload.payload);
           const data = payload.payload;
-          if (data && data.status === 'ALLOW') {
-            const newStatus = data.passType === 'IN';
+          if (data && (data.status === 'CHECK_IN' || data.status === 'CHECK_OUT')) {
+            const newStatus = data.status === 'CHECK_IN';
             if (newStatus !== isCheckedInRef.current && qrDataRef.current) {
               console.log(`[Diagnostic][${cid}][+${(performance.now() - t0Ref.current).toFixed(0)}ms] triggerSuccess() called from Realtime`);
               triggerSuccess(newStatus);
