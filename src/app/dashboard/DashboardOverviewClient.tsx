@@ -13,8 +13,14 @@ import {
   Tooltip, ResponsiveContainer 
 } from 'recharts';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { useRouter } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
 import { formatStandardDate } from "@/lib/date-utils";
 import { StudentProfileModal } from "@/components/StudentProfileModal";
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 export function DashboardOverviewClient({
   library,
@@ -39,6 +45,27 @@ export function DashboardOverviewClient({
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
   const [isLoadingChart, setIsLoadingChart] = useState(false);
+
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!supabaseUrl || !supabaseKey) return;
+    const channel = supabase
+      .channel('dashboard-realtime')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'EntryLog', filter: `libraryId=eq.${library.id}` },
+        () => {
+          // Trigger a seamless Next.js server component re-render
+          router.refresh();
+        }
+      )
+      .subscribe();
+      
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [library.id, router]);
 
   useEffect(() => {
     if (dateRange === "30d" && !customStart) {
