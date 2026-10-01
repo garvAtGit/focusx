@@ -22,7 +22,7 @@ export async function publishOutbox(eventId: string) {
     // 1. Publish to Student Private Channel (Full payload)
     const studentTopic = `scan:${encodeURIComponent(outbox.studentId!)}`;
     const studentEvent = encodeURIComponent('scan_result');
-    const studentUrl = `${supabaseUrl}/realtime/v1/api/broadcast/${studentTopic}/events/${studentEvent}?private=true`;
+    const studentUrl = `${supabaseUrl}/realtime/v1/api/broadcast/${studentTopic}/events/${studentEvent}`;
 
     const tStart = performance.now();
     let studentResStatus = 0;
@@ -61,7 +61,7 @@ export async function publishOutbox(eventId: string) {
     if (checkinLog) {
       const libTopic = `library_scans:${encodeURIComponent(checkinLog.libraryId)}`;
       const libEvent = encodeURIComponent('scanner_update');
-      const libUrl = `${supabaseUrl}/realtime/v1/api/broadcast/${libTopic}/events/${libEvent}?private=true`;
+      const libUrl = `${supabaseUrl}/realtime/v1/api/broadcast/${libTopic}/events/${libEvent}`;
       
       const libPayload = {
         status: checkinLog.status,
