@@ -72,7 +72,8 @@ export async function POST(req: NextRequest) {
       typeof body.standaloneLockerId === "string"
         ? body.standaloneLockerId
         : null
-    const hasLocker = body.hasLocker === true;\n    const requestedStart = body.date ? new Date(body.date) : undefined;
+    const hasLocker = body.hasLocker === true;
+    const requestedStart = body.date ? new Date(body.date) : undefined;
 
     if (!planId) {
       return NextResponse.json(
