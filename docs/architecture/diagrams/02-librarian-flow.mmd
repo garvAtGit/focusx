@@ -1,0 +1,21 @@
+flowchart TD
+    Start([Librarian Logs In])
+    Dashboard[View Library Dashboard]
+    
+    subgraph Management
+        Seats[Manage Seats/Plans]
+        Staff[Manage Receptionists]
+    end
+    
+    subgraph Operations
+        ManualBook[Process Manual Bookings]
+        Refunds[Approve Refunds]
+        Logs[View Live Entry Logs]
+    end
+
+    Start --> Dashboard
+    Dashboard --> Seats
+    Dashboard --> Staff
+    Dashboard --> ManualBook
+    Dashboard --> Refunds
+    Dashboard --> Logs

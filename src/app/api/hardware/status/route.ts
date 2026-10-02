@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import prisma from '@/lib/prisma';
 import { verifyRelayKey } from '@/lib/relay-auth'; // Assuming verifyRelayKey is in your auth lib
 
 export async function POST(req: Request) {
@@ -24,8 +24,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ status: 'ERROR', message: 'Missing readerId' }, { status: 400 });
     }
 
-    const relay = await prisma.relay.findUnique({
-      where: { bleReaderId: readerId },
+    const relay = await prisma.relay.findFirst({
+      where: { OR: [{ bleReaderId: readerId }, { macAddress: readerId }] },
     });
 
     if (!relay) {
@@ -33,7 +33,7 @@ export async function POST(req: Request) {
     }
 
     await prisma.relay.update({
-      where: { bleReaderId: readerId },
+      where: { id: relay.id },
       data: {
         lastSync: new Date(),
         status: 'ONLINE',

@@ -1,0 +1,14 @@
+flowchart TD
+    Start([Admin Logs In])
+    GlobalDash[Global Admin Dashboard]
+    
+    ApproveLib[Review & Approve Libraries KYC]
+    ManageAll[Manage All Users & Libraries]
+    GlobalStats[View Platform Stats]
+    Hardware[Monitor Hardware Relays]
+
+    Start --> GlobalDash
+    GlobalDash --> ApproveLib
+    GlobalDash --> ManageAll
+    GlobalDash --> GlobalStats
+    GlobalDash --> Hardware

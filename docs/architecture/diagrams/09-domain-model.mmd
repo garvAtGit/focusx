@@ -1,0 +1,70 @@
+erDiagram
+    USER {
+        string id PK
+        string role "STUDENT, LIBRARIAN, ADMIN, RECEPTIONIST"
+        string phone
+        string email
+        string kycAadhaarStatus
+        int walletBalance
+    }
+    LIBRARY {
+        string id PK
+        string librarianId FK
+        string name
+        string kycStatus
+        boolean compactSeatMap
+    }
+    SEAT {
+        string id PK
+        string libraryId FK
+        string name
+        string type "RESERVED, NORMAL, PREMIUM"
+        boolean hasLocker
+    }
+    PLAN {
+        string id PK
+        string libraryId FK
+        string name
+        string type "FIXED, FLEXIBLE"
+        float price
+    }
+    BOOKING_INTENT {
+        string id PK
+        string studentId FK
+        string libraryId FK
+        string status "HOLDING, CONFIRMED, CANCELLED"
+        string providerPaymentId
+    }
+    BOOKING {
+        string id PK
+        string studentId FK
+        string libraryId FK
+        string planId FK
+        string seatId FK
+        string status "PENDING_PAYMENT, CONFIRMED, CANCELLED"
+        dateTime startTime
+        dateTime endTime
+    }
+    ENTRY_LOG {
+        string id PK
+        string userId FK
+        string libraryId FK
+        dateTime timestamp
+        string status
+    }
+    RELAY {
+        string id PK
+        string libraryId FK
+        string nfcTagId
+        string status
+    }
+
+    USER ||--o{ LIBRARY : "Manages (Librarian)"
+    USER ||--o{ BOOKING : "Makes (Student)"
+    LIBRARY ||--o{ SEAT : "Has"
+    LIBRARY ||--o{ PLAN : "Offers"
+    LIBRARY ||--o{ RELAY : "Installs"
+    SEAT ||--o{ BOOKING : "Allocated to"
+    PLAN ||--o{ BOOKING : "Defines rules for"
+    BOOKING_INTENT ||--o| BOOKING : "Results in"
+    USER ||--o{ ENTRY_LOG : "Generates"

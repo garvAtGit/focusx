@@ -53,7 +53,8 @@ export async function POST(req: Request) {
 
     // 3. Parse the booking selection from the body
     const body = await req.json()
-    const { libraryId, planId, seatId, hasLocker, standaloneLockerId } = body
+    const { libraryId, planId, seatId, hasLocker, standaloneLockerId, date } = body
+    const requestedStart = date ? new Date(date) : undefined
 
     if (!libraryId || !planId) {
       return NextResponse.json(
@@ -125,6 +126,7 @@ export async function POST(req: Request) {
       hasLocker: Boolean(hasLocker),
       standaloneLockerId: standaloneLockerId || null,
       idempotencyKey,
+      requestedStart,
     })
 
     await invalidateLibraryRuntimeCache(libraryId)

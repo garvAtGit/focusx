@@ -1,0 +1,26 @@
+sequenceDiagram
+    actor Student
+    participant UI as Student Web/App
+    participant API as Next.js API / Server Actions
+    participant BookingEngine as Booking Logic
+    participant DB as PostgreSQL
+    participant RZP as Razorpay
+
+    Student->>UI: Select Plan & Seat
+    UI->>API: Initialize Booking (POST /api/...)
+    API->>BookingEngine: Validate Availability & Rules
+    BookingEngine->>DB: Create BookingIntent (HOLDING)
+    BookingEngine->>DB: Create ResourceLease (Temp Lock)
+    API->>RZP: Create Razorpay Order
+    RZP-->>API: order_id
+    API-->>UI: Return order_id
+    
+    Student->>UI: Pay via Razorpay Checkout
+    UI->>RZP: Complete Payment
+    RZP-->>Student: Success
+    
+    note over API,RZP: Asynchronous Webhook
+    RZP->>API: Webhook POST /api/webhooks/razorpay (payment.captured)
+    API->>DB: Validate signature & fetch intent
+    API->>DB: Update BookingIntent (CONFIRMED)
+    API->>DB: Create permanent Booking record

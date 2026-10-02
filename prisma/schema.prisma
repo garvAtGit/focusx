@@ -318,6 +318,7 @@ model Relay {
   bleReaderId String?      @unique
   status      String       @default("ONLINE")
   lastSync    DateTime     @default(now())
+  lastSeenAt  DateTime?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   logs        CheckinLog[]

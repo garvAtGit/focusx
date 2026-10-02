@@ -1,0 +1,21 @@
+sequenceDiagram
+    actor User
+    participant UI as Login Page
+    participant FB_Client as Firebase Client SDK
+    participant API as Next.js Protected Route
+    participant Middleware as Next.js Middleware
+    participant FB_Admin as Firebase Admin SDK
+    participant DB as PostgreSQL
+
+    User->>UI: Submits phone number (OTP) / Magic Link
+    UI->>FB_Client: Authenticate
+    FB_Client-->>UI: Returns Firebase ID Token
+    UI->>API: Request with Session Cookie / Token
+    
+    note over Middleware,FB_Admin: Request Interception
+    API->>Middleware: Intercept Request
+    Middleware->>FB_Admin: Verify ID Token Signature
+    FB_Admin-->>Middleware: Token Valid (uid)
+    Middleware->>DB: Check/Create User Record
+    Middleware-->>API: Allow Request (Add User Context)
+    API-->>User: Authorized Response

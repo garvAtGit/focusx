@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
 
     // 3. Resolve Relay/Door
     const relay = await prisma.relay.findFirst({
-      where: { bleReaderId: readerId }
+      where: { OR: [{ bleReaderId: readerId }, { macAddress: readerId }] }
     });
 
     if (!relay) {
