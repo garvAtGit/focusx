@@ -210,7 +210,7 @@ model Booking {
 }
 
 model BookingIntent {
-  providerOrderId String? @unique
+  providerOrderId     String?             @unique
   id                  String              @id @default(uuid())
   referenceId         String              @unique
   idempotencyKey      String?             @unique
@@ -311,35 +311,35 @@ model Query {
 }
 
 model Relay {
-  id         String       @id @default(uuid())
-  libraryId  String
-  macAddress String?
-  nfcTagId   String       @unique
-  bleReaderId String?     @unique
-  status     String       @default("ONLINE")
-  lastSync   DateTime     @default(now())
-  createdAt  DateTime     @default(now())
-  updatedAt  DateTime     @updatedAt
-  logs       CheckinLog[]
-  library    Library      @relation(fields: [libraryId], references: [id])
+  id          String       @id @default(uuid())
+  libraryId   String
+  macAddress  String?
+  nfcTagId    String       @unique
+  bleReaderId String?      @unique
+  status      String       @default("ONLINE")
+  lastSync    DateTime     @default(now())
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  logs        CheckinLog[]
+  library     Library      @relation(fields: [libraryId], references: [id])
 
   @@index([libraryId])
 }
 
 model CheckinLog {
   realtimeOutbox RealtimeOutbox?
-  id            String        @id @default(uuid())
-  studentId     String
-  libraryId     String
-  relayId       String?
-  eventId       String?       @unique
-  status        CheckinStatus
-  timestamp     DateTime      @default(now())
-  isOfflineSync Boolean       @default(false)
-  createdAt     DateTime      @default(now())
-  library       Library       @relation(fields: [libraryId], references: [id])
-  relay         Relay?        @relation(fields: [relayId], references: [id])
-  student       User          @relation("StudentCheckins", fields: [studentId], references: [id])
+  id             String          @id @default(uuid())
+  studentId      String
+  libraryId      String
+  relayId        String?
+  eventId        String?         @unique
+  status         CheckinStatus
+  timestamp      DateTime        @default(now())
+  isOfflineSync  Boolean         @default(false)
+  createdAt      DateTime        @default(now())
+  library        Library         @relation(fields: [libraryId], references: [id])
+  relay          Relay?          @relation(fields: [relayId], references: [id])
+  student        User            @relation("StudentCheckins", fields: [studentId], references: [id])
 
   @@index([libraryId, timestamp])
   @@index([studentId, libraryId])
@@ -440,19 +440,19 @@ model CanvasState {
 // ---------------------------------------------------------------------------
 
 model LibraryRule {
-  id                String            @id @default(uuid())
+  id                String             @id @default(uuid())
   libraryId         String
   name              String
-  isActive          Boolean           @default(true)
+  isActive          Boolean            @default(true)
   trigger           RuleTrigger
   conditionField    RuleConditionField
   conditionOperator RuleOperator
   conditionValue    Float
   action            RuleAction
-  actionMessage     String?           // Optional template with {name}, {overstay_hours} etc.
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-  library           Library           @relation(fields: [libraryId], references: [id])
+  actionMessage     String? // Optional template with {name}, {overstay_hours} etc.
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  library           Library            @relation(fields: [libraryId], references: [id])
   executions        RuleExecution[]
 
   @@index([libraryId])
@@ -460,16 +460,16 @@ model LibraryRule {
 }
 
 model RuleExecution {
-  id          String      @id @default(uuid())
-  ruleId      String
-  libraryId   String
-  studentId   String
-  trigger     RuleTrigger
-  action      RuleAction
-  status      RuleExecutionStatus @default(SUCCESS)
+  id           String              @id @default(uuid())
+  ruleId       String
+  libraryId    String
+  studentId    String
+  trigger      RuleTrigger
+  action       RuleAction
+  status       RuleExecutionStatus @default(SUCCESS)
   errorMessage String?
-  executedAt  DateTime    @default(now())
-  rule        LibraryRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  executedAt   DateTime            @default(now())
+  rule         LibraryRule         @relation(fields: [ruleId], references: [id], onDelete: Cascade)
 
   @@index([ruleId])
   @@index([libraryId, executedAt])
@@ -610,24 +610,21 @@ enum RuleExecutionStatus {
   SKIPPED
 }
 
-
-
-
 model RealtimeOutbox {
-  id String @id @default(uuid())
-  eventId String @unique
-  topic String?
-  payload Json
-  status String @default("PENDING")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @default(now()) @updatedAt
-  checkinLogId String? @unique
-  checkinLog CheckinLog? @relation(fields: [checkinLogId], references: [id])
-  studentId String?
-  isPublished Boolean @default(false)
-  attempts Int @default(0)
+  id            String      @id @default(uuid())
+  eventId       String      @unique
+  topic         String?
+  payload       Json
+  status        String      @default("PENDING")
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @default(now()) @updatedAt
+  checkinLogId  String?     @unique
+  checkinLog    CheckinLog? @relation(fields: [checkinLogId], references: [id])
+  studentId     String?
+  isPublished   Boolean     @default(false)
+  attempts      Int         @default(0)
   nextAttemptAt DateTime?
-  lastError String?
+  lastError     String?
 }
 
 model HardwareClaim {
@@ -637,8 +634,7 @@ model HardwareClaim {
   bleReaderId String?
   nfcTagId    String?
   isClaimed   Boolean  @default(false)
-  libraryId   String?  // Once claimed, store which library took it
+  libraryId   String? // Once claimed, store which library took it
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
-
