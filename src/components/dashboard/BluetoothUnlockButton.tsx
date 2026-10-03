@@ -25,8 +25,8 @@ export function BluetoothUnlockButton({ libraryId }: BluetoothUnlockButtonProps)
 
       // Request a Bluetooth device (filtering by service UUID is more reliable)
       const device = await nav.bluetooth.requestDevice({
-        filters: [{ services: ['4fafc201-1fb5-459e-8fcc-c5c9c331914b'] }],
-        optionalServices: ['4fafc201-1fb5-459e-8fcc-c5c9c331914b']
+        filters: [{ services: ['87b99b2c-90fd-11e9-bc42-526af7764f64'] }],
+        optionalServices: ['87b99b2c-90fd-11e9-bc42-526af7764f64']
       });
 
       // Connect to GATT server
@@ -34,25 +34,19 @@ export function BluetoothUnlockButton({ libraryId }: BluetoothUnlockButtonProps)
       if (!server) throw new Error('Could not connect to GATT server.');
 
       // Get the service
-      const service = await server.getPrimaryService('4fafc201-1fb5-459e-8fcc-c5c9c331914b');
+      const service = await server.getPrimaryService('87b99b2c-90fd-11e9-bc42-526af7764f64');
       
       // Get the characteristic
-      const characteristic = await service.getCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8');
+      const characteristic = await service.getCharacteristic('87b99b2c-90fd-11e9-bc42-526af7764f65');
 
-      // Fetch the signed token from our backend
-      const res = await fetch('/api/student/ble-token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ libraryId })
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to get token');
-
-      // Write the token to the ESP32
+      // Write the unlock command to the ESP32
       const encoder = new TextEncoder();
-      const tokenBuffer = encoder.encode(data.token);
+      const tokenBuffer = encoder.encode("UNLOCK_IN");
       await characteristic.writeValue(tokenBuffer);
+
+      // Also trigger a normal check-in to update the database
+      fetch('/api/mobile/attendance/ble?readerId=87b99b2c-90fd-11e9-bc42-526af7764f64:1:1')
+        .catch(console.error);
 
       toast.success('Door Unlocked!', { id: 'ble' });
       
