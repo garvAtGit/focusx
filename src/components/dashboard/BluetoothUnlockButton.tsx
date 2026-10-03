@@ -23,10 +23,8 @@ export function BluetoothUnlockButton({ libraryId }: BluetoothUnlockButtonProps)
       setIsConnecting(true);
       toast.loading('Pairing...', { id: 'ble' });
 
-      // Request a Bluetooth device by Name instead of Service UUID
-      // This bypasses Windows/Chrome bugs where Service UUIDs in Scan Responses are ignored
       const device = await nav.bluetooth.requestDevice({
-        filters: [{ name: 'FocusX' }],
+        acceptAllDevices: true,
         optionalServices: ['87b99b2c-90fd-11e9-bc42-526af7764f64']
       });
 
