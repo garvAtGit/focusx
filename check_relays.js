@@ -1,7 +1,10 @@
-const { Client } = require('pg');
-const client = new Client({ connectionString: 'postgresql://postgres.iiozcipbxsmjasgglsyf:0GUUxdo6XOgiQFIR@aws-1-ap-southeast-1.pooler.supabase.com:6543/postgres' });
-client.connect().then(async () => {
-    const res = await client.query('SELECT id, "bleReaderId", "macAddress" FROM "Relay"');
-    console.log(res.rows);
-    client.end();
-});
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
+
+async function check() {
+  const relays = await prisma.relay.findMany({
+    take: 10
+  });
+  console.log("Relays in DB:", JSON.stringify(relays, null, 2));
+}
+check().then(() => process.exit(0)).catch(e => { console.error(e); process.exit(1); });

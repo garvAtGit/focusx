@@ -10,6 +10,26 @@ export default function HardwareSetupClient({ libraryId, initialHardware }: { li
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const router = useRouter();
 
+  const handleSelfDestruct = async (hwId: string) => {
+    if (!confirm('Are you sure you want to factory reset this device? It will erase all memory and reboot into setup mode.')) return;
+    
+    try {
+      const res = await fetch('/api/hardware/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: hwId, command: 'factory_reset' })
+      });
+      if (res.ok) {
+        alert('Self-destruct command queued! The device will wipe its memory on the next ping or realtime update.');
+      } else {
+        alert('Failed to send command.');
+      }
+    } catch (e) {
+      alert('Error sending command.');
+    }
+  };
+
+
   const handleClaim = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!claimCode || claimCode.length < 5) return;
@@ -111,13 +131,20 @@ export default function HardwareSetupClient({ libraryId, initialHardware }: { li
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold" style={{
-                  backgroundColor: new Date(hw.lastSync).getTime() > Date.now() - 120000 ? '#dcfce7' : '#fee2e2',
-                  color: new Date(hw.lastSync).getTime() > Date.now() - 120000 ? '#15803d' : '#b91c1c'
-                }}>
-                  <span className={`w-2 h-2 rounded-full ${new Date(hw.lastSync).getTime() > Date.now() - 120000 ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></span>
-                  {new Date(hw.lastSync).getTime() > Date.now() - 120000 ? "ONLINE" : "OFFLINE"}
+                
+                <div className="flex flex-col items-end gap-2">
+                  <div className="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold" style={{
+                    backgroundColor: new Date((hw.lastSeenAt || hw.lastSync)).getTime() > Date.now() - 120000 ? '#dcfce7' : '#fee2e2',
+                    color: new Date((hw.lastSeenAt || hw.lastSync)).getTime() > Date.now() - 120000 ? '#15803d' : '#b91c1c'
+                  }}>
+                    <span className={`w-2 h-2 rounded-full ${new Date((hw.lastSeenAt || hw.lastSync)).getTime() > Date.now() - 120000 ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></span>
+                    {new Date((hw.lastSeenAt || hw.lastSync)).getTime() > Date.now() - 120000 ? "ONLINE" : "OFFLINE"}
+                  </div>
+                  <button onClick={() => handleSelfDestruct(hw.id)} className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-700 text-xs rounded-md transition-colors font-medium border border-red-200 shadow-sm">
+                    Factory Reset
+                  </button>
                 </div>
+
               </div>
             ))
           )}

@@ -14,6 +14,7 @@ import { StudentLeaderboard } from "@/components/dashboard/StudentLeaderboard";
 
 import { formatStandardDate, formatStandardDateTime } from "@/lib/date-utils";
 import { startOfDay, startOfWeek, startOfMonth, differenceInMinutes } from 'date-fns';
+import CozyWinterDashboard from "@/components/winter-arc/CozyWinterDashboard";
 
 const formatDate = (date: Date) => formatStandardDate(date);
 const formatDateTime = (date: Date) => formatStandardDateTime(date);
@@ -23,6 +24,16 @@ export default async function StudentDashboardPage() {
   // librarians/admins browsing the site as a regular user.
   const session = await getSession();
   if (!session) redirect("/login");
+
+  let hasPledged = false;
+  let pledgeData = null;
+  if (process.env.WINTER_ARC_ACTIVE === "true") {
+    const pledge = await prisma.winterArcEnrollment.findUnique({
+      where: { studentId: session.userId }
+    });
+    hasPledged = !!pledge;
+    pledgeData = pledge;
+  }
 
   const now = new Date();
 
@@ -49,6 +60,10 @@ export default async function StudentDashboardPage() {
       orderBy: { timestamp: 'asc' }
     })
   ]);
+
+  if (process.env.WINTER_ARC_ACTIVE === "true" && hasPledged) {
+    return <CozyWinterDashboard student={student} pledge={pledgeData} recentLogs={recentLogs} />;
+  }
 
   if (!student) redirect("/login");
 

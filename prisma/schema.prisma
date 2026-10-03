@@ -48,6 +48,7 @@ model User {
   walletBalance               Int                @default(0)
   currentStreak               Int                @default(0)
   lastActiveDate              DateTime?
+  winterArcEnrollment         WinterArcEnrollment?
   bookings                    Booking[]
   bookingIntents              BookingIntent[]
   canvasState                 CanvasState?
@@ -319,6 +320,7 @@ model Relay {
   status      String       @default("ONLINE")
   lastSync    DateTime     @default(now())
   lastSeenAt  DateTime?
+  pendingCommand String?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   logs        CheckinLog[]
@@ -639,3 +641,14 @@ model HardwareClaim {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
+
+model WinterArcEnrollment {
+  id            String   @id @default(uuid())
+  studentId     String   @unique
+  student       User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  leagueHours   Int
+  targetHours   Int
+  discount      Int
+  createdAt     DateTime @default(now())
+}
+

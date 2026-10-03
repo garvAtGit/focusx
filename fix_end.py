@@ -1,20 +1,17 @@
+import sys
 
-import re
-with open(r"C:\Users\thees\Compound\Desktop\Library Near\esp32_unified_hardware\esp32_unified_hardware.ino", "r") as f:
-    text = f.read()
+file_path = r'C:\Users\thees\Compound\Desktop\01_Active Projects\Library Near\dashboard\FocusX_Scanner_Firmware_V5_DualRFID\FocusX_Scanner_Firmware_V5_DualRFID.ino'
 
-# Restore globalHttp.end()
-scan_end = """
-      }
-      globalHttp.end(); // Keep this! It frees String buffers, but respects keep-alive because of setReuse(true)!
-    } else {
-       strncpy(res.message, "HTTP SETUP FAIL", sizeof(res.message)-1); res.message[sizeof(res.message)-1] = 0;
-    }
-"""
+with open(file_path, 'r', encoding='utf-8') as f:
+    content = f.read()
 
-text = re.sub(r"      \}\s*// Do NOT call globalClient\.stop\(\) so the TLS socket stays alive for the next tap!\s*\} else \{", scan_end, text, flags=re.DOTALL)
+content = content.replace('// DO NOT CALL vercelHttp.end() IF REUSING!', 'vercelHttp.end();')
+content = content.replace('// DO NOT CALL supabaseHttp.end() IF REUSING!', 'supabaseHttp.end();')
 
-with open(r"C:\Users\thees\Compound\Desktop\Library Near\esp32_unified_hardware\esp32_unified_hardware.ino", "w") as f:
-    f.write(text)
-print("End restored!")
+# Fix the httpPatch issue inside the remoteOpenIn logic where it tries to reuse the SAME supabaseClient while supabaseHttp is technically still active!
+# Actually, since we now call supabaseHttp.end() AFTER the block, it IS still active!
+# To fix this, I will just make httpPatch use its own client!
+content = content.replace('HTTPClient httpPatch;\n                  if (httpPatch.begin(supabaseClient, patchUrl)) {', 'WiFiClientSecure patchClient; patchClient.setInsecure(); HTTPClient httpPatch;\n                  if (httpPatch.begin(patchClient, patchUrl)) {')
 
+with open(file_path, 'w', encoding='utf-8') as f:
+    f.write(content)

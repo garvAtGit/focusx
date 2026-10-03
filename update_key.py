@@ -1,11 +1,12 @@
+import os
 import re
 
-with open(r'C:\Users\thees\Compound\Desktop\Library Near\esp32_unified_hardware\esp32_unified_hardware.ino', 'r', encoding='utf-8') as f:
-    text = f.read()
+p = r'C:\Users\thees\Compound\Desktop\01_Active Projects\Library Near\dashboard\FocusX_Scanner_Firmware_V5_DualRFID\FocusX_Scanner_Firmware_V5_DualRFID.ino'
+with open(p, 'r') as f:
+    c = f.read()
 
-text = text.replace('const char* HARDWARE_API_KEY = "YOUR_VERCEL_RELAY_API_KEY";', 'const char* HARDWARE_API_KEY = "my_secret_library_door_key_123";')
+# Replace the fake API key with the real one
+c = c.replace('"YOUR_API_KEY_HERE"', '"my_secret_library_door_key_123"')
 
-with open(r'C:\Users\thees\Compound\Desktop\Library Near\esp32_unified_hardware\esp32_unified_hardware.ino', 'w', encoding='utf-8') as f:
-    f.write(text)
-
-print("Updated API key")
+with open(p, 'w') as f:
+    f.write(c)

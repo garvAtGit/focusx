@@ -718,7 +718,7 @@ void sendHardwarePing() {
       NetworkClientSecure client;
       client.setInsecure();
       HTTPClient http;
-      String url = String(API_BASE_URL) + "/api/hardware/ping";
+      String url = "https://www.focusx.in/api/hardware/ping";
       http.begin(client, url);
       http.addHeader("Content-Type", "application/json");
       String payload = "{\"readerId\": \"" + String(READER_ID) + "\"}";

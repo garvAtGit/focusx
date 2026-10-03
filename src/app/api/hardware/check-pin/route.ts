@@ -15,3 +15,29 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }
 }
+
+export async function POST(request: NextRequest) {
+  try {
+    const { mac } = await request.json();
+    if (!mac) return NextResponse.json({ error: "Missing mac" }, { status: 400 });
+
+    // Look for the relay by macAddress or bleReaderId
+    const relay = await prisma.relay.findFirst({
+      where: {
+        OR: [
+          { macAddress: mac },
+          { bleReaderId: mac }
+        ]
+      }
+    });
+
+    if (relay) {
+      return NextResponse.json({ claimed: true });
+    } else {
+      return NextResponse.json({ claimed: false });
+    }
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json({ error: "Internal error" }, { status: 500 });
+  }
+}

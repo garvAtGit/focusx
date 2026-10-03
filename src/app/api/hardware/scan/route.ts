@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
     // 4. Resolve Student ID
     let studentId: string | null = null;
 
-    if (scanType === "QR") {
+    if (scanType.toUpperCase() === "QR") {
       try {
         const qrData = JSON.parse(payload);
         if (!qrData.uid || !qrData.iat) {
@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
       } catch (e) {
         return NextResponse.json({ status: "DENY", message: "INVALID QR" }, { status: 200 });
       }
-    } else if (scanType === "RFID") {
+    } else if (scanType.toUpperCase() === "RFID") {
       const user = await prisma.user.findUnique({
         where: { rfidTag: payload }
       });

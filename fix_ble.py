@@ -1,34 +1,43 @@
+import sys
 import re
 
-with open(r'C:\Users\thees\Compound\Desktop\Library Near\esp32_unified_hardware\esp32_unified_hardware.ino', 'r', encoding='utf-8') as f:
-    text = f.read()
+file_path = r'C:\Users\thees\Compound\Desktop\01_Active Projects\Library Near\dashboard\FocusX_Scanner_Firmware_V5_DualRFID\FocusX_Scanner_Firmware_V5_DualRFID.ino'
 
-# Remove initBLE() from its current position
-text = text.replace('  // 5. BLE (Immediate Independent Startup)\n  initBLE();\n\n\n\n', '')
+with open(file_path, 'r') as f:
+    content = f.read()
 
-# Insert it AFTER the WiFi block
-old_wifi_end = '''  } else {
-    Serial.println("[WIFI] Connected Successfully!");
-  }
+# 1. Update setup() where READER_ID is assigned
+old_setup_reader = '''  if (READER_ID == "") {
+    READER_ID = WiFi.macAddress();
+    READER_ID.replace(":", "");
+  }'''
 
-  // Save updated preferences
-  
-  
-  preferences.end();'''
+new_setup_reader = '''  if (READER_ID == "") {
+    uint8_t mac[6];
+    WiFi.macAddress(mac);
+    int major = (mac[2] << 8) | mac[3];
+    int minor = (mac[4] << 8) | mac[5];
+    char beacon_id[64];
+    snprintf(beacon_id, sizeof(beacon_id), "87b99b2c-90fd-11e9-bc42-526af7764f64:%d:%d", major, minor);
+    READER_ID = String(beacon_id);
+  }'''
 
-new_wifi_end = '''  } else {
-    Serial.println("[WIFI] Connected Successfully!");
-  }
+content = content.replace(old_setup_reader, new_setup_reader)
 
-  preferences.end();
+# 2. Update initBLE() to inject the MAC bytes into the beacon
+old_ble = '''  m_beacon_data[20] = 0x00;
+  m_beacon_data[21] = 0x01;
+  m_beacon_data[22] = 0x00;
+  m_beacon_data[23] = 0x01;'''
 
-  // 5. BLE (Start BLE ONLY AFTER WiFi setup completes to prevent radio conflicts)
-  initBLE();
-'''
+new_ble = '''  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  m_beacon_data[20] = mac[2];
+  m_beacon_data[21] = mac[3];
+  m_beacon_data[22] = mac[4];
+  m_beacon_data[23] = mac[5];'''
 
-text = text.replace(old_wifi_end, new_wifi_end)
+content = content.replace(old_ble, new_ble)
 
-with open(r'C:\Users\thees\Compound\Desktop\Library Near\esp32_unified_hardware\esp32_unified_hardware.ino', 'w', encoding='utf-8') as f:
-    f.write(text)
-
-print("Moved BLE initialization after WiFi setup.")
+with open(file_path, 'w') as f:
+    f.write(content)

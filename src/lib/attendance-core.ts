@@ -150,6 +150,18 @@ export async function processAttendanceIntent(intent: AttendanceIntent) {
       }
     }
 
+    if (relayId) {
+      const command = txResult.newStatus === "CHECK_IN" ? "open_in" : "open_out";
+      try {
+        await prisma.relay.update({
+          where: { id: relayId },
+          data: { pendingCommand: command }
+        });
+      } catch (e) {
+        console.error("[processAttendanceIntent] Set pendingCommand failed:", e);
+      }
+    }
+
     return { 
       success: true, 
       status: txResult.newStatus, 

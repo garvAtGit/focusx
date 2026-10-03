@@ -1,36 +1,33 @@
-import re
+import sys
 
-with open(r'C:\Users\thees\Compound\Desktop\Library Near\esp32_unified_hardware\esp32_unified_hardware.ino', 'r', encoding='utf-8') as f:
-    text = f.read()
+file_path = r'C:\Users\thees\Compound\Desktop\01_Active Projects\Library Near\dashboard\FocusX_Scanner_Firmware_V5_DualRFID\FocusX_Scanner_Firmware_V5_DualRFID.ino'
 
-# Increase HTTP timeout
-old_http = '''  HTTPClient http;
-  // Automatically uses NetworkClientSecure with setInsecure() internally when no CA cert is provided!
-  if (http.begin(API_URL)) {'''
+with open(file_path, 'r') as f:
+    content = f.read()
 
-new_http = '''  HTTPClient http;
-  // Increase timeout to 15 seconds because BLE advertising shares the 2.4GHz radio 
-  // and severely delays TLS handshakes!
-  http.setConnectTimeout(15000);
-  http.setTimeout(15000);
-  // Automatically uses NetworkClientSecure with setInsecure() internally when no CA cert is provided!
-  if (http.begin(API_URL)) {'''
+# Fix the outer else block to say TIMEOUT and restore the inner else block
+content = content.replace('if (xQueueReceive(authResponseQueue, &res, 6000 / portTICK_PERIOD_MS) == pdPASS) {', 'if (xQueueReceive(authResponseQueue, &res, 8000 / portTICK_PERIOD_MS) == pdPASS) {')
 
-text = text.replace(old_http, new_http)
+# The outer else block has res.message. We need to replace it with "NETWORK TIMEOUT"
+outer_else_bad = '''  } else {
+    setLEDsColor(255, 0, 0);
+    if (isExit) setRFID2StripColor(255, 0, 0);
+    lcd.clear(); lcd.setCursor(0,0); lcd.print(res.message);
+    playDeniedChime();
+    delay(2000);
+    resetToIdle();
+  }'''
 
-# Reduce BLE interval
-old_ble = '''static esp_ble_adv_params_t adv_params = {
-  .adv_int_min       = 0x20,
-  .adv_int_max       = 0x40,'''
+outer_else_good = '''  } else {
+    setLEDsColor(255, 0, 0);
+    if (isExit) setRFID2StripColor(255, 0, 0);
+    lcd.clear(); lcd.setCursor(0,0); lcd.print("NETWORK TIMEOUT");
+    playDeniedChime();
+    delay(2000);
+    resetToIdle();
+  }'''
 
-new_ble = '''static esp_ble_adv_params_t adv_params = {
-  // Increased interval to 100ms (0x0100 * 0.625ms) to give WiFi time to perform TLS handshakes!
-  .adv_int_min       = 0x0100,
-  .adv_int_max       = 0x0120,'''
+content = content.replace(outer_else_bad, outer_else_good)
 
-text = text.replace(old_ble, new_ble)
-
-with open(r'C:\Users\thees\Compound\Desktop\Library Near\esp32_unified_hardware\esp32_unified_hardware.ino', 'w', encoding='utf-8') as f:
-    f.write(text)
-
-print("Updated timeouts and BLE intervals")
+with open(file_path, 'w') as f:
+    f.write(content)
