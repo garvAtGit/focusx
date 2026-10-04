@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/app/actions/auth-actions";
 import { redirect } from "next/navigation";
+
 import Link from "next/link";
 import PauseResumeButton from "./PauseResumeButton";
 import BookingSuccessToast from "./BookingSuccessToast";
@@ -27,7 +28,7 @@ export default async function StudentDashboardPage() {
 
   let hasPledged = false;
   let pledgeData = null;
-  let topScholars: any[] = [];
+  let topScholars: { today: any[], week: any[], month: any[] } = { today: [], week: [], month: [] };
   
   if (process.env.WINTER_ARC_ACTIVE === "true") {
     const pledge = await prisma.winterArcEnrollment.findUnique({
@@ -37,51 +38,61 @@ export default async function StudentDashboardPage() {
     pledgeData = pledge;
 
     if (hasPledged) {
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-      const todaysLogs = await prisma.checkinLog.findMany({
-        where: { timestamp: { gte: todayStart } },
+      const todayStart = startOfDay(new Date());
+      const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 }); // Monday
+      const monthStart = startOfMonth(new Date());
+      
+      const allMonthLogs = await prisma.checkinLog.findMany({
+        where: { timestamp: { gte: monthStart } },
         include: { student: { select: { name: true } } }
       });
 
-      const studentTimes: Record<string, { name: string, totalMinutes: number }> = {};
-      const groupedByUser = todaysLogs.reduce((acc: any, log: any) => {
-        if (!acc[log.studentId]) acc[log.studentId] = [];
-        acc[log.studentId].push(log);
-        return acc;
-      }, {});
+      const getTop = (logsArray: any[]) => {
+        const studentTimes: Record<string, { name: string, totalMinutes: number }> = {};
+        const grouped = logsArray.reduce((acc: any, log: any) => {
+          if (!acc[log.studentId]) acc[log.studentId] = [];
+          acc[log.studentId].push(log);
+          return acc;
+        }, {});
 
-      for (const [sId, logs] of Object.entries(groupedByUser)) {
-        const sortedLogs = (logs as any[]).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-        let totalMinutes = 0;
-        let lastInTime: Date | null = null;
+        for (const [sId, logs] of Object.entries(grouped)) {
+          const sortedLogs = (logs as any[]).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+          let totalMinutes = 0;
+          let lastInTime: Date | null = null;
 
-        for (const log of sortedLogs) {
-          if (log.status === 'CHECK_IN') {
-            lastInTime = new Date(log.timestamp);
-          } else if (log.status === 'CHECK_OUT' && lastInTime) {
-            totalMinutes += Math.floor((new Date(log.timestamp).getTime() - lastInTime.getTime()) / 60000);
-            lastInTime = null;
+          for (const log of sortedLogs) {
+            if (log.status === 'CHECK_IN') {
+              lastInTime = new Date(log.timestamp);
+            } else if ((log.status === 'CHECK_OUT' || log.status === 'AUTO_CHECKOUT') && lastInTime) {
+              const diff = Math.floor((new Date(log.timestamp).getTime() - lastInTime.getTime()) / 60000);
+              if (!isNaN(diff) && diff > 0) totalMinutes += diff;
+              lastInTime = null;
+            }
           }
-        }
-        
-        if (lastInTime) {
-          totalMinutes += Math.floor((new Date().getTime() - lastInTime.getTime()) / 60000);
+          
+          if (lastInTime && new Date(lastInTime).toDateString() === new Date().toDateString()) {
+            const diff = Math.floor((new Date().getTime() - lastInTime.getTime()) / 60000);
+            if (!isNaN(diff) && diff > 0) totalMinutes += diff;
+          }
+
+          const name = (logs as any[])[0]?.student?.name || "Unknown";
+          studentTimes[sId] = { name, totalMinutes };
         }
 
-        const name = (logs as any[])[0]?.student?.name || "Unknown";
-        studentTimes[sId] = { name, totalMinutes };
-      }
+        return Object.values(studentTimes)
+          .sort((a, b) => b.totalMinutes - a.totalMinutes)
+          .slice(0, 5)
+          .map((s, idx) => ({
+            rank: idx + 1,
+            name: s.name.split(' ')[0],
+            time: `${Math.floor(s.totalMinutes / 60)}h ${s.totalMinutes % 60}m`,
+            progress: `${Math.min(100, Math.floor((s.totalMinutes / (8 * 60)) * 100))}%`
+          }));
+      };
 
-      topScholars = Object.values(studentTimes)
-        .sort((a, b) => b.totalMinutes - a.totalMinutes)
-        .slice(0, 5)
-        .map((s, idx) => ({
-          rank: idx + 1,
-          name: s.name.split(' ')[0],
-          time: `${Math.floor(s.totalMinutes / 60)}h ${s.totalMinutes % 60}m`,
-          progress: `${Math.min(100, Math.floor((s.totalMinutes / (8 * 60)) * 100))}%`
-        }));
+      topScholars.month = getTop(allMonthLogs);
+      topScholars.week = getTop(allMonthLogs.filter(l => new Date(l.timestamp) >= weekStart));
+      topScholars.today = getTop(allMonthLogs.filter(l => new Date(l.timestamp) >= todayStart));
     }
   }
 

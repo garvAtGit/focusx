@@ -364,8 +364,17 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
 
           {/* List */}
           <div className="space-y-5">
-            {(topScholars || []).map((scholar: any, i: number) => (
-              <div key={scholar.rank} className="flex items-center justify-between group">
+            {(() => {
+              let scholarsToRender = [];
+              if (Array.isArray(topScholars)) scholarsToRender = topScholars;
+              else if (topScholars) {
+                if (activeTab === 'Today') scholarsToRender = topScholars.today || [];
+                else if (activeTab === 'This Week') scholarsToRender = topScholars.week || [];
+                else if (activeTab === 'This Month') scholarsToRender = topScholars.month || [];
+              }
+              return scholarsToRender;
+            })().map((scholar: any, i: number) => (
+              <div key={`${scholar.name}-${scholar.rank}`} className="flex items-center justify-between group">
                 <div className="flex items-center gap-4 flex-1">
                   <span className={`${playfair.className} text-[#b5a796] w-4 text-center italic`}>
                     {scholar.rank}
