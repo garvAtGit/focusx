@@ -1,6 +1,5 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -136,12 +135,19 @@
   * {
     @apply border-border outline-ring/50;
   }
+
   body {
     @apply bg-background text-foreground min-h-[100dvh];
     overscroll-behavior-y: none;
     -webkit-tap-highlight-color: transparent;
   }
-  h1, h2, h3, h4, h5, h6 {
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
     @apply font-heading;
   }
 }
@@ -151,23 +157,40 @@
   width: 6px;
   height: 6px;
 }
+
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
 ::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 10px;
 }
+
 ::-webkit-scrollbar-thumb:hover {
   background: var(--muted-foreground);
 }
 
 @keyframes liquid {
-  0% { background-position: 0% 0%; }
-  25% { background-position: 100% 50%; }
-  50% { background-position: 100% 100%; }
-  75% { background-position: 0% 50%; }
-  100% { background-position: 0% 0%; }
+  0% {
+    background-position: 0% 0%;
+  }
+
+  25% {
+    background-position: 100% 50%;
+  }
+
+  50% {
+    background-position: 100% 100%;
+  }
+
+  75% {
+    background-position: 0% 50%;
+  }
+
+  100% {
+    background-position: 0% 0%;
+  }
 }
 
 .animate-liquid {
@@ -181,12 +204,14 @@ body.scroll-down .navbar-sticky {
 }
 
 body.scroll-down .search-bar-sticky {
-  transform: translateY(-4rem); /* 64px (h-16) */
+  transform: translateY(-4rem);
+  /* 64px (h-16) */
 }
 
 @media (min-width: 768px) {
   body.scroll-down .search-bar-sticky {
-    transform: translateY(-5rem); /* 80px (h-20) */
+    transform: translateY(-5rem);
+    /* 80px (h-20) */
   }
 }
 
@@ -204,30 +229,88 @@ body.scroll-down .search-bar-sticky {
 
 
 @keyframes aurora-1 {
-  0% { transform: translate(-20%, 0%) rotate(-15deg) scaleY(1.5) scaleX(2); opacity: 0.6; }
-  50% { transform: translate(20%, -10%) rotate(-5deg) scaleY(2) scaleX(2.5); opacity: 0.9; }
-  100% { transform: translate(-20%, 0%) rotate(-15deg) scaleY(1.5) scaleX(2); opacity: 0.6; }
+  0% {
+    transform: translate(-20%, 0%) rotate(-15deg) scaleY(1.5) scaleX(2);
+    opacity: 0.6;
+  }
+
+  50% {
+    transform: translate(20%, -10%) rotate(-5deg) scaleY(2) scaleX(2.5);
+    opacity: 0.9;
+  }
+
+  100% {
+    transform: translate(-20%, 0%) rotate(-15deg) scaleY(1.5) scaleX(2);
+    opacity: 0.6;
+  }
 }
+
 @keyframes aurora-2 {
-  0% { transform: translate(20%, -10%) rotate(10deg) scaleY(2) scaleX(2); opacity: 0.5; }
-  50% { transform: translate(-20%, 5%) rotate(25deg) scaleY(1.5) scaleX(2.5); opacity: 0.8; }
-  100% { transform: translate(20%, -10%) rotate(10deg) scaleY(2) scaleX(2); opacity: 0.5; }
+  0% {
+    transform: translate(20%, -10%) rotate(10deg) scaleY(2) scaleX(2);
+    opacity: 0.5;
+  }
+
+  50% {
+    transform: translate(-20%, 5%) rotate(25deg) scaleY(1.5) scaleX(2.5);
+    opacity: 0.8;
+  }
+
+  100% {
+    transform: translate(20%, -10%) rotate(10deg) scaleY(2) scaleX(2);
+    opacity: 0.5;
+  }
 }
+
 @keyframes aurora-3 {
-  0% { transform: translate(-10%, -5%) rotate(-5deg) scaleY(2) scaleX(1.5); opacity: 0.7; }
-  50% { transform: translate(15%, 5%) rotate(15deg) scaleY(2.5) scaleX(2); opacity: 0.4; }
-  100% { transform: translate(-10%, -5%) rotate(-5deg) scaleY(2) scaleX(1.5); opacity: 0.7; }
+  0% {
+    transform: translate(-10%, -5%) rotate(-5deg) scaleY(2) scaleX(1.5);
+    opacity: 0.7;
+  }
+
+  50% {
+    transform: translate(15%, 5%) rotate(15deg) scaleY(2.5) scaleX(2);
+    opacity: 0.4;
+  }
+
+  100% {
+    transform: translate(-10%, -5%) rotate(-5deg) scaleY(2) scaleX(1.5);
+    opacity: 0.7;
+  }
 }
-.animate-aurora-1 { animation: aurora-1 12s infinite ease-in-out alternate; }
-.animate-aurora-2 { animation: aurora-2 15s infinite ease-in-out alternate; }
-.animate-aurora-3 { animation: aurora-3 10s infinite ease-in-out alternate; }
+
+.animate-aurora-1 {
+  animation: aurora-1 12s infinite ease-in-out alternate;
+}
+
+.animate-aurora-2 {
+  animation: aurora-2 15s infinite ease-in-out alternate;
+}
+
+.animate-aurora-3 {
+  animation: aurora-3 10s infinite ease-in-out alternate;
+}
 
 @keyframes scan-line {
-  0% { top: 0%; opacity: 0; }
-  10% { opacity: 1; }
-  90% { opacity: 1; }
-  100% { top: 100%; opacity: 0; }
+  0% {
+    top: 0%;
+    opacity: 0;
+  }
+
+  10% {
+    opacity: 1;
+  }
+
+  90% {
+    opacity: 1;
+  }
+
+  100% {
+    top: 100%;
+    opacity: 0;
+  }
 }
+
 .animate-scan {
   animation: scan-line 3s linear infinite;
 }
@@ -240,11 +323,33 @@ body.scroll-down .search-bar-sticky {
 
 
 @keyframes flicker {
-  0%, 100% { transform: scale(1) translateY(0); opacity: 1; filter: drop-shadow(0 0 8px rgba(39,129,202,0.8)); }
-  25% { transform: scale(1.05) translateY(-1px); opacity: 0.9; filter: drop-shadow(0 0 12px rgba(59,130,246,1)); }
-  50% { transform: scale(0.95) translateY(1px) skewX(2deg); opacity: 0.8; filter: drop-shadow(0 0 6px rgba(39,129,202,0.6)); }
-  75% { transform: scale(1.1) translateY(-2px) skewX(-2deg); opacity: 1; filter: drop-shadow(0 0 15px rgba(96,165,250,1)); }
+
+  0%,
+  100% {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+    filter: drop-shadow(0 0 8px rgba(39, 129, 202, 0.8));
+  }
+
+  25% {
+    transform: scale(1.05) translateY(-1px);
+    opacity: 0.9;
+    filter: drop-shadow(0 0 12px rgba(59, 130, 246, 1));
+  }
+
+  50% {
+    transform: scale(0.95) translateY(1px) skewX(2deg);
+    opacity: 0.8;
+    filter: drop-shadow(0 0 6px rgba(39, 129, 202, 0.6));
+  }
+
+  75% {
+    transform: scale(1.1) translateY(-2px) skewX(-2deg);
+    opacity: 1;
+    filter: drop-shadow(0 0 15px rgba(96, 165, 250, 1));
+  }
 }
+
 .animate-flicker {
   animation: flicker 0.4s infinite ease-in-out alternate;
   transform-origin: bottom center;

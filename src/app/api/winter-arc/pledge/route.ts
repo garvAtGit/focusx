@@ -11,22 +11,16 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json();
-    const { leagueHours, targetHours, discount, name, phone } = body;
+    const { leagueHours, targetHours, discount } = body;
 
-    if (!leagueHours || !targetHours || !discount || !name || !phone) {
+    if (!leagueHours || !targetHours || !discount) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    // 1. Update user with their name and phone if they provided it
-    try {
-      await prisma.user.update({
-        where: { id: session.userId },
-        data: { name, phone },
-      });
-    } catch (updateError) {
-      console.warn("Could not update user profile (likely duplicate phone):", updateError);
-      // We don't throw here because we still want them to pledge!
-    }
+    // 1. Fetch user to get name and phone for Google Sheets sync
+    const user = await prisma.user.findUnique({ where: { id: session.userId } });
+    const name = user?.name || "Unknown";
+    const phone = user?.phone || "Unknown";
 
     // 2. Save the pledge to Postgres
     const pledge = await prisma.winterArcEnrollment.upsert({

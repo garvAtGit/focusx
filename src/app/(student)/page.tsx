@@ -37,10 +37,10 @@ async function getFeaturedLibraries() {
 import { getSession } from "@/app/actions/auth-actions"
 import { redirect } from "next/navigation"
 
-export default async function HomePage({ 
-  searchParams 
-}: { 
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }> 
+export default async function HomePage({
+  searchParams
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>
 }) {
   await connection();
   const sp = await searchParams;
@@ -66,12 +66,12 @@ export default async function HomePage({
 
   return (
     <div className="flex flex-col bg-background overflow-hidden relative w-full">
-      
+
       {/* 1. Hero Section */}
       <section className="bg-white w-full relative pt-12 pb-12 md:pt-20 md:pb-16">
         <div className="container mx-auto px-5 md:px-10 max-w-7xl">
           <div className="flex flex-col lg:flex-row items-center justify-between gap-10 lg:gap-16">
-            
+
             {/* Left Content */}
             <div className="w-full lg:w-[60%] flex flex-col items-start lg:items-start z-10 text-center lg:text-left">
               <h1 className="w-full text-[36px] sm:text-[48px] md:text-[60px] leading-[1.1] md:leading-[100%] font-bold text-[#000000] tracking-tight uppercase" style={{ fontFamily: 'var(--font-inter), sans-serif' }}>
@@ -79,14 +79,14 @@ export default async function HomePage({
                 <span className="sm:hidden"> </span>
                 TO <span className="font-[300]">STUDY</span>
               </h1>
-              
+
               <p className="mt-4 md:mt-6 text-[16px] md:text-[20px] text-[#000000] max-w-[512px] leading-[26px] md:leading-[30px] mx-auto lg:mx-0" style={{ fontFamily: 'var(--font-inter), sans-serif', fontWeight: 400 }}>
                 Access premium, quiet study environments designed to help you do your best work.
               </p>
-              
+
               <div className="mt-8 md:mt-10 w-full lg:w-auto flex justify-center lg:justify-start">
-                <Link 
-                  href="/libraries" 
+                <Link
+                  href="/libraries"
                   className="inline-flex items-center gap-2 bg-[#3b82f6] text-white rounded-full px-6 py-3 md:px-8 md:py-3 font-medium text-[15px] md:text-[16px] hover:bg-blue-600 transition-colors shadow-sm"
                 >
                   Book Your Space <ArrowRight className="w-5 h-5" />
@@ -96,9 +96,9 @@ export default async function HomePage({
 
             {/* Right Content - SVG Hand */}
             <div className="w-full lg:w-[40%] flex justify-center lg:justify-end items-center relative z-10 mt-4 lg:mt-0">
-              <img 
-                src="/hero-section-hand.svg" 
-                alt="FocusX App QR Check-in" 
+              <img
+                src="/hero-section-hand.svg"
+                alt="FocusX App QR Check-in"
                 width={450}
                 height={450}
                 fetchPriority="high"
@@ -121,7 +121,7 @@ export default async function HomePage({
                 </p>
               </div>
             </div>
-            
+
             {/* Card 2 */}
             <div className="bg-white border border-[#f3f4f6] rounded-[16px] p-5 md:p-6 flex items-start gap-4 md:gap-5 shadow-sm hover:shadow-md transition-shadow">
               <div className="bg-[#f3f4f6] rounded-full p-3 flex-shrink-0">
