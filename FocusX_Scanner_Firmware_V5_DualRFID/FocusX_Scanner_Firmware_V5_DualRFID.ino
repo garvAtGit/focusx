@@ -128,7 +128,7 @@ void httpWorkerTask(void *pvParameters) {
           if (http.begin(client, API_URL)) {
             http.addHeader("Content-Type", "application/json");
             http.addHeader("Authorization", String("Bearer ") + HARDWARE_API_KEY);
-            http.setTimeout(8000);
+            http.setTimeout(12000);
   
             StaticJsonDocument<256> reqDoc;
             reqDoc["eventId"] = req.eventId;
@@ -260,6 +260,8 @@ class MyCallbacks: public NimBLECharacteristicCallbacks {
     }
 };
 
+
+
 void initBLE() {
   NimBLEDevice::init("FocusX_Beacon");
   NimBLEServer *pServer = NimBLEDevice::createServer();
@@ -276,6 +278,12 @@ void initBLE() {
   NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
   pAdvertising->addServiceUUID(SERVICE_UUID);
   
+  NimBLEAdvertisementData oAdvertisementData = NimBLEAdvertisementData();
+  oAdvertisementData.setFlags(0x06); // General discoverable and connectable
+  oAdvertisementData.setName("FocusX");
+  oAdvertisementData.setCompleteServices(NimBLEUUID(SERVICE_UUID));
+  pAdvertising->setAdvertisementData(oAdvertisementData);
+
   uint8_t payload[25];
   payload[0] = 0x4C; // Apple LSB
   payload[1] = 0x00; // Apple MSB
@@ -289,11 +297,10 @@ void initBLE() {
   payload[23] = 0x01; // Minor LSB
   payload[24] = 0xC5; // TX Power
   
-  NimBLEAdvertisementData oAdvertisementData = NimBLEAdvertisementData();
-  oAdvertisementData.setFlags(0x06); // 0x06 ensures general discoverable and connectable
-  oAdvertisementData.setManufacturerData(std::string((char*)payload, 25));
+  NimBLEAdvertisementData oScanResponseData = NimBLEAdvertisementData();
+  oScanResponseData.setManufacturerData(std::string((char*)payload, 25));
+  pAdvertising->setScanResponseData(oScanResponseData);
   
-  pAdvertising->setAdvertisementData(oAdvertisementData);
   pAdvertising->start();
 }
 
@@ -387,7 +394,7 @@ void doAuth(String uid, bool isExit) {
   xQueueSend(authRequestQueue, &req, 0);
   
   AuthResponse res;
-  if (xQueueReceive(authResponseQueue, &res, 8000 / portTICK_PERIOD_MS) == pdPASS) {
+  if (xQueueReceive(authResponseQueue, &res, 14000 / portTICK_PERIOD_MS) == pdPASS) {
     if (res.resultCode == 1) { // Success
       isGateOpen = true;
       gateOpenStartTime = millis();
