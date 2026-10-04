@@ -27,12 +27,62 @@ export default async function StudentDashboardPage() {
 
   let hasPledged = false;
   let pledgeData = null;
+  let topScholars: any[] = [];
+  
   if (process.env.WINTER_ARC_ACTIVE === "true") {
     const pledge = await prisma.winterArcEnrollment.findUnique({
       where: { studentId: session.userId }
     });
     hasPledged = !!pledge;
     pledgeData = pledge;
+
+    if (hasPledged) {
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const todaysLogs = await prisma.checkinLog.findMany({
+        where: { timestamp: { gte: todayStart } },
+        include: { student: { select: { name: true } } }
+      });
+
+      const studentTimes: Record<string, { name: string, totalMinutes: number }> = {};
+      const groupedByUser = todaysLogs.reduce((acc: any, log: any) => {
+        if (!acc[log.studentId]) acc[log.studentId] = [];
+        acc[log.studentId].push(log);
+        return acc;
+      }, {});
+
+      for (const [sId, logs] of Object.entries(groupedByUser)) {
+        const sortedLogs = (logs as any[]).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        let totalMinutes = 0;
+        let lastInTime: Date | null = null;
+
+        for (const log of sortedLogs) {
+          if (log.status === 'CHECK_IN') {
+            lastInTime = new Date(log.timestamp);
+          } else if (log.status === 'CHECK_OUT' && lastInTime) {
+            totalMinutes += Math.floor((new Date(log.timestamp).getTime() - lastInTime.getTime()) / 60000);
+            lastInTime = null;
+          }
+        }
+        
+        if (lastInTime) {
+          totalMinutes += Math.floor((new Date().getTime() - lastInTime.getTime()) / 60000);
+        }
+
+        const name = (logs as any[])[0]?.student?.name || "Unknown";
+        studentTimes[sId] = { name, totalMinutes };
+      }
+
+      topScholars = Object.values(studentTimes)
+        .sort((a, b) => b.totalMinutes - a.totalMinutes)
+        .slice(0, 5)
+        .map((s, idx) => ({
+          rank: idx + 1,
+          name: s.name.split(' ')[0],
+          time: `${Math.floor(s.totalMinutes / 60)}h ${s.totalMinutes % 60}m`,
+          progress: `${Math.min(100, Math.floor((s.totalMinutes / (8 * 60)) * 100))}%`
+        }));
+    }
   }
 
   const now = new Date();
@@ -62,7 +112,7 @@ export default async function StudentDashboardPage() {
   ]);
 
   if (process.env.WINTER_ARC_ACTIVE === "true" && hasPledged) {
-    return <CozyWinterDashboard student={student} pledge={pledgeData} recentLogs={recentLogs} />;
+    return <CozyWinterDashboard student={student} pledge={pledgeData} recentLogs={recentLogs} topScholars={topScholars} />;
   }
 
   if (!student) redirect("/login");

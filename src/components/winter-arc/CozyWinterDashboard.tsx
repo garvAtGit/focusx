@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { motion } from "framer-motion";
 import { Playfair_Display, Inter } from "next/font/google";
@@ -8,13 +8,7 @@ import { Bell, ScanLine, User, Bluetooth, QrCode, ChevronLeft, ChevronRight, Che
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["400", "500", "700", "800"] });
 const inter = Inter({ subsets: ["latin"], weight: ["300", "400", "600"] });
 
-const scholars = [
-  { rank: 1, name: "Rupak K.", time: "7h 16m", progress: "90%" },
-  { rank: 2, name: "Arpita", time: "7h 5m", progress: "88%" },
-  { rank: 3, name: "Md.Faisal", time: "7h 2m", progress: "86%" },
-  { rank: 4, name: "Kartik", time: "6h 52m", progress: "75%" },
-  { rank: 5, name: "Kaushal j.", time: "6h 44m", progress: "73%" },
-];
+
 
 const checkinLogs = [
   { day: "Day 2", date: "Oct 2 (Today)", in: "10:15 AM", out: "Ongoing", duration: "6h 15m", active: true },
@@ -64,12 +58,34 @@ const Snowflakes = () => {
   );
 };
 
-export default function CozyWinterDashboard({ student, pledge, recentLogs }: any) {
+export default function CozyWinterDashboard({ student, pledge, recentLogs, topScholars }: any) {
   const studentName = student?.name || "Student";
   const studentId = student?.uniqueId || "FD-000000";
   const streak = student?.currentStreak || 0;
   const targetHours = pledge?.targetHours || 8;
   const [activeTab, setActiveTab] = useState('Today');
+
+  // Compute Today's Focus from recentLogs
+  let todaysFocusMinutes = 0;
+  if (recentLogs && Array.isArray(recentLogs)) {
+    const todayLogs = recentLogs.filter(l => new Date(l.timestamp).toDateString() === new Date().toDateString());
+    const sorted = todayLogs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    let lastIn = null;
+    for (const log of sorted) {
+      if (log.status === 'CHECK_IN') {
+        lastIn = new Date(log.timestamp);
+      } else if (log.status === 'CHECK_OUT' && lastIn) {
+        todaysFocusMinutes += Math.floor((new Date(log.timestamp).getTime() - lastIn.getTime()) / 60000);
+        lastIn = null;
+      }
+    }
+    if (lastIn) {
+      todaysFocusMinutes += Math.floor((new Date().getTime() - lastIn.getTime()) / 60000);
+    }
+  }
+
+  const focusStr = `${Math.floor(todaysFocusMinutes / 60)}h ${todaysFocusMinutes % 60}m`;
+  const progressPercent = Math.min(100, Math.floor((todaysFocusMinutes / (targetHours * 60)) * 100));
 
   // Convert live recentLogs from Prisma to the formatted array needed by the UI
   const formatLogs = () => {
@@ -217,7 +233,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs }: any
           <div className="mb-2 flex justify-between items-end">
             <div>
               <p className={`${inter.className} text-[10px] uppercase tracking-[0.2em] text-[#8c7c6c] mb-1`}>Today's Focus</p>
-              <p className={`${playfair.className} text-3xl font-bold text-[#f5ecd8]`}>6h 15m</p>
+              <p className={`${playfair.className} text-3xl font-bold text-[#f5ecd8]`}>{focusStr}</p>
             </div>
             <div className="text-right">
               <p className={`${inter.className} text-[10px] uppercase tracking-[0.2em] text-[#8c7c6c] mb-1`}>Goal</p>
@@ -229,7 +245,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs }: any
           <div className="h-1.5 w-full bg-[#0a0705] relative mt-4 mb-6 border border-[#362b24] overflow-hidden rounded-full">
             <motion.div 
               initial={{ width: 0 }}
-              animate={{ width: '78%' }}
+              animate={{ width: `${progressPercent}%` }}
               transition={{ duration: 1.5, ease: "easeOut", delay: 0.5 }}
               className="absolute top-0 left-0 h-full bg-gradient-to-r from-[#1e3a8a] via-[#3b82f6] to-[#93c5fd] shadow-[0_0_10px_rgba(147,197,253,0.8)]"
             />
@@ -258,10 +274,10 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs }: any
               <div key={i} className="flex items-center justify-between border-b border-[#261d18] pb-4 last:border-0 last:pb-0">
                 <div>
                   <p className={`${inter.className} text-[10px] uppercase tracking-widest ${log.active ? 'text-[#d9a05b]' : 'text-[#8c7c6c]'} mb-1`}>
-                    <span className="font-bold text-[#b5a796]">{log.day}</span> &nbsp;•&nbsp; {log.date}
+                    <span className="font-bold text-[#b5a796]">{log.day}</span> &nbsp;â€¢&nbsp; {log.date}
                   </p>
                   <p className={`${playfair.className} text-sm text-[#e8ded1]`}>
-                    {log.in} <span className="text-[#8c7c6c] mx-1">→</span> {log.out}
+                    {log.in} <span className="text-[#8c7c6c] mx-1">â†’</span> {log.out}
                   </p>
                 </div>
                 <div className="text-right">
@@ -300,7 +316,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs }: any
               <span className={`${inter.className} text-[10px] uppercase tracking-[0.2em] text-[#8c7c6c]`}>Valid Hours</span>
               <div className="flex items-center gap-2">
                 <Clock size={12} className="text-[#a39687]" />
-                <span className={`${playfair.className} text-sm text-[#e8ded1]`}>10:00 AM – 06:00 PM</span>
+                <span className={`${playfair.className} text-sm text-[#e8ded1]`}>10:00 AM â€“ 06:00 PM</span>
               </div>
             </div>
 
@@ -348,7 +364,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs }: any
 
           {/* List */}
           <div className="space-y-5">
-            {scholars.map((scholar, i) => (
+            {(topScholars || []).map((scholar, i) => (
               <div key={scholar.rank} className="flex items-center justify-between group">
                 <div className="flex items-center gap-4 flex-1">
                   <span className={`${playfair.className} text-[#b5a796] w-4 text-center italic`}>
@@ -426,3 +442,4 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs }: any
     </div>
   );
 }
+

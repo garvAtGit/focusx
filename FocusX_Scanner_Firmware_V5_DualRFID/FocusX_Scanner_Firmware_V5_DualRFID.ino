@@ -1,5 +1,6 @@
 volatile bool remoteOpenIn = false;
 volatile bool remoteOpenOut = false;
+volatile bool shouldStartBLE = false;
 
 #include <Wire.h>
 #include <NimBLEDevice.h>
@@ -111,7 +112,8 @@ void httpWorkerTask(void *pvParameters) {
       // Wait infinitely for a scan (portMAX_DELAY) so it never loops pointlessly!
       if (xQueueReceive(authRequestQueue, &req, portMAX_DELAY) == pdPASS) {
         AuthResponse res;
-        res.resultCode = 3;
+          memset(&res, 0, sizeof(AuthResponse));
+          res.resultCode = 3;
         strncpy(res.message, "SERVER ERROR", sizeof(res.message)-1);
         res.message[sizeof(res.message)-1] = '\0';
   
@@ -364,14 +366,20 @@ void greenCountdown() {
 String readRFID(Adafruit_PN532 &nfc, int ss_enable, int ss_disable) {
   digitalWrite(ss_disable, HIGH);
   digitalWrite(ss_enable, LOW);
-  uint8_t uid[7];
-  uint8_t uidLength;
+  uint8_t uid[16];
+  memset(uid, 0, 16);
+  uint8_t uidLength = 0;
   bool success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 50);
   digitalWrite(ss_enable, HIGH);
   if (success) {
-    String res = "";
-    for(int i=0; i<uidLength; i++) res += String(uid[i], HEX);
-    return res;
+    if (uidLength > 16) uidLength = 16;
+    char hexStr[33] = {0};
+    for(int i=0; i<uidLength; i++) {
+       char buf[3];
+       sprintf(buf, "%x", uid[i]);
+       strcat(hexStr, buf);
+    }
+    return String(hexStr);
   }
   return "";
 }
@@ -387,7 +395,8 @@ void doAuth(String uid, bool isExit) {
   while(xQueueReceive(authResponseQueue, &staleRes, 0) == pdPASS) {}
   
   AuthRequest req;
-  strcpy(req.scanType, "rfid");
+    memset(&req, 0, sizeof(AuthRequest));
+    strcpy(req.scanType, "rfid");
   strcpy(req.eventId, String(millis()).c_str());
   uid.toCharArray(req.payload, 255);
   
@@ -678,33 +687,12 @@ void loop() {
     strip.show();
   }
 
-  if (remoteOpenIn || remoteOpenOut) {
-    bool isExitCmd = remoteOpenOut;
-    remoteOpenIn = false;
-    remoteOpenOut = false;
-    
-    isGateOpen = true;
-    gateOpenStartTime = millis();
-    hasDoorOpenedDuringGrace = false;
-    openedByRFID2 = isExitCmd;
-    
-    if (isExitCmd) {
-      setLEDsColor(255, 80, 0);
-      setRFID2StripColor(0, 255, 0);
-      userIsInside = false;
-      lcd.clear(); lcd.setCursor(0,0); lcd.print("GOODBYE!");
-      lcd.setCursor(0,1); lcd.print("GATE OPEN");
-      playGoodbyeChime();
-    } else {
-      setLEDsColor(0, 255, 0);
-      userIsInside = true;
-      lcd.clear(); lcd.setCursor(0,0); lcd.print("WELCOME!");
-      lcd.setCursor(0,1); lcd.print("GATE OPEN");
-      playWelcomeChime();
+  if (shouldStartBLE) {
+      shouldStartBLE = false;
+      NimBLEDevice::getAdvertising()->start();
     }
-  }
-
-  if (remoteOpenIn || remoteOpenOut) {
+  
+    if (remoteOpenIn || remoteOpenOut) {
     bool isExitCmd = remoteOpenOut;
     remoteOpenIn = false;
     remoteOpenOut = false;
