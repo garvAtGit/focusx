@@ -11,22 +11,20 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json();
-    const { leagueHours, targetHours, discount, name, phone } = body;
+    const { leagueHours, targetHours, discount } = body;
 
-    if (!leagueHours || !targetHours || !discount || !name || !phone) {
+    if (!leagueHours || !targetHours || !discount) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    // 1. Update user with their name and phone if they provided it
-    try {
-      await prisma.user.update({
-        where: { id: session.userId },
-        data: { name, phone },
-      });
-    } catch (updateError) {
-      console.warn("Could not update user profile (likely duplicate phone):", updateError);
-      // We don't throw here because we still want them to pledge!
-    }
+    // Fetch the user's name and phone securely from the backend
+    const user = await prisma.user.findUnique({
+      where: { id: session.userId },
+      select: { name: true, phone: true }
+    });
+
+    const name = user?.name || "Unknown Student";
+    const phone = user?.phone || "Unknown Phone";
 
     // 2. Save the pledge to Postgres
     const pledge = await prisma.winterArcEnrollment.upsert({

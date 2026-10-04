@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { motion } from "framer-motion";
 import { Playfair_Display, Inter } from "next/font/google";
@@ -60,14 +60,12 @@ const Snowflakes = () => {
 
 export default function CozyWinterArcForm() {
   const [selectedLeague, setSelectedLeague] = useState<number | null>(null);
-  const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
   const handleSubmit = async () => {
-    if (!selectedLeague || !name || !phone) {
-      setError("Please fill out all fields and select a league.");
+    if (!selectedLeague) {
+      setError("Please select a league.");
       return;
     }
 
@@ -84,9 +82,7 @@ export default function CozyWinterArcForm() {
         body: JSON.stringify({
           leagueHours: league.hours,
           targetHours: league.target,
-          discount: league.discount,
-          name,
-          phone
+          discount: league.discount
         })
       });
 
@@ -216,25 +212,7 @@ export default function CozyWinterArcForm() {
               <div className="space-y-8">
                 {error && <p className="text-red-400 text-sm">{error}</p>}
                 
-                <div className="group">
-                  <input 
-                    type="text" 
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className={`${inter.className} w-full bg-transparent border-b border-[#4a3b32] py-3 text-lg text-[#f5ecd8] focus:outline-none focus:border-[#d9a05b] transition-colors placeholder:text-[#5d4f43] rounded-none`}
-                    placeholder="Full Name"
-                  />
-                </div>
-
-                <div className="group">
-                  <input 
-                    type="tel" 
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    className={`${inter.className} w-full bg-transparent border-b border-[#4a3b32] py-3 text-lg text-[#f5ecd8] focus:outline-none focus:border-[#d9a05b] transition-colors placeholder:text-[#5d4f43] rounded-none`}
-                    placeholder="Phone Number"
-                  />
-                </div>
+                
 
                 <div className="pt-6">
                   <button 
@@ -284,3 +262,4 @@ export default function CozyWinterArcForm() {
     </div>
   );
 }
+

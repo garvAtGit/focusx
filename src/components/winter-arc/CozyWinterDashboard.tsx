@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { motion } from "framer-motion";
 import { Playfair_Display, Inter } from "next/font/google";
@@ -274,10 +274,10 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
               <div key={i} className="flex items-center justify-between border-b border-[#261d18] pb-4 last:border-0 last:pb-0">
                 <div>
                   <p className={`${inter.className} text-[10px] uppercase tracking-widest ${log.active ? 'text-[#d9a05b]' : 'text-[#8c7c6c]'} mb-1`}>
-                    <span className="font-bold text-[#b5a796]">{log.day}</span> &nbsp;â€¢&nbsp; {log.date}
+                    <span className="font-bold text-[#b5a796]">{log.day}</span> &nbsp;•&nbsp; {log.date}
                   </p>
                   <p className={`${playfair.className} text-sm text-[#e8ded1]`}>
-                    {log.in} <span className="text-[#8c7c6c] mx-1">â†’</span> {log.out}
+                    {log.in} <span className="text-[#8c7c6c] mx-1">→</span> {log.out}
                   </p>
                 </div>
                 <div className="text-right">
@@ -316,7 +316,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
               <span className={`${inter.className} text-[10px] uppercase tracking-[0.2em] text-[#8c7c6c]`}>Valid Hours</span>
               <div className="flex items-center gap-2">
                 <Clock size={12} className="text-[#a39687]" />
-                <span className={`${playfair.className} text-sm text-[#e8ded1]`}>10:00 AM â€“ 06:00 PM</span>
+                <span className={`${playfair.className} text-sm text-[#e8ded1]`}>10:00 AM – 06:00 PM</span>
               </div>
             </div>
 
@@ -364,7 +364,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
 
           {/* List */}
           <div className="space-y-5">
-            {(topScholars || []).map((scholar, i) => (
+            {(topScholars || []).map((scholar: any, i: number) => (
               <div key={scholar.rank} className="flex items-center justify-between group">
                 <div className="flex items-center gap-4 flex-1">
                   <span className={`${playfair.className} text-[#b5a796] w-4 text-center italic`}>
