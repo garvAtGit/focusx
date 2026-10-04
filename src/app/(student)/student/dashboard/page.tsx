@@ -124,7 +124,27 @@ export default async function StudentDashboardPage() {
 
   if (process.env.WINTER_ARC_ACTIVE === "true" && hasPledged) {
     const activeBooking = allBookings.find(b => b.status === 'CONFIRMED' && new Date(b.endTime) > new Date()) || allBookings[0];
-    return <CozyWinterDashboard student={student} pledge={pledgeData} recentLogs={recentLogs} topScholars={topScholars} activeBooking={activeBooking} />;
+    const libraryId = activeBooking?.libraryId;
+    let initialQrPayload = undefined;
+    if (libraryId) {
+      const { generateEntryQR } = await import('@/app/actions/hardware-actions');
+      const qrResult = await generateEntryQR(libraryId, "MAIN_GATE", session.userId);
+      if (qrResult.success && qrResult.qrPayload) {
+        initialQrPayload = qrResult.qrPayload;
+      }
+    }
+    
+    const isCheckedIn = recentLogs.length > 0 && recentLogs[recentLogs.length - 1].status === 'CHECK_IN' && recentLogs[recentLogs.length - 1].libraryId === libraryId;
+
+    return <CozyWinterDashboard 
+      student={student} 
+      pledge={pledgeData} 
+      recentLogs={recentLogs} 
+      topScholars={topScholars} 
+      activeBooking={activeBooking}
+      initialQrPayload={initialQrPayload}
+      isCheckedIn={isCheckedIn}
+    />;
   }
 
   if (!student) redirect("/login");

@@ -4,6 +4,8 @@ import { motion } from "framer-motion";
 import { Playfair_Display, Inter } from "next/font/google";
 import { useState, useEffect } from "react";
 import { Bell, ScanLine, User, Bluetooth, QrCode, ChevronLeft, ChevronRight, ChevronDown, Clock, BookOpen, Snowflake, ScrollText } from "lucide-react";
+import { AccessQRModal } from "@/components/AccessQRModal";
+import { BluetoothUnlockButton } from "@/components/dashboard/BluetoothUnlockButton";
 
 const playfair = Playfair_Display({ subsets: ["latin"], weight: ["400", "500", "700", "800"] });
 const inter = Inter({ subsets: ["latin"], weight: ["300", "400", "600"] });
@@ -58,7 +60,7 @@ const Snowflakes = () => {
   );
 };
 
-export default function CozyWinterDashboard({ student, pledge, recentLogs, topScholars, activeBooking }: any) {
+export default function CozyWinterDashboard({ student, pledge, recentLogs, topScholars, activeBooking, initialQrPayload, isCheckedIn }: any) {
   const studentName = student?.name || "Student";
   const studentId = student?.uniqueId || "FD-000000";
   const studentPhoto = student?.profilePhotoUrl || 'https://images.unsplash.com/photo-1447752875215-b2761acb3c5d?q=80&w=2070&auto=format&fit=crop';
@@ -196,18 +198,28 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
           </h2>
 
           <div className="space-y-3">
-            <button className="w-full py-4 flex items-center justify-center gap-3 border border-[#b5a796]/30 bg-[#1c1612]/70 hover:bg-[#1c1612] transition-colors group">
-              <QrCode size={16} className="text-[#b5a796]" />
-              <span className={`${inter.className} text-xs tracking-widest text-[#e8ded1] uppercase group-hover:text-[#f5ecd8]`}>
-                Tap to show QR
-              </span>
-            </button>
-            <button className="w-full py-4 flex items-center justify-center gap-3 border border-[#4a3b32] bg-transparent hover:bg-[#1c1612]/40 transition-colors group">
+            <AccessQRModal 
+              libraryId={activeBooking?.libraryId || ""}
+              studentId={student.id}
+              isCheckedIn={isCheckedIn}
+              initialQrPayload={initialQrPayload}
+            >
+              <button className="w-full py-4 flex items-center justify-center gap-3 border border-[#b5a796]/30 bg-[#1c1612]/70 hover:bg-[#1c1612] transition-colors group">
+                <QrCode size={16} className="text-[#b5a796]" />
+                <span className={`${inter.className} text-xs tracking-widest text-[#e8ded1] uppercase group-hover:text-[#f5ecd8]`}>
+                  Tap to show QR
+                </span>
+              </button>
+            </AccessQRModal>
+            <BluetoothUnlockButton 
+              libraryId={activeBooking?.libraryId || ""}
+              className="w-full py-4 flex items-center justify-center gap-3 border border-[#4a3b32] bg-transparent hover:bg-[#1c1612]/40 transition-colors group"
+            >
               <Bluetooth size={16} className="text-[#d9a05b]" />
               <span className={`${inter.className} text-xs tracking-widest text-[#d9a05b] uppercase`}>
                 Unlock via Bluetooth
               </span>
-            </button>
+            </BluetoothUnlockButton>
           </div>
         </motion.div>
 

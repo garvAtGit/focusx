@@ -6,9 +6,11 @@ import { toast } from 'react-hot-toast';
 
 interface BluetoothUnlockButtonProps {
   libraryId: string;
+  className?: string;
+  children?: React.ReactNode;
 }
 
-export function BluetoothUnlockButton({ libraryId }: BluetoothUnlockButtonProps) {
+export function BluetoothUnlockButton({ libraryId, className, children }: BluetoothUnlockButtonProps) {
   const [isConnecting, setIsConnecting] = useState(false);
 
   const handleBluetoothUnlock = async () => {
@@ -64,10 +66,14 @@ export function BluetoothUnlockButton({ libraryId }: BluetoothUnlockButtonProps)
     <button 
       onClick={handleBluetoothUnlock}
       disabled={isConnecting}
-      className="flex items-center justify-center gap-2 w-full max-w-[280px] mx-auto py-2.5 mt-3 rounded-lg border border-primary/20 bg-primary/5 text-primary text-xs font-bold uppercase tracking-widest hover:bg-primary/10 transition-colors disabled:opacity-50"
+      className={className || "flex items-center justify-center gap-2 w-full max-w-[280px] mx-auto py-2.5 mt-3 rounded-lg border border-primary/20 bg-primary/5 text-primary text-xs font-bold uppercase tracking-widest hover:bg-primary/10 transition-colors disabled:opacity-50"}
     >
-      <Bluetooth className={`w-4 h-4 ${isConnecting ? 'animate-pulse' : ''}`} />
-      {isConnecting ? 'Connecting...' : 'Unlock via Bluetooth'}
+      {children ? children : (
+        <>
+          <Bluetooth className={`w-4 h-4 ${isConnecting ? 'animate-pulse' : ''}`} />
+          {isConnecting ? 'Connecting...' : 'Unlock via Bluetooth'}
+        </>
+      )}
     </button>
   );
 }
