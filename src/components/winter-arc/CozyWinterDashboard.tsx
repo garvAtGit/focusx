@@ -58,9 +58,10 @@ const Snowflakes = () => {
   );
 };
 
-export default function CozyWinterDashboard({ student, pledge, recentLogs, topScholars }: any) {
+export default function CozyWinterDashboard({ student, pledge, recentLogs, topScholars, activeBooking }: any) {
   const studentName = student?.name || "Student";
   const studentId = student?.uniqueId || "FD-000000";
+  const studentPhoto = student?.profilePhotoUrl || 'https://images.unsplash.com/photo-1447752875215-b2761acb3c5d?q=80&w=2070&auto=format&fit=crop';
   const streak = student?.currentStreak || 0;
   const targetHours = pledge?.targetHours || 8;
   const [activeTab, setActiveTab] = useState('Today');
@@ -184,7 +185,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
           <div className="w-full aspect-[4/3] bg-[#0a0705] border border-[#362b24] p-2 mb-6 relative overflow-hidden group rounded-sm">
             <div 
               className="w-full h-full bg-cover bg-center opacity-80 group-hover:opacity-100 transition-opacity duration-700 filter contrast-125 sepia-[30%]"
-              style={{ backgroundImage: 'url(https://images.unsplash.com/photo-1447752875215-b2761acb3c5d?q=80&w=2070&auto=format&fit=crop)' }}
+              style={{ backgroundImage: `url(${studentPhoto})` }}
             />
             {/* Ember glow shadow */}
             <div className="absolute inset-0 shadow-[inset_0_0_40px_rgba(20,10,0,0.9)] pointer-events-none" />
@@ -289,7 +290,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
             ))}
           </div>
           
-          <button className={`${inter.className} w-full mt-4 py-3 text-[10px] uppercase tracking-widest text-[#8c7c6c] hover:text-[#d9a05b] transition-colors border border-transparent hover:border-[#4a3b32]`}>
+          <button onClick={() => window.location.href = '/student/profile'} className={`${inter.className} w-full mt-4 py-3 text-[10px] uppercase tracking-widest text-[#8c7c6c] hover:text-[#d9a05b] transition-colors border border-transparent hover:border-[#4a3b32]`}>
             View Full Archive
           </button>
         </motion.div>
@@ -303,26 +304,25 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
         >
           <div className="flex items-center gap-3 mb-6 border-b border-[#362b24] pb-4">
             <BookOpen size={18} className="text-[#b5a796]" />
-            <h2 className={`${playfair.className} text-xl text-[#f5ecd8]`}>The Charter</h2>
+            <h2 className={`${playfair.className} text-xl text-[#f5ecd8]`}>Active Plan</h2>
           </div>
 
           <div className="space-y-4">
             <div className="flex justify-between items-center">
               <span className={`${inter.className} text-[10px] uppercase tracking-[0.2em] text-[#8c7c6c]`}>Current Plan</span>
-              <span className={`${playfair.className} text-sm text-[#f5ecd8] font-semibold`}>8-Hour Standard</span>
+              <span className={`${playfair.className} text-sm text-[#f5ecd8] font-semibold`}>{activeBooking?.plan?.name || "No Active Plan"}</span>
             </div>
             
             <div className="flex justify-between items-center border-t border-[#261d18] pt-4">
-              <span className={`${inter.className} text-[10px] uppercase tracking-[0.2em] text-[#8c7c6c]`}>Valid Hours</span>
+              <span className={`${inter.className} text-[10px] uppercase tracking-[0.2em] text-[#8c7c6c]`}>Library</span>
               <div className="flex items-center gap-2">
-                <Clock size={12} className="text-[#a39687]" />
-                <span className={`${playfair.className} text-sm text-[#e8ded1]`}>10:00 AM – 06:00 PM</span>
+                <span className={`${playfair.className} text-sm text-[#e8ded1]`}>{activeBooking?.library?.name || "FocusX"}</span>
               </div>
             </div>
 
             <div className="flex justify-between items-center border-t border-[#261d18] pt-4">
               <span className={`${inter.className} text-[10px] uppercase tracking-[0.2em] text-[#8c7c6c]`}>Renewal Date</span>
-              <span className={`${playfair.className} text-sm text-[#b5a796] italic`}>Nov 15, 2026</span>
+              <span className={`${playfair.className} text-sm text-[#b5a796] italic`}>{activeBooking ? new Date(activeBooking.endTime).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : "-"}</span>
             </div>
           </div>
         </motion.div>

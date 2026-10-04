@@ -112,7 +112,8 @@ export default async function StudentDashboardPage() {
   ]);
 
   if (process.env.WINTER_ARC_ACTIVE === "true" && hasPledged) {
-    return <CozyWinterDashboard student={student} pledge={pledgeData} recentLogs={recentLogs} topScholars={topScholars} />;
+    const activeBooking = allBookings.find(b => b.status === 'CONFIRMED' && new Date(b.endTime) > new Date()) || allBookings[0];
+    return <CozyWinterDashboard student={student} pledge={pledgeData} recentLogs={recentLogs} topScholars={topScholars} activeBooking={activeBooking} />;
   }
 
   if (!student) redirect("/login");
