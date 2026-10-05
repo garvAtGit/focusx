@@ -48,7 +48,7 @@ export default async function StudentDashboardPage() {
       });
 
       const getTop = (logsArray: any[]) => {
-        const studentTimes: Record<string, { name: string, totalMinutes: number }> = {};
+        const studentTimes: Record<string, { name: string, avatar: string | null, totalMinutes: number }> = {};
         const grouped = logsArray.reduce((acc: any, log: any) => {
           if (!acc[log.studentId]) acc[log.studentId] = [];
           acc[log.studentId].push(log);
@@ -86,6 +86,7 @@ export default async function StudentDashboardPage() {
           .map((s, idx) => ({
             rank: idx + 1,
             name: s.name.split(' ')[0],
+            avatar: s.avatar,
             time: `${Math.floor(s.totalMinutes / 60)}h ${s.totalMinutes % 60}m`,
             progress: `${Math.min(100, Math.floor((s.totalMinutes / (8 * 60)) * 100))}%`
           }));
