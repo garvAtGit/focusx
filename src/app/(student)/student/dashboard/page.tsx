@@ -76,7 +76,8 @@ export default async function StudentDashboardPage() {
           }
 
           const name = (logs as any[])[0]?.student?.name || "Unknown";
-          studentTimes[sId] = { name, totalMinutes };
+          const avatar = (logs as any[])[0]?.student?.profilePhotoUrl || null;
+          studentTimes[sId] = { name, avatar, totalMinutes };
         }
 
         return Object.values(studentTimes)

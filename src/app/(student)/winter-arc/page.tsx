@@ -22,8 +22,8 @@ export default async function WinterArcPage() {
   });
   }
 
-  if (activeBooking && activeBooking.plan && activeBooking.plan.durationHours) {
-    currentHours = activeBooking.plan.durationHours;
+  if (activeBooking && activeBooking.plan) {
+    currentHours = activeBooking.plan.durationHours || 24;
   }
 
   return <CozyWinterArcForm currentHours={currentHours} isLoggedIn={isLoggedIn} />;

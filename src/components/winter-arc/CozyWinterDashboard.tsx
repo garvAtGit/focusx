@@ -63,7 +63,7 @@ const Snowflakes = () => {
 export default function CozyWinterDashboard({ student, pledge, recentLogs, topScholars, activeBooking, initialQrPayload, isCheckedIn }: any) {
   const studentName = student?.name || "Student";
   const studentId = student?.uniqueId || "FD-000000";
-  const studentPhoto = student?.profilePhotoUrl || 'https://images.unsplash.com/photo-1447752875215-b2761acb3c5d?q=80&w=2070&auto=format&fit=crop';
+  const studentPhoto = student?.profilePhotoUrl || 'https://images.unsplash.com/photo-1507842217343-583bb7270b66?q=80&w=2000&auto=format&fit=crop';
   const streak = student?.currentStreak || 0;
   const targetHours = pledge?.targetHours || 8;
   const [activeTab, setActiveTab] = useState('Today');
@@ -108,19 +108,36 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
       const dayLogs = grouped[dateStr].sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
       
       const firstIn = dayLogs.find((l: any) => l.status === 'CHECK_IN');
-      const lastOut = dayLogs.reverse().find((l: any) => l.status === 'CHECK_OUT');
+      const lastOut = [...dayLogs].reverse().find((l: any) => l.status === 'CHECK_OUT');
       
       const inStr = firstIn ? new Date(firstIn.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--';
       const outStr = lastOut ? new Date(lastOut.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Ongoing';
       
       const isActive = outStr === 'Ongoing' && new Date(dateStr).toDateString() === new Date().toDateString();
+
+      let dayMinutes = 0;
+      let lastInTime: Date | null = null;
+      for (const log of dayLogs) {
+        if (log.status === 'CHECK_IN') {
+          lastInTime = new Date(log.timestamp);
+        } else if ((log.status === 'CHECK_OUT' || log.status === 'AUTO_CHECKOUT') && lastInTime) {
+          dayMinutes += Math.floor((new Date(log.timestamp).getTime() - lastInTime.getTime()) / 60000);
+          lastInTime = null;
+        }
+      }
+      if (isActive && lastInTime) {
+        dayMinutes += Math.floor((new Date().getTime() - lastInTime.getTime()) / 60000);
+      }
+      const hours = Math.floor(dayMinutes / 60);
+      const mins = dayMinutes % 60;
+      const durStr = dayMinutes > 0 ? `${hours}h ${mins}m` : '0h 0m';
       
       return {
         day: `Day ${sortedDates.length - index}`,
         date: new Date(dateStr).toDateString() === new Date().toDateString() ? `Today` : dateStr,
         in: inStr,
         out: outStr,
-        duration: "See Details", // Would calculate real duration here in production
+        duration: durStr,
         active: isActive
       };
     });
@@ -146,19 +163,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
 
       <div className="relative z-10 w-full max-w-md px-4 pt-6 flex flex-col gap-6">
         
-        {/* Top Navigation */}
-        <header className="flex justify-between items-center w-full mb-2">
-          <div className="flex items-center gap-2">
-            <span className={`${playfair.className} text-2xl font-bold text-[#f5ecd8] tracking-tighter`}>X</span>
-          </div>
-          <div className="flex items-center gap-5 text-[#b5a796]">
-            <ScanLine size={20} className="hover:text-[#f5ecd8] transition-colors cursor-pointer" />
-            <Bell size={20} className="hover:text-[#f5ecd8] transition-colors cursor-pointer" />
-            <div className="w-8 h-8 rounded-full border border-[#4a3b32] bg-[#1a1410] flex items-center justify-center overflow-hidden shadow-[0_0_10px_rgba(217,119,6,0.1)]">
-              <User size={16} className="text-[#d9a05b]" />
-            </div>
-          </div>
-        </header>
+
 
         {/* Identity & Access Card (Hero) */}
         <motion.div 
@@ -393,8 +398,12 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
                   </span>
                   
                   {/* Avatar */}
-                  <div className="w-8 h-8 rounded-full border border-[#362b24] bg-[#1a1410] flex items-center justify-center text-xs font-serif text-[#a39687]">
-                    {scholar.name.charAt(0)}
+                  <div className="w-8 h-8 rounded-full border border-[#362b24] bg-[#1a1410] flex items-center justify-center text-xs font-serif text-[#a39687] overflow-hidden">
+                    {scholar.avatar ? (
+                      <img src={scholar.avatar} alt={scholar.name} className="w-full h-full object-cover" />
+                    ) : (
+                      scholar.name.charAt(0)
+                    )}
                   </div>
                   
                   <div className="flex-1">
