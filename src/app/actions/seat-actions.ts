@@ -28,6 +28,9 @@ export type StandaloneLockerLayoutItem = {
   id: string;
   name: string;
   price: string;
+  gridX: number;
+  gridY: number;
+  type?: "NORMAL" | "EMPTY";
 };
 
 export async function saveSeatLayoutAndLockers(
@@ -156,11 +159,13 @@ export async function saveSeatLayoutAndLockers(
     });
 
     const lockerData = standaloneLockers
-      .filter((l) => l && typeof l.name === 'string' && !protectedLockerNames.has(l.name))
+      .filter((l) => l && l.type !== 'EMPTY' && typeof l.name === 'string' && !protectedLockerNames.has(l.name))
       .map((l) => ({
         libraryId: library.id,
         name: l.name,
         price: parseFloat(l.price) || 0,
+        gridX: l.gridX || 0,
+        gridY: l.gridY || 0,
       }));
 
     if (lockerData.length > 0) {
@@ -174,6 +179,8 @@ export async function saveSeatLayoutAndLockers(
         where: { libraryId: library.id, name: pLocker.name },
         data: {
           price: parseFloat(pLocker.price) || 0,
+          gridX: pLocker.gridX || 0,
+          gridY: pLocker.gridY || 0,
         }
       });
     }
@@ -236,7 +243,10 @@ export async function getSeatLayoutAndLockers() {
     standaloneLockers: library.standaloneLockers.map(l => ({
       id: l.id,
       name: l.name,
-      price: l.price.toString()
+      price: l.price.toString(),
+      gridX: l.gridX,
+      gridY: l.gridY,
+      type: "NORMAL" as const
     })),
     compactSeatMap: library.compactSeatMap,
     seatNaming: library.seatNaming

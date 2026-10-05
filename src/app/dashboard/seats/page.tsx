@@ -11,6 +11,7 @@ import {
 import LiveSeatMap, { type LiveSeat } from "@/components/LiveSeatMap";
 import { useAdminRealtimeSeats } from "@/hooks/useAdminRealtimeSeats";
 import { formatStandardDate } from "@/lib/date-utils";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type SeatBookingDetails = {
   endTime: string;
@@ -41,6 +42,10 @@ export default function SeatsManagerPage() {
   const [standaloneLockers, setStandaloneLockers] = useState<StandaloneLockerLayoutItem[]>([]);
   
   const [selectedSeatId, setSelectedSeatId] = useState<string | null>(null);
+
+  const [lockerRows, setLockerRows] = useState(1);
+  const [lockerCols, setLockerCols] = useState(1);
+  const [selectedLockerId, setSelectedLockerId] = useState<string | null>(null);
 
   const [viewMode, setViewMode] = useState<'LIVE' | 'EDIT'>('LIVE');
   const [popupSeatId, setPopupSeatId] = useState<string | null>(null);
@@ -170,9 +175,45 @@ export default function SeatsManagerPage() {
       }
       
       setSeats(grid);
-      const lockers = data.standaloneLockers || [];
-      // Assuming lockers have createdAt or we just reverse to put newer at top
-      setStandaloneLockers(lockers.reverse());
+
+        const lockers = data.standaloneLockers || [];
+        // Sanitize coordinates for backward compatibility (prevent overlaps if multiple lockers have 0,0)
+        const occupied = new Set<string>();
+        lockers.forEach((l: any) => {
+          let x = l.gridX || 0;
+          let y = l.gridY || 0;
+          while(occupied.has(`${x},${y}`)) {
+            x++;
+            if (x >= 50) { x = 0; y++; }
+          }
+          l.gridX = x;
+          l.gridY = y;
+          occupied.add(`${x},${y}`);
+        });
+
+        let finalLockerRows = 1;
+        let finalLockerCols = 1;
+        if (lockers.length > 0) {
+          const maxLR = Math.max(...lockers.map((l: any) => l.gridY)) + 1;
+          const maxLC = Math.max(...lockers.map((l: any) => l.gridX)) + 1;
+          finalLockerRows = Math.max(1, maxLR);
+          finalLockerCols = Math.max(1, maxLC);
+        }
+        setLockerRows(finalLockerRows);
+        setLockerCols(finalLockerCols);
+
+        const lockerGrid: StandaloneLockerLayoutItem[] = [];
+        for (let i = 0; i < finalLockerRows * finalLockerCols; i++) {
+          const x = i % finalLockerCols;
+          const y = Math.floor(i / finalLockerCols);
+          const existing = lockers.find((l: any) => l.gridX === x && l.gridY === y);
+          if (existing) {
+            lockerGrid.push({ ...existing, type: "NORMAL" });
+          } else {
+            lockerGrid.push({ id: `empty-l-${x}-${y}`, name: "", price: "", gridX: x, gridY: y, type: "EMPTY" });
+          }
+        }
+        setStandaloneLockers(lockerGrid);
       } catch (e) {
         console.error("Failed to load seats", e);
       } finally {
@@ -218,6 +259,25 @@ export default function SeatsManagerPage() {
     });
   }, [rows, cols, isLoading, seatNaming]);
 
+  useEffect(() => {
+    if (isLoading) return;
+    
+    setStandaloneLockers(prev => {
+      const newGrid: StandaloneLockerLayoutItem[] = [];
+      for (let y = 0; y < lockerRows; y++) {
+        for (let x = 0; x < lockerCols; x++) {
+          const existing = prev.find(l => l.gridX === x && l.gridY === y);
+          if (existing) {
+            newGrid.push(existing);
+          } else {
+            newGrid.push({ id: `empty-l-${x}-${y}`, name: "", price: "", gridX: x, gridY: y, type: "EMPTY" });
+          }
+        }
+      }
+      return newGrid;
+    });
+  }, [lockerRows, lockerCols, isLoading]);
+
   const handleSeatClick = (id: string) => {
     setSelectedSeatId(id);
   };
@@ -241,11 +301,16 @@ export default function SeatsManagerPage() {
         })
       );
       setSelectedSeatId(null);
+      
+      setStandaloneLockers(
+        Array.from({ length: lockerRows * lockerCols }, (_, i) => {
+          const x = i % lockerCols;
+          const y = Math.floor(i / lockerCols);
+          return { id: `empty-l-${x}-${y}`, name: "", price: "", gridX: x, gridY: y, type: "EMPTY" };
+        })
+      );
+      setSelectedLockerId(null);
     }
-  };
-
-  const addStandaloneLocker = () => {
-    setStandaloneLockers([{ id: Date.now().toString(), name: `L${standaloneLockers.length + 1}`, price: "" }, ...standaloneLockers]);
   };
 
   const updateStandaloneLocker = <
@@ -258,21 +323,36 @@ export default function SeatsManagerPage() {
     setStandaloneLockers(standaloneLockers.map(l => l.id === id ? { ...l, [field]: value } : l));
   };
 
-  const removeStandaloneLocker = (id: string) => {
-    setStandaloneLockers(standaloneLockers.filter(l => l.id !== id));
-  };
+  const initialLoadRef = useRef(true);
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const handleSave = async () => {
-    setIsSaving(true);
-    try {
-      await saveSeatLayoutAndLockers(seats, standaloneLockers, true, seatNaming);
-      alert("Layout & Lockers saved successfully!");
-    } catch {
-      alert("Failed to save layout.");
-    } finally {
-      setIsSaving(false);
+  useEffect(() => {
+    if (isLoading) return;
+    
+    if (initialLoadRef.current) {
+      initialLoadRef.current = false;
+      return;
     }
-  };
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    saveTimeoutRef.current = setTimeout(async () => {
+      setIsSaving(true);
+      try {
+        await saveSeatLayoutAndLockers(seats, standaloneLockers, true, seatNaming);
+      } catch (e) {
+        console.error("Auto-save failed", e);
+      } finally {
+        setIsSaving(false);
+      }
+    }, 1000);
+
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    };
+  }, [seats, standaloneLockers, seatNaming, isLoading]);
 
   if (isLoading) {
     return <div className="flex justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>;
@@ -282,12 +362,41 @@ export default function SeatsManagerPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6 pb-20">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-3xl font-heading font-bold text-foreground">Seat Plan & Lockers</h1>
           <p className="text-muted-foreground mt-1">Design your library layout and manage locker pricing.</p>
         </div>
         <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+          {viewMode === 'EDIT' && (
+          <div className="flex gap-2 items-center">
+            {isSaving && (
+              <span className="text-xs text-muted-foreground flex items-center gap-1 mr-2">
+                <Loader2 className="w-3 h-3 animate-spin" /> Saving...
+              </span>
+            )}
+            <Select 
+              value={seatNaming}
+              onValueChange={(value) => {
+                if (value === "ALPHANUMERIC" || value === "NUMERIC") {
+                  setSeatNaming(value as SeatNamingValue);
+                }
+              }}
+            >
+              <SelectTrigger className="bg-card text-foreground border border-border font-semibold w-[200px] hover:bg-muted transition-colors">
+                <SelectValue placeholder="Naming Format" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALPHANUMERIC">Alphanumeric (A1, B2)</SelectItem>
+                <SelectItem value="NUMERIC">Numeric (1, 2, 3)</SelectItem>
+              </SelectContent>
+            </Select>
+            <button onClick={handleReset} className="bg-card text-foreground border border-border font-semibold px-4 py-2 rounded-lg text-sm hover:bg-muted transition-colors flex items-center gap-2">
+              <Undo2 className="w-4 h-4" /> Reset Grid
+            </button>
+          </div>
+          )}
+
           <div className="flex p-1 bg-muted/50 rounded-xl border border-border shadow-inner">
             <button 
               onClick={() => setViewMode('LIVE')}
@@ -303,31 +412,6 @@ export default function SeatsManagerPage() {
             </button>
           </div>
         </div>
-        
-        {viewMode === 'EDIT' && (
-        <div className="flex gap-2 items-center">
-          <select 
-            value={seatNaming}
-            onChange={(e) => {
-              const value = e.target.value;
-              if (value === "ALPHANUMERIC" || value === "NUMERIC") {
-                setSeatNaming(value);
-              }
-            }}
-            className="bg-card text-foreground border border-border font-semibold px-4 py-2 rounded-lg text-sm hover:bg-muted transition-colors outline-none cursor-pointer"
-          >
-            <option value="ALPHANUMERIC">Alphanumeric (A1, B2)</option>
-            <option value="NUMERIC">Numeric (1, 2, 3)</option>
-          </select>
-          <button onClick={handleReset} className="bg-card text-foreground border border-border font-semibold px-4 py-2 rounded-lg text-sm hover:bg-muted transition-colors flex items-center gap-2">
-            <Undo2 className="w-4 h-4" /> Reset Grid
-          </button>
-          <button onClick={handleSave} disabled={isSaving} className="bg-primary text-primary-foreground font-semibold px-4 py-2 rounded-lg text-sm hover:opacity-90 transition-opacity flex items-center gap-2 disabled:opacity-50">
-            {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} 
-            {isSaving ? 'Saving...' : 'Save Layout & Lockers'}
-          </button>
-        </div>
-        )}
       </div>
 
       {viewMode === 'EDIT' ? (
@@ -350,10 +434,9 @@ export default function SeatsManagerPage() {
 
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-foreground block">Seat Type</label>
-                  <select 
+                  <Select 
                     value={selectedSeat.type} 
-                    onChange={(e) => {
-                      const value = e.target.value;
+                    onValueChange={(value) => {
                       if (
                         value === "NORMAL"
                         || value === "PREMIUM"
@@ -363,13 +446,17 @@ export default function SeatsManagerPage() {
                         updateSelectedSeat("type", value);
                       }
                     }}
-                    className="w-full p-2.5 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary text-sm"
                   >
-                    <option value="NORMAL">Reservable (General)</option>
-                    <option value="PREMIUM">Premium Seat</option>
-                    <option value="NON_RESERVABLE">Non-Reservable (Wall/Path)</option>
-                    <option value="EMPTY">Empty Space (Hidden)</option>
-                  </select>
+                    <SelectTrigger className="w-full bg-background border-border text-sm h-10">
+                      <SelectValue placeholder="Seat Type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="NORMAL">Reservable (General)</SelectItem>
+                      <SelectItem value="PREMIUM">Premium Seat</SelectItem>
+                      <SelectItem value="NON_RESERVABLE">Non-Reservable (Wall/Path)</SelectItem>
+                      <SelectItem value="EMPTY">Empty Space (Hidden)</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 {selectedSeat.type === 'PREMIUM' && (
@@ -380,8 +467,14 @@ export default function SeatsManagerPage() {
                       </span>
                       <input 
                         type="number" 
+                        min="0"
                         value={selectedSeat.premiumPriceDaily || ''} 
-                        onChange={(e) => updateSelectedSeat('premiumPriceDaily', e.target.value)}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '' || Number(val) >= 0) {
+                            updateSelectedSeat('premiumPriceDaily', val);
+                          }
+                        }}
                         placeholder="e.g. 300"
                         className="w-full p-2.5 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-amber-500 text-sm"
                       />
@@ -416,8 +509,14 @@ export default function SeatsManagerPage() {
                         <label className="text-xs font-medium text-muted-foreground block">Daily Locker Price (₹)</label>
                         <input 
                           type="number" 
+                          min="0"
                           value={selectedSeat.lockerPriceDaily} 
-                          onChange={(e) => updateSelectedSeat('lockerPriceDaily', e.target.value)}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === '' || Number(val) >= 0) {
+                              updateSelectedSeat('lockerPriceDaily', val);
+                            }
+                          }}
                           placeholder="e.g. 100"
                           className="w-full p-2 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary text-sm"
                         />
@@ -546,54 +645,156 @@ export default function SeatsManagerPage() {
         </div>
       </div>
 
-      {/* Standalone Lockers Manager */}
-      <div className="bg-card rounded-2xl border border-border p-6 shadow-sm">
-        <div className="flex justify-between items-center mb-6">
-          <div>
-            <h2 className="font-bold text-foreground text-xl">Standalone Lockers</h2>
-            <p className="text-sm text-muted-foreground">Add lockers that aren&apos;t attached to any specific seat.</p>
+      {/* Locker Layout Manager */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 mt-8">
+        {/* Left Sidebar for Lockers */}
+        <div className="lg:col-span-1 space-y-6 sticky top-24 self-start">
+          
+          <div className="bg-card p-6 rounded-2xl border border-border shadow-sm">
+            <h2 className="font-bold text-foreground mb-4">Selected Locker</h2>
+            
+            {(() => {
+              const selectedLocker = standaloneLockers.find(l => l.id === selectedLockerId);
+              return selectedLocker ? (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between p-3 bg-muted rounded-xl">
+                    <span className="font-bold text-lg">{selectedLocker.type === 'EMPTY' ? 'Empty Space' : (selectedLocker.name || 'Unnamed')}</span>
+                    <span className="text-xs font-bold px-2 py-1 bg-background rounded text-muted-foreground">Col {selectedLocker.gridX + 1}, Row {selectedLocker.gridY + 1}</span>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-foreground block">Locker Type</label>
+                    <Select 
+                      value={selectedLocker.type || "EMPTY"} 
+                      onValueChange={(value) => {
+                        if (value === "NORMAL" || value === "EMPTY") {
+                          updateStandaloneLocker(selectedLocker.id, "type", value);
+                          if (value === "NORMAL" && !selectedLocker.name) {
+                            updateStandaloneLocker(selectedLocker.id, "name", `L${selectedLocker.gridY * lockerCols + selectedLocker.gridX + 1}`);
+                          }
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="w-full bg-background border-border text-sm h-10">
+                        <SelectValue placeholder="Locker Type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="NORMAL">Locker</SelectItem>
+                        <SelectItem value="EMPTY">Empty Space</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {selectedLocker.type === 'NORMAL' && (
+                    <div className="space-y-4 pt-4 border-t border-border">
+                      <div className="space-y-1">
+                        <label className="text-xs font-medium text-muted-foreground block">Locker Name/Number</label>
+                        <input 
+                          type="text" 
+                          value={selectedLocker.name} 
+                          onChange={(e) => updateStandaloneLocker(selectedLocker.id, 'name', e.target.value)}
+                          placeholder="e.g. L1"
+                          className="w-full p-2.5 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary text-sm"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-medium text-muted-foreground block">Daily Price (₹)</label>
+                        <input 
+                          type="number" 
+                          min="0"
+                          value={selectedLocker.price} 
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === '' || Number(val) >= 0) {
+                              updateStandaloneLocker(selectedLocker.id, 'price', val);
+                            }
+                          }}
+                          placeholder="e.g. 50"
+                          className="w-full p-2.5 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary text-sm"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground text-center py-8 bg-muted/30 border border-dashed border-border rounded-xl">
+                  Click a locker on the grid to edit its properties.
+                </div>
+              );
+            })()}
           </div>
-          <button onClick={addStandaloneLocker} className="bg-muted text-foreground border border-border font-semibold px-4 py-2 rounded-lg text-sm hover:bg-muted/80 transition-colors flex items-center gap-2">
-            <Plus className="w-4 h-4" /> Add Locker
-          </button>
+
+          {/* Grid Dimensions Panel */}
+          <div className="bg-card p-6 rounded-2xl border border-border shadow-sm">
+            <h2 className="font-bold text-foreground mb-4">Locker Grid Dimensions</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-medium text-foreground mb-1 block">Rows</label>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setLockerRows(Math.max(1, lockerRows - 1))} className="p-2 border border-border rounded-lg hover:bg-muted">-</button>
+                  <input type="number" value={lockerRows} readOnly className="w-full text-center px-4 py-2 rounded-lg border border-border bg-input/50" />
+                  <button onClick={() => setLockerRows(Math.min(26, lockerRows + 1))} className="p-2 border border-border rounded-lg hover:bg-muted">+</button>
+                </div>
+              </div>
+              
+              <div>
+                <label className="text-sm font-medium text-foreground mb-1 block">Columns</label>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setLockerCols(Math.max(1, lockerCols - 1))} className="p-2 border border-border rounded-lg hover:bg-muted">-</button>
+                  <input type="number" value={lockerCols} readOnly className="w-full text-center px-4 py-2 rounded-lg border border-border bg-input/50" />
+                  <button onClick={() => setLockerCols(Math.min(50, lockerCols + 1))} className="p-2 border border-border rounded-lg hover:bg-muted">+</button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
-        {standaloneLockers.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground bg-muted/30 border border-dashed border-border rounded-xl">
-            No standalone lockers added. Students won&apos;t see an optional locker dropdown.
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {standaloneLockers.map((locker, idx) => (
-              <div key={locker.id} className="flex gap-4 items-center bg-background p-3 rounded-xl border border-border">
-                <div className="font-bold text-muted-foreground w-8 text-center">{idx + 1}</div>
-                <div className="flex-1 space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">Locker Name/Number</label>
-                  <input 
-                    type="text" 
-                    value={locker.name} 
-                    onChange={(e) => updateStandaloneLocker(locker.id, 'name', e.target.value)}
-                    placeholder="e.g. L1"
-                    className="w-full p-2 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary text-sm font-medium"
-                  />
+        <div className="lg:col-span-3 space-y-6">
+          <div className="bg-card rounded-2xl border border-border p-6 shadow-sm max-w-full min-h-[500px]">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-4">
+              <h2 className="font-bold text-foreground">Interactive Locker Grid</h2>
+              <div className="flex items-center gap-4">
+                <div className="flex gap-4 text-xs font-medium text-muted-foreground">
+                  <span className="flex items-center gap-1"><div className="w-3 h-3 rounded-sm border border-border bg-background"></div> Locker</span>
                 </div>
-                <div className="flex-1 space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">Daily Price (₹)</label>
-                  <input 
-                    type="number" 
-                    value={locker.price} 
-                    onChange={(e) => updateStandaloneLocker(locker.id, 'price', e.target.value)}
-                    placeholder="e.g. 50"
-                    className="w-full p-2 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary text-sm font-medium"
-                  />
-                </div>
-                <button onClick={() => removeStandaloneLocker(locker.id)} className="mt-5 p-2 text-destructive hover:bg-destructive/10 rounded-lg transition-colors">
-                  <Trash2 className="w-5 h-5" />
-                </button>
               </div>
-            ))}
+            </div>
+            
+            <div className="w-full overflow-x-auto overflow-y-auto custom-scrollbar">
+              <div className="w-max flex flex-col gap-3 p-8 bg-muted/20 border border-border/50 rounded-xl relative select-none">
+              {Array.from({ length: lockerRows }).map((_, y) => (
+                <div key={y} className="flex gap-3 relative">
+                  {standaloneLockers.filter(l => l.gridY === y && l.gridX < lockerCols).map(locker => {
+                    let bgClass = "bg-background border-border hover:border-primary shadow-sm";
+                    let textClass = "text-foreground";
+                    
+                    if (locker.type === 'EMPTY') {
+                      bgClass = "bg-transparent border-dashed border-border/50 opacity-30 hover:opacity-100 hover:border-primary";
+                      textClass = "text-transparent hover:text-muted-foreground";
+                    }
+
+                    const isSelected = selectedLockerId === locker.id;
+                    if (isSelected) {
+                      bgClass += " ring-4 ring-primary/20 border-primary";
+                    }
+
+                    return (
+                      <div 
+                        key={locker.id} 
+                        onClick={() => setSelectedLockerId(locker.id)}
+                        className={`relative w-14 h-14 rounded-xl border flex items-center justify-center font-bold text-sm transition-all cursor-pointer select-none ${bgClass} ${textClass}`}
+                        title={locker.name || 'Empty'}
+                      >
+                        {locker.type === 'EMPTY' ? '+' : (locker.name || '?')}
+                      </div>
+                    )
+                  })}
+                </div>
+              ))}
+              </div>
+            </div>
           </div>
-        )}
+        </div>
       </div>
       
       </>
@@ -684,7 +885,7 @@ export default function SeatsManagerPage() {
                       </a>
                     </div>
                   ) : (() => {
-                    const clickedSeat = seats.find(s => s.id === popupSeatId);
+                    const clickedSeat = seats.find(s => (s.databaseId || s.id) === popupSeatId);
                     return (
                       <div className="space-y-4">
                         <div className="text-center pb-3 border-b border-border/50">
@@ -720,6 +921,35 @@ export default function SeatsManagerPage() {
                   })()}
                 </div>
               )}
+
+              {standaloneLockers.filter(l => l.type === 'NORMAL').length > 0 && (
+                <div className="mt-8 border-t border-border pt-8 pb-4">
+                  <h3 className="font-bold text-xl text-foreground text-center mb-6">Locker Layout</h3>
+                  <div className="w-full overflow-x-auto overflow-y-auto custom-scrollbar flex justify-center">
+                    <div className="w-max flex flex-col gap-3 p-8 bg-muted/20 border border-border/50 rounded-xl relative select-none">
+                      {Array.from({ length: Math.max(1, Math.max(...standaloneLockers.map(l => l.gridY)) + 1) }).map((_, y) => (
+                        <div key={y} className="flex gap-3 relative justify-center">
+                          {standaloneLockers.filter(l => l.gridY === y).map(locker => {
+                            if (locker.type === 'EMPTY') {
+                              return <div key={locker.id} className="w-14 h-14 border border-transparent"></div>;
+                            }
+                            return (
+                              <div 
+                                key={locker.id} 
+                                className="relative w-14 h-14 rounded-xl border flex items-center justify-center font-bold text-sm transition-all select-none bg-background border-border shadow-sm text-foreground hover:border-primary cursor-default"
+                                title={`Locker: ${locker.name} | Price: ₹${locker.price}/day`}
+                              >
+                                {locker.name}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
             </div>
           </div>
       )}

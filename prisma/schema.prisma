@@ -159,6 +159,8 @@ model StandaloneLocker {
   libraryId      String
   name           String
   price          Float
+  gridX          Int             @default(0)
+  gridY          Int             @default(0)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   bookings       Booking[]
