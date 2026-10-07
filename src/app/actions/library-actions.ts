@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma"
 import { revalidatePath, updateTag } from "next/cache"
 import { getSession } from "./auth-actions"
 import { invalidateLibraryRuntimeCache } from "@/lib/library-cache"
+import { deleteByPattern } from "@/lib/redis"
 import { parseSafeUrl } from "@/lib/validation"
 
 export async function updateLibrarySettings(formData: FormData) {
@@ -249,6 +250,9 @@ export async function updateFacilities(formData: FormData) {
   });
 
   await invalidateLibraryRuntimeCache(id);
+  // Wipe all cached library search results so filter changes are reflected immediately
+  await deleteByPattern('libraries:search:*');
   updateTag(`library:${id}`);
   revalidatePath('/dashboard/settings');
+  revalidatePath('/libraries');
 }

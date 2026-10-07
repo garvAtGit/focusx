@@ -1,7 +1,7 @@
 "use client";
 
 import { Search, MapPin, X, Loader2 } from "lucide-react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { useRef, useState, useEffect, Suspense } from "react";
 
 interface SearchBarProps {
@@ -36,7 +36,15 @@ export function SearchBar(props: SearchBarProps) {
 function SearchBarInner({ compact = false }: SearchBarProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const pathname = usePathname();
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const getSearchPath = () => {
+    if (pathname && pathname.includes('/libraries')) {
+      return pathname;
+    }
+    return '/libraries';
+  };
 
   const [query, setQuery] = useState(searchParams.get("query") || "");
   const [nearbyLoading, setNearbyLoading] = useState(false);
@@ -59,7 +67,7 @@ function SearchBarInner({ compact = false }: SearchBarProps) {
       
       // Update URL if query changed
       if (searchParams.get("query") !== query && !(query === "" && !searchParams.get("query")) && !nearbyMode) {
-        router.replace(`/?${params.toString()}`);
+        router.replace(`${getSearchPath()}?${params.toString()}`);
       }
     }, 200);
 
@@ -76,7 +84,7 @@ function SearchBarInner({ compact = false }: SearchBarProps) {
       params.delete("lat");
       params.delete("lng");
       params.set("query", val);
-      router.replace(`/?${params.toString()}`);
+      router.replace(`${getSearchPath()}?${params.toString()}`);
     }
     setQuery(val);
   }
@@ -92,7 +100,7 @@ function SearchBarInner({ compact = false }: SearchBarProps) {
     params.delete("lat");
     params.delete("lng");
     params.delete("query");
-    router.replace(`/?${params.toString()}`);
+    router.replace(`${getSearchPath()}?${params.toString()}`);
     inputRef.current?.focus();
   }
 
@@ -114,7 +122,7 @@ function SearchBarInner({ compact = false }: SearchBarProps) {
         params.set("lat", position.coords.latitude.toString());
         params.set("lng", position.coords.longitude.toString());
         params.set("query", "Nearby");
-        router.push(`/?${params.toString()}`);
+        router.push(`${getSearchPath()}?${params.toString()}`);
         
         setNearbyLoading(false);
         setNearbyPhase("idle");

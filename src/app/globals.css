@@ -354,3 +354,14 @@ body.scroll-down .search-bar-sticky {
   animation: flicker 0.4s infinite ease-in-out alternate;
   transform-origin: bottom center;
 }
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  50% { transform: translateX(4px); }
+  75% { transform: translateX(-4px); }
+}
+
+.animate-shake {
+  animation: shake 0.3s ease-in-out;
+}

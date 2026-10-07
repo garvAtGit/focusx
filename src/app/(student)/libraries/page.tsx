@@ -8,8 +8,8 @@ import type { Prisma } from "@prisma/client"
 
 import { redis } from "@/lib/redis"
 
-
 import { Suspense } from "react";
+import { LibraryFilters } from "@/components/library-filters";
 
 type LibraryWithPlans = Prisma.LibraryGetPayload<{
   include: {
@@ -22,6 +22,8 @@ type LibrariesPageProps = {
     query?: string;
     lat?: string;
     lng?: string;
+    amenities?: string;
+    maxPrice?: string;
   }>;
 };
 
@@ -32,11 +34,22 @@ export default async function LibrariesPage({ searchParams }: LibrariesPageProps
   const query = resolvedSearchParams.query || "";
   const isNearMe = !!resolvedSearchParams.lat && !!resolvedSearchParams.lng;
 
-  // We construct a cache key based on the search query.
-  // If `isNearMe` is active, we bypass cache because location sorting is highly dynamic per user.
-  const cacheKey = `libraries:search:${query}`;
+  // Parse filter params from the URL
+  const amenitiesRaw = resolvedSearchParams.amenities || "";
+  const maxPriceRaw = resolvedSearchParams.maxPrice || "";
+
+  const amenities = amenitiesRaw
+    ? amenitiesRaw.split(",").map((a) => a.trim()).filter(Boolean)
+    : [];
+  const maxPrice = maxPriceRaw ? parseInt(maxPriceRaw, 10) : null;
+
+  // Build a cache key that includes all filter dimensions.
+  // Amenities are sorted so "AC,Wi-Fi" and "Wi-Fi,AC" produce the same key.
+  const sortedAmenities = [...amenities].sort().join(",");
+  const cacheKey = `libraries:search:${query}:am:${sortedAmenities || "none"}:mp:${maxPrice ?? "any"}`;
   let libraries: LibraryWithPlans[] | string | null = null;
 
+  // If `isNearMe` is active, bypass cache because location sorting is per-user.
   if (!isNearMe) {
     try {
       libraries = await redis.get<LibraryWithPlans[] | string>(cacheKey);
@@ -49,6 +62,8 @@ export default async function LibrariesPage({ searchParams }: LibrariesPageProps
     libraries = await prisma.library.findMany({
       where: {
         kycStatus: "APPROVED",
+
+        // Text search
         ...(query ? {
           OR: [
             { name: { contains: query, mode: 'insensitive' } },
@@ -56,6 +71,22 @@ export default async function LibrariesPage({ searchParams }: LibrariesPageProps
             { metroStation: { contains: query, mode: 'insensitive' } },
             { city: { contains: query, mode: 'insensitive' } }
           ]
+        } : {}),
+
+        // Amenities filter — library must have ALL selected amenities
+        ...(amenities.length > 0 ? {
+          facilities: { hasEvery: amenities }
+        } : {}),
+
+        // Price filter — at least one active monthly plan must be <= maxPrice
+        ...(maxPrice !== null ? {
+          plans: {
+            some: {
+              isActive: true,
+              validityDays: { gte: 30 },
+              price: { lte: maxPrice }
+            }
+          }
         } : {})
       },
       include: {
@@ -93,22 +124,31 @@ export default async function LibrariesPage({ searchParams }: LibrariesPageProps
     return 0;
   });
 
+  const hasFilters = amenities.length > 0 || maxPrice !== null;
+
   return (
     <div className="flex flex-col min-h-screen">
       <Suspense fallback={<div className="h-20" />}>
         <HomeSearchShell />
       </Suspense>
 
+      {/* Filter bar */}
+      <LibraryFilters
+        selectedAmenities={amenities}
+        maxPrice={maxPrice}
+        totalCount={visibleLibraries.length}
+      />
+
       {/* Main Grid */}
-      <section className="container mx-auto px-6 md:px-10 py-10 pb-20">
+      <section className="container mx-auto px-6 md:px-10 py-6 pb-20">
         <div className="flex items-center justify-between mb-8">
           <h2 className="text-2xl font-bold tracking-tight text-foreground font-heading">
             {query
               ? `Results for "${query}"`
               : `${visibleLibraries.length > 0 ? visibleLibraries.length : "0"} libraries in Delhi`}
           </h2>
-          {query && (
-            <Link href="/" className="text-sm text-primary font-medium hover:underline">
+          {(query || hasFilters) && (
+            <Link href="/libraries" className="text-sm text-primary font-medium hover:underline">
               Clear all
             </Link>
           )}
@@ -118,7 +158,9 @@ export default async function LibrariesPage({ searchParams }: LibrariesPageProps
           <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
             <MapPin className="h-10 w-10 mb-3 opacity-30" />
             <p className="text-lg font-medium">No libraries found</p>
-            <p className="text-sm mt-1">Try a different query</p>
+            <p className="text-sm mt-1">
+              {hasFilters ? "Try removing some filters" : "Try a different query"}
+            </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 gap-y-10">

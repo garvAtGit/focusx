@@ -110,6 +110,13 @@ export function PlansClient({ initialPlans }: { initialPlans: Plan[] }) {
   const [isOpen, setIsOpen] = useState(false)
   const [editingPlan, setEditingPlan] = useState<Plan | null>(null)
   
+  // Animation and Validation States
+  const [shakeDiscount, setShakeDiscount] = useState(false)
+  const [showDiscountWarning, setShowDiscountWarning] = useState(false)
+  const [shakeRowIndex, setShakeRowIndex] = useState<number | null>(null)
+  const [showRowDiscountWarning, setShowRowDiscountWarning] = useState<number | null>(null)
+  const [planToDelete, setPlanToDelete] = useState<string | null>(null)
+  
   // Bulk Add State
   const [basePlanName, setBasePlanName] = useState("")
   const [monthlyPrice, setMonthlyPrice] = useState("")
@@ -174,10 +181,9 @@ export function PlansClient({ initialPlans }: { initialPlans: Plan[] }) {
     return true;
   });
 
-  async function handleDelete(id: string) {
-    if (confirm("Are you sure you want to delete this plan?")) {
-      await deletePlan(id)
-    }
+  async function confirmDelete(id: string) {
+    await deletePlan(id)
+    setPlanToDelete(null)
   }
 
   async function handleBatchSubmit() {
@@ -239,6 +245,8 @@ export function PlansClient({ initialPlans }: { initialPlans: Plan[] }) {
     setCustomHourEnabled(false);
     setCustomHourValue("");
     setRows(currentRows => buildRows(DEFAULT_ROW_CONFIGURATION, currentRows));
+    setShowDiscountWarning(false);
+    setShowRowDiscountWarning(null);
     setIsOpen(true);
   }
 
@@ -250,6 +258,8 @@ export function PlansClient({ initialPlans }: { initialPlans: Plan[] }) {
     setEditDiscount(plan.discount?.toString() || "");
     setEditValidity(plan.validityDays.toString());
     setEditHours(plan.durationHours ? plan.durationHours.toString() : "FULL");
+    setShowDiscountWarning(false);
+    setShowRowDiscountWarning(null);
     setIsOpen(true);
   }
 
@@ -319,15 +329,38 @@ export function PlansClient({ initialPlans }: { initialPlans: Plan[] }) {
                 <div className="grid grid-cols-3 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="price">Base Price (₹)</Label>
-                    <Input id="price" name="price" value={editPrice} onChange={e => setEditPrice(e.target.value)} type="number" required />
+                    <Input id="price" name="price" value={editPrice} onChange={e => {
+                      const val = e.target.value;
+                      if (val === "" || Number(val) >= 0) setEditPrice(val);
+                    }} type="number" min="0" required onKeyDown={e => { if (e.key === '-') e.preventDefault() }} />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="discount">Discount %</Label>
-                    <Input id="discount" name="discount" value={editDiscount} onChange={e => setEditDiscount(e.target.value)} type="number" step="0.1" />
+                    <Input id="discount" name="discount" value={editDiscount} onChange={e => {
+                      const val = e.target.value;
+                      if (val === "") {
+                        setEditDiscount(val);
+                        setShowDiscountWarning(false);
+                      } else {
+                        const num = Number(val);
+                        if (num >= 0 && num <= 100) {
+                          setEditDiscount(val);
+                          setShowDiscountWarning(false);
+                        } else {
+                          setShakeDiscount(true);
+                          setShowDiscountWarning(true);
+                          setTimeout(() => setShakeDiscount(false), 300);
+                        }
+                      }
+                    }} type="number" step="0.1" min="0" max="100" className={shakeDiscount ? "animate-shake border-destructive/80 focus-visible:ring-destructive/50" : ""} onKeyDown={e => { if (e.key === '-') e.preventDefault() }} />
+                    {showDiscountWarning && <p className="text-[10px] text-destructive leading-tight mt-1">Discount cannot exceed 100%.</p>}
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="validityDays">Validity (Days)</Label>
-                    <Input id="validityDays" name="validityDays" value={editValidity} onChange={e => setEditValidity(e.target.value)} type="number" required />
+                    <Input id="validityDays" name="validityDays" value={editValidity} onChange={e => {
+                      const val = e.target.value;
+                      if (val === "" || Number(val) >= 0) setEditValidity(val);
+                    }} type="number" min="1" required onKeyDown={e => { if (e.key === '-') e.preventDefault() }} />
                   </div>
                 </div>
                 <DialogFooter className="pt-4">
@@ -388,9 +421,19 @@ export function PlansClient({ initialPlans }: { initialPlans: Plan[] }) {
                                 max="24" 
                                 value={customHourValue} 
                                 onChange={e => {
-                                  setCustomHourValue(e.target.value)
-                                  rebuildRows({ customHourValue: e.target.value })
+                                  const val = e.target.value;
+                                  if (val === "") {
+                                    setCustomHourValue(val);
+                                    rebuildRows({ customHourValue: val });
+                                  } else {
+                                    const num = Number(val);
+                                    if (num >= 0 && num <= 24) {
+                                      setCustomHourValue(val);
+                                      rebuildRows({ customHourValue: val });
+                                    }
+                                  }
                                 }}
+                                onKeyDown={e => { if (e.key === '-') e.preventDefault() }}
                                 placeholder="Max 24" 
                                 className="w-20 h-8 text-sm"
                               />
@@ -408,7 +451,10 @@ export function PlansClient({ initialPlans }: { initialPlans: Plan[] }) {
                     </div>
                     <div className="space-y-2">
                       <Label>Monthly Price Template</Label>
-                      <Input value={monthlyPrice} onChange={e => setMonthlyPrice(e.target.value)} type="number" placeholder="e.g. 1500" />
+                      <Input value={monthlyPrice} onChange={e => {
+                        const val = e.target.value;
+                        if (val === "" || Number(val) >= 0) setMonthlyPrice(val);
+                      }} type="number" min="0" placeholder="e.g. 1500" onKeyDown={e => { if (e.key === '-') e.preventDefault() }} />
                       <p className="text-[10px] text-muted-foreground">Used to auto-generate prices below.</p>
                     </div>
                   </div>
@@ -452,11 +498,16 @@ export function PlansClient({ initialPlans }: { initialPlans: Plan[] }) {
                             </div>
                             <Input 
                               value={row.basePriceOverride} 
-                              onChange={e => handleRowChange(index, "basePriceOverride", e.target.value)} 
+                              onChange={e => {
+                                const val = e.target.value;
+                                if (val === "" || Number(val) >= 0) handleRowChange(index, "basePriceOverride", val);
+                              }} 
                               placeholder={autoCalculated > 0 ? autoCalculated.toString() : "0"}
                               className="h-8 text-sm bg-background"
                               disabled={!row.included}
                               type="number"
+                              min="0"
+                              onKeyDown={e => { if (e.key === '-') e.preventDefault() }}
                             />
                           </div>
 
@@ -464,13 +515,33 @@ export function PlansClient({ initialPlans }: { initialPlans: Plan[] }) {
                             <div className="text-xs text-muted-foreground">Discount %</div>
                             <Input 
                               value={row.discountPercent} 
-                              onChange={e => handleRowChange(index, "discountPercent", e.target.value)} 
+                              onChange={e => {
+                                const val = e.target.value;
+                                if (val === "") {
+                                  handleRowChange(index, "discountPercent", val);
+                                  setShowRowDiscountWarning(null);
+                                } else {
+                                  const num = Number(val);
+                                  if (num >= 0 && num <= 100) {
+                                    handleRowChange(index, "discountPercent", val);
+                                    setShowRowDiscountWarning(null);
+                                  } else {
+                                    setShakeRowIndex(index);
+                                    setShowRowDiscountWarning(index);
+                                    setTimeout(() => setShakeRowIndex(null), 300);
+                                  }
+                                }
+                              }} 
                               placeholder="0"
-                              className="h-8 text-sm bg-background"
+                              className={`h-8 text-sm bg-background ${shakeRowIndex === index ? 'animate-shake border-destructive/80 focus-visible:ring-destructive/50' : ''}`}
                               disabled={!row.included || calculatedTotal === 0}
                               type="number"
                               step="0.1"
+                              min="0"
+                              max="100"
+                              onKeyDown={e => { if (e.key === '-') e.preventDefault() }}
                             />
+                            {showRowDiscountWarning === index && <p className="text-[10px] text-destructive leading-tight mt-1">Max 100</p>}
                           </div>
                           
                           <div className="col-span-2 space-y-1 text-right">
@@ -613,13 +684,25 @@ export function PlansClient({ initialPlans }: { initialPlans: Plan[] }) {
               </div>
             </div>
             
-            <div className="border-t border-border grid grid-cols-2 divide-x divide-border">
-              <button onClick={() => openEdit(plan)} className="flex items-center justify-center gap-2 p-3 text-sm font-medium text-foreground hover:bg-muted transition-colors cursor-pointer">
-                <Edit2 className="w-4 h-4" /> Edit
-              </button>
-              <button onClick={() => handleDelete(plan.id)} className="flex items-center justify-center gap-2 p-3 text-sm font-medium text-destructive hover:bg-destructive/10 transition-colors">
-                <Trash2 className="w-4 h-4" /> Delete
-              </button>
+            <div className="border-t border-border">
+              {planToDelete === plan.id ? (
+                <div className="flex flex-col p-3 bg-destructive/10 animate-in fade-in duration-200">
+                  <p className="text-sm font-semibold text-destructive mb-3 text-center">Are you sure you want to delete this plan?</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setPlanToDelete(null)} className="h-8 border-border bg-background">Cancel</Button>
+                    <Button variant="destructive" size="sm" onClick={() => confirmDelete(plan.id)} className="h-8">Yes, Delete</Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 divide-x divide-border">
+                  <button onClick={() => openEdit(plan)} className="flex items-center justify-center gap-2 p-3 text-sm font-medium text-foreground hover:bg-muted transition-colors cursor-pointer">
+                    <Edit2 className="w-4 h-4" /> Edit
+                  </button>
+                  <button onClick={() => setPlanToDelete(plan.id)} className="flex items-center justify-center gap-2 p-3 text-sm font-medium text-destructive hover:bg-destructive/10 transition-colors">
+                    <Trash2 className="w-4 h-4" /> Delete
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         ))}
