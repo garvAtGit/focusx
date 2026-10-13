@@ -1,7 +1,7 @@
 'use client'
 import { formatStandardDate } from "@/lib/date-utils";
 
-import { MessageSquare, Star, AlertTriangle } from "lucide-react"
+import { MessageSquare, Star, AlertTriangle, CheckCircle2 } from "lucide-react"
 import { useState } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
@@ -15,6 +15,7 @@ interface DashboardQuery {
   content: string;
   rating: number | null;
   createdAt: Date;
+  isVerified?: boolean;
   student: {
     name: string;
   };
@@ -71,8 +72,15 @@ export function QueriesClient({ queries }: { queries: DashboardQuery[] }) {
             
             <div className="flex-1 space-y-2 w-full">
               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <h3 className="font-bold text-foreground">#{index + 1}. {query.student.name}</h3>
+                  {query.type === 'REVIEW' && query.isVerified ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                      <CheckCircle2 className="w-3 h-3" /> Verified Student
+                    </span>
+                  ) : query.type === 'REVIEW' ? (
+                    <span className="text-xs text-muted-foreground font-normal">Student</span>
+                  ) : null}
                   <span className="text-muted-foreground text-sm">• {formatStandardDate(query.createdAt)}</span>
                 </div>
               </div>

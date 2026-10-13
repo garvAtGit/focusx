@@ -3,11 +3,12 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import { 
   MapPin, Check, Loader2, Clock, Phone, Navigation, Lock, Share, Heart,
-  Snowflake, Droplet, Video, Car, ShieldCheck, VolumeX, Wifi, Bath, Coffee, Plug, CheckCircle2 
+  Snowflake, Droplet, Video, Car, ShieldCheck, VolumeX, Wifi, Bath, Coffee, Plug, CheckCircle2, Star 
 } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { LibraryPhotoGallery } from "@/components/library-photo-gallery"
 import { InquiryForm } from "./InquiryForm";
+import { LibraryReviewsSection } from "@/components/library-reviews-section";
 import dynamic from "next/dynamic"
 import { auth } from "@/lib/firebase/clientApp"
 
@@ -705,6 +706,14 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
               )}
               <span className="flex items-center gap-1"><MapPin className="w-4 h-4" /> {library.locality || library.address.split(',')[0]} {library.metroStation ? `· ${library.metroDistance} km from ${library.metroStation}` : ''}</span>
               <span className="flex items-center gap-1"><Clock className="w-4 h-4" /> {library.openingTime || "08:00"} – {library.closingTime || "22:00"}</span>
+              <button
+                type="button"
+                onClick={() => scrollToSection('reviews-section')}
+                className="flex items-center gap-1 text-xs font-bold text-foreground hover:text-primary transition-colors cursor-pointer bg-muted/60 hover:bg-muted px-2.5 py-1 rounded-md"
+              >
+                <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                <span>Reviews & Ratings</span>
+              </button>
             </div>
           </div>
           
@@ -1128,6 +1137,13 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
               </div>
             </div>
           </section>
+
+          {/* Student Reviews & Ratings */}
+          <LibraryReviewsSection 
+            libraryId={library.id}
+            libraryName={library.name}
+            studentId={dynamicState.studentId}
+          />
 
           <section className="mt-8 border-t border-border pt-8 feedback-section">
             <h2 className="text-2xl font-black text-foreground mb-4 font-heading flex items-center gap-2">

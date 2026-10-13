@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma"
 import Link from "next/link"
-import { MapPin } from "lucide-react"
+import { MapPin, Star } from "lucide-react"
 import { HomeSearchShell } from "@/components/home-search-shell"
 import Image from "next/image"
 import { SaveButton } from "@/components/save-button"
@@ -14,6 +14,11 @@ import { LibraryFilters } from "@/components/library-filters";
 type LibraryWithPlans = Prisma.LibraryGetPayload<{
   include: {
     plans: true;
+    queries: {
+      select: {
+        rating: true;
+      };
+    };
   };
 }>;
 
@@ -91,6 +96,10 @@ export default async function LibrariesPage({ searchParams }: LibrariesPageProps
       },
       include: {
         plans: { where: { isActive: true } },
+        queries: {
+          where: { type: 'REVIEW' },
+          select: { rating: true }
+        }
       },
       take: 60,
       orderBy: { createdAt: 'desc' }
@@ -218,9 +227,33 @@ export default async function LibrariesPage({ searchParams }: LibrariesPageProps
 
                   {/* Info */}
                   <div className="flex flex-col gap-0.5 mt-1">
-                    <h3 className="font-bold text-[15px] truncate text-foreground leading-snug tracking-tight">
-                      {library.name}
-                    </h3>
+                    {(() => {
+                      const reviewList = library.queries || [];
+                      const reviewCount = reviewList.length;
+                      const ratedReviews = reviewList.filter((q) => q.rating !== null && q.rating !== undefined && q.rating >= 1 && q.rating <= 5);
+                      const avgRating = ratedReviews.length > 0 
+                        ? (ratedReviews.reduce((acc, q) => acc + q.rating!, 0) / ratedReviews.length).toFixed(1)
+                        : null;
+                      return (
+                        <div className="flex items-center justify-between gap-1.5">
+                          <h3 className="font-bold text-[15px] truncate text-foreground leading-snug tracking-tight">
+                            {library.name}
+                          </h3>
+                          {reviewCount > 0 ? (
+                            <div className="flex items-center gap-1 shrink-0 text-xs font-bold text-foreground">
+                              <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                              <span>{avgRating}</span>
+                              <span className="text-muted-foreground font-normal text-[11px]">({reviewCount})</span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1 shrink-0 text-xs text-muted-foreground">
+                              <Star className="w-3 h-3 text-muted-foreground/30" />
+                              <span className="text-[11px]">New</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                     <p className="text-[13px] text-muted-foreground truncate">{locality}</p>
                     
                     {library.metroStation ? (
