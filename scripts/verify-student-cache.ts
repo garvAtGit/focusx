@@ -41,10 +41,12 @@ if (process.env.TEST_BROKEN_REDIS === "1") {
     const testLib = `test_broken_${Date.now()}`;
 
     try {
+      const todayStr = new Date().toISOString().split("T")[0];
       const data = await getCachedStudentPage(
         testLib,
         "ALL",
         1,
+        todayStr,
         async () => {
           fetcherCalled = true;
           return { bookings: [{ id: "b1", student: { name: "Test" } }], totalCount: 1 };
@@ -104,10 +106,11 @@ async function runRealSuite() {
     };
   };
 
-  const firstCall = await getCachedStudentPage(testLibraryId, "ALL", 1, mockFetcher);
+  const todayStr = new Date().toISOString().split("T")[0];
+  const firstCall = await getCachedStudentPage(testLibraryId, "ALL", 1, todayStr, mockFetcher);
   console.log(`Call 1 result: fetchCount=${fetchCount} -> ${fetchCount === 1 ? "MISS (logged & cached)" : "UNEXPECTED"}`);
 
-  const secondCall = await getCachedStudentPage(testLibraryId, "ALL", 1, mockFetcher);
+  const secondCall = await getCachedStudentPage(testLibraryId, "ALL", 1, todayStr, mockFetcher);
   console.log(`Call 2 result: fetchCount=${fetchCount} -> ${fetchCount === 1 ? "HIT (served from Redis)" : "FAIL (re-fetched)"}`);
 
   if ((fetchCount as number) !== 1) throw new Error("Expected 1 fetch for call 1 (MISS) and 0 fetches for call 2 (HIT)");
@@ -118,7 +121,7 @@ async function runRealSuite() {
   console.log("\n--- Step b: Invalidation -> MISS with fresh data ---");
   await invalidateStudentsCache(testLibraryId);
 
-  const thirdCall = await getCachedStudentPage(testLibraryId, "ALL", 1, mockFetcher);
+  const thirdCall = await getCachedStudentPage(testLibraryId, "ALL", 1, todayStr, mockFetcher);
   console.log(`Call 3 result: fetchCount=${fetchCount} -> ${(fetchCount as number) === 2 ? "MISS with fresh data" : "FAIL (served stale cache)"}`);
   if ((fetchCount as number) !== 2) throw new Error("Expected fresh fetch after invalidateStudentsCache");
 
@@ -149,9 +152,9 @@ async function runRealSuite() {
     };
 
     // First fetch (MISS)
-    const missResult = await getCachedStudentPage(realTestLibraryId, "ALL", 1, realFetcher);
+    const missResult = await getCachedStudentPage(realTestLibraryId, "ALL", 1, todayStr, realFetcher);
     // Second fetch (HIT from real Redis)
-    const hitResult = await getCachedStudentPage(realTestLibraryId, "ALL", 1, realFetcher);
+    const hitResult = await getCachedStudentPage(realTestLibraryId, "ALL", 1, todayStr, realFetcher);
 
     // Type comparisons
     const typeDiffs: string[] = [];

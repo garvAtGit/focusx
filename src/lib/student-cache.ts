@@ -10,24 +10,22 @@ export interface TabCounts {
   revoked: number;
 }
 
-export interface StudentMetadata {
+export interface StudentStaticMetadata {
   plans: any[];
   seats: any[];
   standaloneLockers: any[];
-  relays: any[];
-  occupiedStandaloneLockerIds: string[];
-  occupiedSeatIds: string[];
 }
 
-export interface CachedStudentPageData {
-  bookings: any[];
+import type { FetchedStudentBookings } from "@/app/dashboard/students/page";
+
+export interface CachedStudentPageData<T = FetchedStudentBookings> {
+  bookings: T;
   totalCount: number;
 }
 
-// TTL configuration (time-driven staleness rules)
-export const DYNAMIC_TTL_SECONDS = 60; // 60 seconds for counts & tab pages
-export const STATIC_META_TTL_SECONDS = 3600; // 1 hour for plans, seats, lockers, relays
-export const OCCUPIED_META_TTL_SECONDS = 60; // 60 seconds max for occupied resource IDs
+// TTL configuration
+export const DYNAMIC_TTL_SECONDS = 600; // 10 minutes as a safety net (date-stamped keys)
+export const STATIC_META_TTL_SECONDS = 3600; // 1 hour for plans, seats, lockers
 export const REDIS_TIMEOUT_MS = 1500; // 1500ms timeout
 
 export const KNOWN_DATE_FIELDS = new Set([
@@ -76,7 +74,6 @@ export function reviveDates<T>(value: T, keyName?: string): T {
   return value;
 }
 
-
 /**
  * Enforces a strict timeout on async Redis operations to guarantee resilience.
  */
@@ -87,7 +84,6 @@ function withTimeout<T>(promise: Promise<T>, ms = REDIS_TIMEOUT_MS): Promise<T> 
       const timer = setTimeout(() => {
         reject(new Error(`Redis operation timed out after ${ms}ms`));
       }, ms);
-      // In Node environments, unref timer so it doesn't hold open the process
       if (typeof timer.unref === "function") timer.unref();
     }),
   ]);
@@ -106,8 +102,8 @@ function safeSerialize(data: unknown): string {
  * Invalidates all student caches for the given library.
  */
 export async function invalidateStudentsCache(libraryId: string): Promise<void> {
-  if (!libraryId) return;
   try {
+    if (!libraryId) return;
     await withTimeout(deleteByPattern(`students:${libraryId}:*`));
   } catch (error) {
     console.warn(`[student-cache] Invalidation failed for library ${libraryId}:`, error);
@@ -115,14 +111,15 @@ export async function invalidateStudentsCache(libraryId: string): Promise<void> 
 }
 
 /**
- * Retrieves tab counts from Redis (60s TTL) or executes the fallback fetcher.
+ * Retrieves tab counts from Redis (10m TTL, date-stamped) or executes the fallback fetcher.
  * Separate try/catch for get and set, 1500ms timeout, never throws.
  */
 export async function getCachedStudentCounts(
   libraryId: string,
+  dateStr: string,
   fetcher: () => Promise<TabCounts>
 ): Promise<TabCounts> {
-  const cacheKey = `students:${libraryId}:counts`;
+  const cacheKey = `students:${libraryId}:counts:${dateStr}`;
 
   // 1. Separate GET try/catch with 1500ms timeout
   let cached: TabCounts | null = null;
@@ -136,8 +133,11 @@ export async function getCachedStudentCounts(
   }
 
   if (cached !== null && cached !== undefined) {
+    console.log(`[student-cache] HIT ${cacheKey}`);
     return reviveDates(cached);
   }
+
+  console.log(`[student-cache] MISS ${cacheKey}`);
 
   // 2. Fallthrough to fetcher exactly once
   const counts = await fetcher();
@@ -151,21 +151,22 @@ export async function getCachedStudentCounts(
 }
 
 /**
- * Retrieves a paginated student tab from Redis (60s TTL) or executes fallback fetcher.
+ * Retrieves a paginated student tab from Redis (10m TTL, date-stamped) or executes fallback fetcher.
  * Separate try/catch for get and set, 1500ms timeout, never throws.
  */
-export async function getCachedStudentPage(
+export async function getCachedStudentPage<T = FetchedStudentBookings>(
   libraryId: string,
   tab: string,
   page: number,
-  fetcher: () => Promise<CachedStudentPageData>
-): Promise<CachedStudentPageData> {
-  const cacheKey = `students:${libraryId}:tab:${tab}:p:${page}`;
+  dateStr: string,
+  fetcher: () => Promise<CachedStudentPageData<T>>
+): Promise<CachedStudentPageData<T>> {
+  const cacheKey = `students:${libraryId}:tab:${tab}:p:${page}:${dateStr}`;
 
   // 1. Separate GET try/catch with 1500ms timeout
-  let cached: CachedStudentPageData | null = null;
+  let cached: CachedStudentPageData<T> | null = null;
   try {
-    const raw = await withTimeout(redis.get<string | CachedStudentPageData>(cacheKey));
+    const raw = await withTimeout(redis.get<string | CachedStudentPageData<T>>(cacheKey));
     if (raw) {
       cached = typeof raw === "string" ? JSON.parse(raw) : raw;
     }
@@ -174,8 +175,11 @@ export async function getCachedStudentPage(
   }
 
   if (cached !== null && cached !== undefined) {
+    console.log(`[student-cache] HIT ${cacheKey}`);
     return reviveDates(cached);
   }
+
+  console.log(`[student-cache] MISS ${cacheKey}`);
 
   // 2. Fallthrough to fetcher exactly once
   const result = await fetcher();
@@ -189,24 +193,19 @@ export async function getCachedStudentPage(
 }
 
 /**
- * Retrieves reference metadata:
- * - Static metadata (plans, seats, lockers, relays) cached for 1 hour.
- * - Occupied seat and locker IDs cached for max 60 seconds (or fresh).
+ * Retrieves static reference metadata (plans, seats, lockers) cached for 1 hour.
+ * Relays and occupied resources are fetched live and not cached here.
  * Separate try/catch for get and set, 1500ms timeout, never throws.
  */
 export async function getCachedStudentMetadata(
   libraryId: string,
-  fetcher: () => Promise<StudentMetadata>
-): Promise<StudentMetadata> {
+  fetcher: () => Promise<StudentStaticMetadata>
+): Promise<StudentStaticMetadata> {
   const staticCacheKey = `students:${libraryId}:static_meta`;
-  const occupiedCacheKey = `students:${libraryId}:occupied_meta`;
 
-  // 1. Try to read both from Redis
-  let cachedStatic: Partial<StudentMetadata> | null = null;
-  let cachedOccupied: { occupiedStandaloneLockerIds: string[]; occupiedSeatIds: string[] } | null = null;
-
+  let cachedStatic: StudentStaticMetadata | null = null;
   try {
-    const rawStatic = await withTimeout(redis.get<string | Partial<StudentMetadata>>(staticCacheKey));
+    const rawStatic = await withTimeout(redis.get<string | StudentStaticMetadata>(staticCacheKey));
     if (rawStatic) {
       cachedStatic = typeof rawStatic === "string" ? JSON.parse(rawStatic) : rawStatic;
     }
@@ -214,47 +213,27 @@ export async function getCachedStudentMetadata(
     console.warn(`[student-cache] Redis get failed for ${staticCacheKey}:`, err);
   }
 
-  try {
-    const rawOccupied = await withTimeout(redis.get<string | { occupiedStandaloneLockerIds: string[]; occupiedSeatIds: string[] }>(occupiedCacheKey));
-    if (rawOccupied) {
-      cachedOccupied = typeof rawOccupied === "string" ? JSON.parse(rawOccupied) : rawOccupied;
-    }
-  } catch (err) {
-    console.warn(`[student-cache] Redis get failed for ${occupiedCacheKey}:`, err);
-  }
-
-  // If both are cached, combine and return
-  if (cachedStatic && cachedOccupied) {
+  if (cachedStatic !== null && cachedStatic !== undefined) {
+    console.log(`[student-cache] HIT ${staticCacheKey}`);
     return reviveDates({
       plans: cachedStatic.plans ?? [],
       seats: cachedStatic.seats ?? [],
       standaloneLockers: cachedStatic.standaloneLockers ?? [],
-      relays: cachedStatic.relays ?? [],
-      occupiedStandaloneLockerIds: cachedOccupied.occupiedStandaloneLockerIds ?? [],
-      occupiedSeatIds: cachedOccupied.occupiedSeatIds ?? [],
     });
   }
 
-  // 2. Fallthrough to fetcher exactly once
+  console.log(`[student-cache] MISS ${staticCacheKey}`);
+
+  // Fallthrough to fetcher exactly once
   const fresh = await fetcher();
 
-  // 3. Separate non-blocking SET with timeout for static (1 hr) and occupied (60s)
-  const staticData = {
+  const staticData: StudentStaticMetadata = {
     plans: fresh.plans,
     seats: fresh.seats,
     standaloneLockers: fresh.standaloneLockers,
-    relays: fresh.relays,
   };
   withTimeout(redis.set(staticCacheKey, safeSerialize(staticData), { ex: STATIC_META_TTL_SECONDS })).catch((err) => {
     console.warn(`[student-cache] Redis set failed for ${staticCacheKey}:`, err);
-  });
-
-  const occupiedData = {
-    occupiedStandaloneLockerIds: fresh.occupiedStandaloneLockerIds,
-    occupiedSeatIds: fresh.occupiedSeatIds,
-  };
-  withTimeout(redis.set(occupiedCacheKey, safeSerialize(occupiedData), { ex: OCCUPIED_META_TTL_SECONDS })).catch((err) => {
-    console.warn(`[student-cache] Redis set failed for ${occupiedCacheKey}:`, err);
   });
 
   return fresh;

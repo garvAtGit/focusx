@@ -4,7 +4,7 @@ import prisma from "@/lib/prisma"
 import { getSession } from "./auth-actions"
 import { revalidatePath } from "next/cache"
 import { uploadImage } from "@/lib/imagekit"
-import { invalidateLibraryRuntimeCache } from "@/lib/library-cache"
+import { invalidateStudentsCache } from "@/lib/student-cache"
 
 function getFormString(formData: FormData, key: string): string {
   const value = formData.get(key);
@@ -98,7 +98,7 @@ export async function updateStudentProfile(formData: FormData): Promise<{ succes
     select: { libraryId: true },
     distinct: ['libraryId']
   });
-  await Promise.all(studentBookings.map(b => invalidateLibraryRuntimeCache(b.libraryId)));
+  await Promise.all(studentBookings.map(b => invalidateStudentsCache(b.libraryId)));
 
   revalidatePath("/student/profile");
   revalidatePath("/dashboard/students");

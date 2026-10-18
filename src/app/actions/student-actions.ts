@@ -14,6 +14,7 @@ import {
   revokeConfirmedBookings,
 } from "@/lib/booking-authority"
 import { invalidateLibraryRuntimeCache } from "@/lib/library-cache"
+import { invalidateStudentsCache } from "@/lib/student-cache"
 
 function isPrismaUniqueError(error: unknown, target?: string): boolean {
   if (
@@ -103,10 +104,14 @@ export async function assignUniqueIdToStudent(studentId: string) {
     data: { uniqueId: newId }
   });
 
-  const library = await prisma.library.findFirst({
-    where: session.role === 'ADMIN' ? {} : { librarianId: session.userId }
+  const studentBooking = await prisma.booking.findFirst({
+    where: { studentId },
+    select: { libraryId: true },
+    orderBy: { createdAt: "desc" },
   });
-  if (library) await invalidateLibraryRuntimeCache(library.id);
+  if (studentBooking?.libraryId) {
+    await invalidateStudentsCache(studentBooking.libraryId);
+  }
 
   revalidatePath("/dashboard/students");
   return { success: true, uniqueId: newId };
@@ -628,7 +633,7 @@ export async function createOfflineStudentWithRFID(libraryId: string, name: stri
       return { error: qrResult.error };
     }
 
-    await invalidateLibraryRuntimeCache(libraryId);
+    await invalidateStudentsCache(libraryId);
 
     return { success: true, student: newStudent, qrPayload: qrResult.qrPayload };
   } catch (error: unknown) {
@@ -801,10 +806,14 @@ export async function updateCrmNote(studentId: string, note: string, isExpiredLe
       }
     });
 
-    const libraryId = session.role === 'RECEPTIONIST' ? session.employerLibraryId : (
-      await prisma.library.findFirst({ where: session.role === 'ADMIN' ? {} : { librarianId: session.userId } })
-    )?.id;
-    if (libraryId) await invalidateLibraryRuntimeCache(libraryId);
+    const studentBooking = await prisma.booking.findFirst({
+      where: { studentId },
+      select: { libraryId: true },
+      orderBy: { createdAt: "desc" },
+    });
+    if (studentBooking?.libraryId) {
+      await invalidateStudentsCache(studentBooking.libraryId);
+    }
     
     revalidatePath("/dashboard/students");
     return { success: true };
@@ -842,7 +851,7 @@ export async function collectDues(bookingId: string, additionalCashPaise: number
       }
     });
 
-    await invalidateLibraryRuntimeCache(booking.libraryId);
+    await invalidateStudentsCache(booking.libraryId);
     revalidatePath("/dashboard/students");
     revalidatePath("/dashboard/financials");
     

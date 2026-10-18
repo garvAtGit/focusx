@@ -3,15 +3,16 @@ import { StudentsClient } from "./StudentsClient";
 import { getSession } from "@/app/actions/auth-actions";
 import { redirect } from "next/navigation";
 import { Prisma } from "@prisma/client";
-import { formatStandardDate } from "@/lib/date-utils";
 import { getActiveLibrary } from "@/lib/dashboard-utils";
 import {
   getCachedStudentCounts,
   getCachedStudentPage,
   getCachedStudentMetadata,
-  type TabCounts,
-  type StudentMetadata,
+  StudentStaticMetadata,
+  TabCounts,
 } from "@/lib/student-cache";
+
+const PAGE_SIZE = 20;
 
 function buildTabPredicate(tab: string, now: Date, sevenDaysFromNow: Date, libraryId: string) {
   switch (tab) {
@@ -150,15 +151,18 @@ async function fetchStudentBookings(
     where: { id: { in: bookingIds } },
     include: {
       student: {
-        include: {
-          bookings: {
-            include: {
-              plan: true,
-              seat: true,
-              standaloneLocker: true,
-            },
-            orderBy: { createdAt: "desc" },
-          },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          uniqueId: true,
+          profilePhotoUrl: true,
+          rfidTag: true,
+          crmNote: true,
+          isExpiredLead: true,
+          digilockerVerified: true,
+          kycAadhaarStatus: true,
         },
       },
       plan: true,
@@ -173,79 +177,40 @@ async function fetchStudentBookings(
   );
 }
 
-async function fetchStudentMetadata(libraryId: string): Promise<StudentMetadata> {
-  const [plans, seats, standaloneLockers, relays, activeBookings, activeLeases] =
-    await Promise.all([
-      prisma.plan.findMany({
-        where: { libraryId, isActive: true },
-      }),
-      prisma.seat.findMany({
-        where: { libraryId },
-        orderBy: { name: "asc" },
-      }),
-      prisma.standaloneLocker.findMany({
-        where: { libraryId },
-      }),
-      prisma.relay.findMany({
-        where: { libraryId },
-      }),
-      prisma.booking.findMany({
-        where: {
-          libraryId,
-          status: { in: ["CONFIRMED", "PENDING_PAYMENT"] },
-          endTime: { gt: new Date() },
-        },
-        select: { standaloneLockerId: true, seatId: true },
-      }),
-      prisma.resourceLease.findMany({
-        where: {
-          libraryId,
-          resourceType: "STANDALONE_LOCKER",
-          expiresAt: { gt: new Date() },
-        },
-        select: { resourceId: true },
-      }),
-    ]);
+export type FetchedStudentBookings = Awaited<ReturnType<typeof fetchStudentBookings>>;
 
-  const occupiedStandaloneLockerIds = Array.from(
-    new Set([
-      ...activeBookings.map((b) => b.standaloneLockerId).filter(Boolean),
-      ...activeLeases.map((l) => l.resourceId),
-    ])
-  ) as string[];
-
-  const occupiedSeatIds = Array.from(
-    new Set(activeBookings.map((b) => b.seatId).filter(Boolean))
-  ) as string[];
+async function fetchStudentStaticMetadata(libraryId: string): Promise<StudentStaticMetadata> {
+  const [plans, seats, standaloneLockers] = await Promise.all([
+    prisma.plan.findMany({
+      where: { libraryId, isActive: true },
+    }),
+    prisma.seat.findMany({
+      where: { libraryId },
+      orderBy: { name: "asc" },
+    }),
+    prisma.standaloneLocker.findMany({
+      where: { libraryId },
+    }),
+  ]);
 
   return {
     plans,
     seats,
     standaloneLockers,
-    relays,
-    occupiedStandaloneLockerIds,
-    occupiedSeatIds,
   };
 }
 
 export default async function StudentsPage(props: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
+  const session = await getSession();
+  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN' && session.role !== 'RECEPTIONIST')) redirect("/login");
+
   const searchParams = await props.searchParams;
   const requestedPage = parseInt((searchParams.page as string) || "1", 10);
   const page = Number.isFinite(requestedPage) ? Math.max(1, requestedPage) : 1;
   const query = ((searchParams.query as string) || "").trim();
   const tab = ((searchParams.tab as string) || "ACTIVE").toUpperCase();
-  const PAGE_SIZE = 20;
-
-  const session = await getSession();
-  if (
-    !session ||
-    (session.role !== "LIBRARIAN" &&
-      session.role !== "ADMIN" &&
-      session.role !== "RECEPTIONIST")
-  )
-    redirect("/login");
 
   const library = await getActiveLibrary(session);
   if (!library) redirect("/onboarding");
@@ -255,6 +220,8 @@ export default async function StudentsPage(props: {
 
   const sevenDaysFromNow = new Date(now);
   sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7);
+
+  const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 
   const normalizedTab = [
     "ACTIVE",
@@ -268,43 +235,24 @@ export default async function StudentsPage(props: {
     ? tab
     : "ACTIVE";
 
-  // 1. Fetch tab counts (cached in Redis or live for search)
-  const counts = query
-    ? await fetchStudentCounts(library.id, now, sevenDaysFromNow, query)
-    : await getCachedStudentCounts(library.id, () =>
+  // Run all independent queries in parallel
+  const countsPromise = query
+    ? fetchStudentCounts(library.id, now, sevenDaysFromNow, query)
+    : getCachedStudentCounts(library.id, dateStr, () =>
         fetchStudentCounts(library.id, now, sevenDaysFromNow)
       );
 
-  const totalStudentsCount =
-    normalizedTab === "PAUSED"
-      ? counts.paused
-      : normalizedTab === "DUES"
-      ? counts.dues
-      : normalizedTab === "EXPIRING"
-      ? counts.expiring
-      : normalizedTab === "INACTIVE"
-      ? counts.inactive
-      : normalizedTab === "EXPIRED"
-      ? counts.expired
-      : normalizedTab === "REVOKED"
-      ? counts.revoked
-      : counts.active;
-
-  // 2. Fetch student page data (cached in Redis per tab/page or live for search)
-  const pageData = query
-    ? {
-        bookings: await fetchStudentBookings(
-          library.id,
-          normalizedTab,
-          page,
-          PAGE_SIZE,
-          query,
-          now,
-          sevenDaysFromNow
-        ),
-        totalCount: totalStudentsCount,
-      }
-    : await getCachedStudentPage(library.id, normalizedTab, page, async () => {
+  const pageBookingsPromise = query
+    ? fetchStudentBookings(
+        library.id,
+        normalizedTab,
+        page,
+        PAGE_SIZE,
+        query,
+        now,
+        sevenDaysFromNow
+      )
+    : getCachedStudentPage(library.id, normalizedTab, page, dateStr, async () => {
         const bookings = await fetchStudentBookings(
           library.id,
           normalizedTab,
@@ -314,18 +262,37 @@ export default async function StudentsPage(props: {
           now,
           sevenDaysFromNow
         );
-        return { bookings, totalCount: totalStudentsCount };
-      });
+        return { bookings, totalCount: 0 };
+      }).then((res) => res.bookings);
 
-  const bookings = pageData.bookings;
-
-  // 3. Fetch reference metadata (cached in Redis)
-  const meta = await getCachedStudentMetadata(library.id, () =>
-    fetchStudentMetadata(library.id)
+  const staticMetaPromise = getCachedStudentMetadata(library.id, () =>
+    fetchStudentStaticMetadata(library.id)
   );
 
-  // 4. Fetch recent door activity logs (live)
-  const [checkinLogsRaw, entryLogsRaw] = await Promise.all([
+  const liveRelaysPromise = prisma.relay.findMany({
+    where: { libraryId: library.id },
+  });
+
+  const occupiedPromise = Promise.all([
+    prisma.booking.findMany({
+      where: {
+        libraryId: library.id,
+        status: { in: ["CONFIRMED", "PENDING_PAYMENT"] },
+        endTime: { gt: new Date() },
+      },
+      select: { standaloneLockerId: true, seatId: true },
+    }),
+    prisma.resourceLease.findMany({
+      where: {
+        libraryId: library.id,
+        resourceType: "STANDALONE_LOCKER",
+        expiresAt: { gt: new Date() },
+      },
+      select: { resourceId: true },
+    }),
+  ]);
+
+  const logsPromise = Promise.all([
     prisma.checkinLog.findMany({
       where: { libraryId: library.id },
       include: { student: true, relay: true },
@@ -342,6 +309,57 @@ export default async function StudentsPage(props: {
       take: 50,
     }),
   ]);
+
+  const [
+    counts,
+    bookings,
+    staticMeta,
+    liveRelays,
+    [activeBookings, activeLeases],
+    [checkinLogsRaw, entryLogsRaw],
+  ] = await Promise.all([
+    countsPromise,
+    pageBookingsPromise,
+    staticMetaPromise,
+    liveRelaysPromise,
+    occupiedPromise,
+    logsPromise,
+  ]);
+
+  const totalStudentsCount =
+    normalizedTab === "PAUSED"
+      ? counts.paused
+      : normalizedTab === "DUES"
+      ? counts.dues
+      : normalizedTab === "EXPIRING"
+      ? counts.expiring
+      : normalizedTab === "INACTIVE"
+      ? counts.inactive
+      : normalizedTab === "EXPIRED"
+      ? counts.expired
+      : normalizedTab === "REVOKED"
+      ? counts.revoked
+      : counts.active;
+
+  const occupiedStandaloneLockerIds = Array.from(
+    new Set([
+      ...activeBookings.map((b) => b.standaloneLockerId).filter(Boolean),
+      ...activeLeases.map((l) => l.resourceId),
+    ])
+  ) as string[];
+
+  const occupiedSeatIds = Array.from(
+    new Set(activeBookings.map((b) => b.seatId).filter(Boolean))
+  ) as string[];
+
+  const meta = {
+    plans: staticMeta.plans,
+    seats: staticMeta.seats,
+    standaloneLockers: staticMeta.standaloneLockers,
+    relays: liveRelays,
+    occupiedStandaloneLockerIds,
+    occupiedSeatIds,
+  };
 
   const logs = [
     ...checkinLogsRaw.map((log) => ({
@@ -395,7 +413,7 @@ export default async function StudentsPage(props: {
   return (
     <div className="w-full mx-auto space-y-6">
       <StudentsClient
-        bookings={bookings}
+        bookings={bookings as unknown as Parameters<typeof StudentsClient>[0]["bookings"]}
         plans={meta.plans}
         logs={logs}
         relays={meta.relays}
