@@ -1,0 +1,414 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  STUDENT
+  LIBRARIAN
+  RECEPTIONIST
+  ADMIN
+}
+
+model User {
+  id        String   @id @default(uuid())
+  authId    String?  @unique // Supabase auth user ID
+  role      Role     @default(STUDENT)
+  email     String?  @unique
+  password  String?  // Hashed password for MVP auth
+  name      String
+  phone     String?  @unique
+  area      String?
+  uniqueId  String?  @unique // 6-character alphanumeric
+  
+  // KYC/Admission Details
+  dob       DateTime?
+  gender    String?
+  address   String?
+  locality  String?
+  qualification String?
+  organization  String?
+  profilePhotoUrl String?
+  digilockerVerified Boolean @default(false)
+  
+  // Relationships
+  libraries Library[]  @relation("LibrarianLibraries")
+  employerLibraryId String?
+  employerLibrary   Library? @relation("LibraryStaff", fields: [employerLibraryId], references: [id])
+  bookings  Booking[]
+  queries   Query[]
+  checkins  CheckinLog[] @relation("StudentCheckins")
+  entryLogs EntryLog[]
+  platformFeedbacks PlatformFeedback[] @relation("SubmitterPlatformFeedback")
+  notifications Notification[]
+  
+  // Hardware Access Tracking
+  rfidTag String? @unique
+  consecutiveFailures Int @default(0)
+  failureReasons String?
+
+  canvasState CanvasState?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([name])
+  @@index([phone])
+}
+
+model Library {
+  id            String   @id @default(uuid())
+  librarianId   String
+  librarian     User     @relation("LibrarianLibraries", fields: [librarianId], references: [id])
+  name          String
+  managerName   String?
+  managerPhone  String?
+  address       String
+  locality      String?
+  city          String?
+  district      String?
+  state         String?
+  pinCode       String?
+
+  metroStation  String?
+  metroDistance Float?
+  googleMapsUrl String?
+  
+  openingTime   String?
+  closingTime   String?
+  
+  whatsapp      String?
+  description   String?
+  seatsAvailable Int?
+  photos        String[]
+  facilities    String[] 
+  
+  compactSeatMap Boolean @default(false)
+  seatNaming     SeatNaming @default(ALPHANUMERIC)
+
+  
+  // Banking/KYC
+  paymentAccountId String? // Handled by Razorpay (Legacy/Coming soon)
+  passbookPhoto    String? // Manual verification upload
+  kycStatus        KycStatus @default(PENDING)
+
+  seats         Seat[]
+  plans         Plan[]
+  standaloneLockers StandaloneLocker[]
+  bookings      Booking[]
+  queries       Query[]
+  relays        Relay[]
+  checkinLogs   CheckinLog[]
+  entryLogs     EntryLog[]
+  expenses      Expense[]
+  inquiries     Inquiry[]
+
+  staff         User[] @relation("LibraryStaff")
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([librarianId])
+  @@index([kycStatus])
+}
+
+enum KycStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum SeatType {
+  RESERVED
+  NORMAL
+  PREMIUM
+  NON_RESERVABLE
+}
+
+enum SeatNaming {
+  ALPHANUMERIC
+  NUMERIC
+}
+
+model Seat {
+  id        String   @id @default(uuid())
+  libraryId String
+  library   Library  @relation(fields: [libraryId], references: [id])
+  name      String   // e.g., "A1", "B2"
+  type      SeatType @default(NORMAL)
+  gridX     Int      // For the visual Instagram-style grid
+  gridY     Int
+  hasLocker Boolean  @default(false)
+  lockerPriceMonthly Float?
+  premiumPriceMonthly Float?
+  syncPremiumOffers Boolean @default(true)
+  
+  bookings  Booking[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([libraryId])
+}
+
+enum PlanType {
+  FIXED
+  FLEXIBLE
+}
+
+enum PlanSeatCategory {
+  GENERAL
+  PREMIUM
+}
+
+model Plan {
+  id            String   @id @default(uuid())
+  libraryId     String
+  library       Library  @relation(fields: [libraryId], references: [id])
+  name          String   // e.g., "Monthly Fixed", "6-Hour Flexible"
+  type          PlanType
+  durationHours Int?     // Null for fixed whole-day/monthly
+  validityDays  Int      // 1 for daily, 30 for monthly, etc.
+  price         Float
+  discount      Float?
+  isActive      Boolean  @default(true)
+  seatCategory  PlanSeatCategory @default(GENERAL)
+  
+  bookings      Booking[]
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([libraryId])
+}
+
+model StandaloneLocker {
+  id        String   @id @default(uuid())
+  libraryId String
+  library   Library  @relation(fields: [libraryId], references: [id])
+  name      String   // e.g. "L1"
+  price     Float
+  
+  bookings  Booking[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([libraryId])
+}
+
+enum BookingStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+model Booking {
+  id        String   @id @default(uuid())
+  studentId String
+  student   User     @relation(fields: [studentId], references: [id])
+  libraryId String
+  library   Library  @relation(fields: [libraryId], references: [id])
+  seatId    String?
+  seat      Seat?    @relation(fields: [seatId], references: [id])
+  planId    String
+  plan      Plan     @relation(fields: [planId], references: [id])
+  
+  hasLocker Boolean  @default(false)
+  standaloneLockerId String?
+  standaloneLocker   StandaloneLocker? @relation(fields: [standaloneLockerId], references: [id])
+  
+  startTime DateTime
+  endTime   DateTime
+  status    BookingStatus @default(PENDING_PAYMENT)
+  paymentRef String? @unique // Razorpay order ID — unique to prevent replay
+
+  isPaused  Boolean @default(false)
+  pausedAt  DateTime?
+  totalPausedDays Int @default(0)
+  revokedReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([libraryId, status])
+  @@index([libraryId, startTime])
+  @@index([libraryId, status, isPaused])
+  @@index([studentId])
+  @@index([studentId, status])
+  @@index([seatId])
+  @@index([standaloneLockerId])
+  @@index([endTime])
+}
+
+enum QueryType {
+  FEEDBACK
+  COMPLAINT
+  REVIEW
+}
+
+model Query {
+  id        String   @id @default(uuid())
+  type      QueryType
+  content   String
+  rating    Int?     // For REVIEW type
+  
+  studentId String
+  student   User     @relation(fields: [studentId], references: [id])
+  libraryId String
+  library   Library  @relation(fields: [libraryId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([libraryId])
+  @@index([studentId])
+}
+
+model Relay {
+  id          String   @id @default(uuid())
+  libraryId   String
+  library     Library  @relation(fields: [libraryId], references: [id])
+  macAddress  String?  
+  nfcTagId    String   @unique 
+  status      String   @default("ONLINE")
+  lastSync    DateTime @default(now())
+
+  logs        CheckinLog[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([libraryId])
+}
+
+enum CheckinStatus {
+  CHECK_IN
+  CHECK_OUT
+}
+
+model CheckinLog {
+  id          String   @id @default(uuid())
+  studentId   String
+  student     User     @relation("StudentCheckins", fields: [studentId], references: [id])
+  libraryId   String
+  library     Library  @relation(fields: [libraryId], references: [id])
+  relayId     String?
+  relay       Relay?   @relation(fields: [relayId], references: [id])
+  
+  status      CheckinStatus
+  timestamp   DateTime @default(now())
+  isOfflineSync Boolean @default(false)
+
+  createdAt   DateTime @default(now())
+
+  @@index([libraryId, timestamp])
+  @@index([studentId, libraryId])
+}
+
+model PlatformFeedback {
+  id           String   @id @default(uuid())
+  targetType   String   // 'WEBSITE', 'LIBRARY', 'STUDENT'
+  libraryId    String?  // Optional, if target is library
+  
+  submitterId  String
+  submitter    User     @relation("SubmitterPlatformFeedback", fields: [submitterId], references: [id])
+  
+  studentName  String?  // Optional, if target is student
+  studentPhone String?  // Optional, if target is student
+  content      String
+  createdAt    DateTime @default(now())
+
+  @@index([targetType])
+  @@index([submitterId])
+}
+
+model Expense {
+  id          String   @id @default(uuid())
+  libraryId   String
+  library     Library  @relation(fields: [libraryId], references: [id])
+  name        String   // e.g. "Rent", "Electricity", "Staff"
+  amount      Float
+  date        DateTime @default(now())
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([libraryId])
+}
+
+enum InquiryStatus {
+  NEW
+  CONTACTED
+  CONVERTED
+  CLOSED
+}
+
+model Inquiry {
+  id          String   @id @default(uuid())
+  libraryId   String
+  library     Library  @relation(fields: [libraryId], references: [id])
+  name        String
+  phone       String
+  message     String?
+  status      InquiryStatus @default(NEW)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([libraryId])
+  @@index([status])
+}
+
+model EntryLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  libraryId String
+  library   Library  @relation(fields: [libraryId], references: [id])
+  doorId    String?
+  timestamp DateTime
+
+  status    String   @default("SUCCESS") // "SUCCESS" or "DENIED"
+  reason    String?  // E.g., "Invalid Signature", "Expired", "Replay Attack"
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([libraryId])
+  @@index([timestamp])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  studentId String
+  student   User     @relation(fields: [studentId], references: [id])
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([studentId])
+}
+
+model CanvasState {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id])
+  
+  // JSON field containing widget configurations (positions, sizes, types, colors)
+  widgets   Json     @default("[]")
+  
+  // Aesthetic preferences
+  theme     String   @default("pastel-pink")
+  font      String   @default("inter")
+  bgUrl     String?  // Custom background image URL
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}

@@ -1,0 +1,25 @@
+sequenceDiagram
+    actor Cron as Trigger (Vercel Cron)
+    participant API as Next.js API (/api/cron/process-refunds)
+    participant Worker as Refund Worker Logic
+    participant DB as PostgreSQL
+    participant RZP as Razorpay
+
+    Cron->>API: GET /api/cron/process-refunds
+    API->>Worker: Execute processRefundTasks()
+    Worker->>DB: Query RefundTask (Status: PENDING)
+    
+    loop For each PENDING RefundTask
+        Worker->>RZP: Call Razorpay Refund API
+        alt Refund Successful
+            RZP-->>Worker: success
+            Worker->>DB: Update RefundTask (Status: COMPLETED)
+            Worker->>DB: Update BookingIntent (Status: REFUNDED)
+        else Refund Failed
+            RZP-->>Worker: error
+            Worker->>DB: Update RefundTask (Status: FAILED, attempts++)
+        end
+    end
+    
+    Worker-->>API: Batch Complete
+    API-->>Cron: 200 OK

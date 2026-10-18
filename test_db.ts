@@ -1,0 +1,1 @@
+import prisma from './src/lib/prisma'; async function main() { const logs = await prisma.checkinLog.findMany({ orderBy: { timestamp: 'desc' }, take: 1 }); const outbox = await prisma.realtimeOutbox.findMany({ orderBy: { createdAt: 'desc' }, take: 2 }); console.log('LOGS:', logs); console.log('OUTBOX:', outbox); } main().finally(() => prisma.$disconnect());

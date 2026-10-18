@@ -1,0 +1,51 @@
+flowchart TD
+    StudentWeb[Student Web Portal]
+    Librarian[Staff Web Dashboard]
+    Admin[Admin Web Dashboard]
+
+    subgraph Monolith [Next.js Application]
+        UI_Student[Student Portal /app/student]
+        UI_Dashboard[Staff Dashboard /app/dashboard]
+        UI_Admin[Admin Portal /app/admin]
+        
+        API_Mobile[Mobile APIs /api/mobile]
+        API_Hardware[Hardware APIs /api/hardware]
+        API_Webhooks[Webhooks /api/webhooks]
+        
+        CoreLogic[Business Logic]
+    end
+
+    Database[(PostgreSQL)]
+    Redis[(Upstash Redis Rate Limit)]
+    
+    Firebase[Firebase Auth]
+    Razorpay[Razorpay Payments]
+    Cashfree[Cashfree KYC]
+    ImageKit[ImageKit Storage]
+    Supabase[Supabase Realtime]
+
+    StudentWeb --> UI_Student
+    Librarian --> UI_Dashboard
+    Admin --> UI_Admin
+    
+    UI_Student --> CoreLogic
+    UI_Dashboard --> CoreLogic
+    UI_Admin --> CoreLogic
+    API_Mobile --> CoreLogic
+    API_Webhooks --> CoreLogic
+    API_Hardware --> CoreLogic
+    
+    CoreLogic --> Database
+    CoreLogic --> Redis
+    
+    UI_Student -.-> Firebase
+    UI_Dashboard -.-> Firebase
+    
+    CoreLogic --> Razorpay
+    Razorpay --> API_Webhooks
+    
+    CoreLogic --> Cashfree
+    CoreLogic -.-> ImageKit
+    
+    Database -.-> Supabase
+    Supabase -.-> UI_Dashboard

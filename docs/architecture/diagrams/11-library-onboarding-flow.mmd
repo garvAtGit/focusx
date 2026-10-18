@@ -1,0 +1,10 @@
+flowchart TD
+    Start([Librarian Submits Details])
+    Dashboard[Admin Dashboard]
+    KYC[Review KYC Documents]
+    DB[(PostgreSQL)]
+    
+    Start --> Dashboard
+    Dashboard --> KYC
+    KYC -->|Approve| DB
+    DB --> |Status: APPROVED| End([Library Active])

@@ -1,0 +1,21 @@
+sequenceDiagram
+    actor Student
+    participant Mobile as Mobile App / Web
+    participant Relay as ESP32 Hardware Relay
+    participant API as Next.js API (/api/hardware)
+    participant DB as PostgreSQL
+    participant Supabase as Supabase Realtime
+    participant Staff as Staff Dashboard
+
+    Student->>Mobile: Open Access QR
+    Mobile->>Relay: Scan QR Code (or tap NFC)
+    Relay->>API: POST /api/hardware/log (send QR token/NFC ID)
+    API->>DB: Query User & Active Bookings
+    API->>API: Validate Access Rules
+    API->>DB: Create EntryLog & CheckinLog
+    API-->>Relay: Return HTTP 200 (Unlock Door)
+    
+    note over DB,Supabase: Realtime Event Sync
+    DB-->>Supabase: Postgres Database Trigger
+    Supabase-->>Staff: WebSocket push (LiveEntryLogs)
+    Staff->>Staff: Render student entry in dashboard UI

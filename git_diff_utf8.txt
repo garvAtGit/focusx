@@ -1,0 +1,1154 @@
+﻿diff --git a/next.config.ts b/next.config.ts
+index 479d8d0..0bf5fcb 100644
+--- a/next.config.ts
++++ b/next.config.ts
+@@ -23,6 +23,14 @@ const nextConfig: NextConfig = {
+   },
+   async headers() {
+     return [
++      {
++        source: '/api/mobile/:path*',
++        headers: [
++          { key: 'Access-Control-Allow-Origin', value: '*' },
++          { key: 'Access-Control-Allow-Methods', value: 'GET, POST, PUT, DELETE, OPTIONS' },
++          { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization' },
++        ],
++      },
+       {
+         source: '/(.*)',
+         headers: [
+diff --git a/package.json b/package.json
+index 94a8e77..62fcf50 100644
+--- a/package.json
++++ b/package.json
+@@ -6,7 +6,7 @@
+     "node": "22.x"
+   },
+   "scripts": {
+-    "dev": "next dev",
++    "dev": "next dev -H 0.0.0.0",
+     "build": "prisma generate && next build",
+     "db:migrate:deploy": "node scripts/prepare-migrations.mjs && prisma migrate deploy",
+     "start": "next start",
+diff --git a/prisma/schema.prisma b/prisma/schema.prisma
+index bbb5ae5..cf07734 100644
+--- a/prisma/schema.prisma
++++ b/prisma/schema.prisma
+@@ -7,69 +7,59 @@ datasource db {
+ }
+ 
+ model User {
+-  id                  String             @id @default(uuid())
+-  authId              String?            @unique
+-  role                Role               @default(STUDENT)
+-  email               String?            @unique
+-  name                String
+-  phone               String?            @unique
+-  area                String?
+-  uniqueId            String?            @unique
+-  createdAt           DateTime           @default(now())
+-  updatedAt           DateTime           @updatedAt
+-  password            String?
+-  address             String?
+-  dob                 DateTime?
+-  gender              String?
+-  profilePhotoUrl     String?
+-  locality            String?
+-  organization        String?
+-  qualification       String?
+-  digilockerVerified  Boolean            @default(false)
+-  employerLibraryId   String?
+-  passColor           String?            @default("#2781CA")
+-  consecutiveFailures Int                @default(0)
+-  failureReasons      String?
+-  rfidTag             String?            @unique
+-
+-  // Cashfree KYC Aadhaar Fields
+-  kycAadhaarName              String?
++  id                          String             @id @default(uuid())
++  authId                      String?            @unique
++  role                        Role               @default(STUDENT)
++  email                       String?            @unique
++  name                        String
++  phone                       String?            @unique
++  area                        String?
++  uniqueId                    String?            @unique
++  createdAt                   DateTime           @default(now())
++  updatedAt                   DateTime           @updatedAt
++  password                    String?
++  address                     String?
++  dob                         DateTime?
++  gender                      String?
++  profilePhotoUrl             String?
++  locality                    String?
++  organization                String?
++  qualification               String?
++  digilockerVerified          Boolean            @default(false)
++  employerLibraryId           String?
++  consecutiveFailures         Int                @default(0)
++  failureReasons              String?
++  rfidTag                     String?            @unique
+   kycAadhaarDob               DateTime?
++  kycAadhaarDocumentConsent   String?
++  kycAadhaarDocumentRequested String?
+   kycAadhaarGender            String?
+-  kycEAadhaar                 String?
+   kycAadhaarMobile            String?
++  kycAadhaarName              String?
++  kycAadhaarProfilePhotoUrl   String?
++  kycAadhaarReferenceId       String?
+   kycAadhaarStatus            String?
+-  kycAadhaarDocumentRequested String?
+-  kycAadhaarDocumentConsent   String?
+   kycAadhaarVerificationId    String?
+-  kycAadhaarReferenceId       String?
+-  kycAadhaarProfilePhotoUrl   String?
+-  
+-  // CRM Fields
++  kycEAadhaar                 String?
+   crmNote                     String?
+   isExpiredLead               Boolean            @default(false)
+-  
+-  // Refer & Share Fields
+   referralCode                String?            @unique
+   referredById                String?
+   walletBalance               Int                @default(0)
+-
+-  // Gamification
+   currentStreak               Int                @default(0)
+   lastActiveDate              DateTime?
+-
+-  bookings            Booking[]
+-  bookingIntents      BookingIntent[]
+-  canvasState         CanvasState?
+-  checkins            CheckinLog[]       @relation("StudentCheckins")
+-  entryLogs           EntryLog[]
+-  libraries           Library[]          @relation("LibrarianLibraries")
+-  notifications       Notification[]
+-  platformFeedbacks   PlatformFeedback[] @relation("SubmitterPlatformFeedback")
+-  queries             Query[]
+-  employerLibrary     Library?           @relation("LibraryStaff", fields: [employerLibraryId], references: [id])
+-  referredBy          User?              @relation("UserReferrals", fields: [referredById], references: [id])
+-  referredUsers       User[]             @relation("UserReferrals")
++  bookings                    Booking[]
++  bookingIntents              BookingIntent[]
++  canvasState                 CanvasState?
++  checkins                    CheckinLog[]       @relation("StudentCheckins")
++  entryLogs                   EntryLog[]
++  libraries                   Library[]          @relation("LibrarianLibraries")
++  notifications               Notification[]
++  platformFeedbacks           PlatformFeedback[] @relation("SubmitterPlatformFeedback")
++  queries                     Query[]
++  employerLibrary             Library?           @relation("LibraryStaff", fields: [employerLibraryId], references: [id])
++  referredBy                  User?              @relation("UserReferrals", fields: [referredById], references: [id])
++  referredUsers               User[]             @relation("UserReferrals")
+ 
+   @@index([name])
+   @@index([phone])
+@@ -124,27 +114,27 @@ model Library {
+ }
+ 
+ model Seat {
+-  id                  String          @id @default(uuid())
+-  libraryId           String
+-  name                String
+-  type                SeatType        @default(NORMAL)
+-  gridX               Int
+-  gridY               Int
+-  createdAt           DateTime        @default(now())
+-  updatedAt           DateTime        @updatedAt
+-  hasLocker           Boolean         @default(false)
+-  lockerPriceDaily    Float?
+-  premiumPriceDaily   Float?
+-  syncPremiumOffers   Boolean         @default(true)
+-  bookings            Booking[]
+-  bookingIntents      BookingIntent[]
+-  library             Library         @relation(fields: [libraryId], references: [id])
++  id                String          @id @default(uuid())
++  libraryId         String
++  name              String
++  type              SeatType        @default(NORMAL)
++  gridX             Int
++  gridY             Int
++  createdAt         DateTime        @default(now())
++  updatedAt         DateTime        @updatedAt
++  hasLocker         Boolean         @default(false)
++  syncPremiumOffers Boolean         @default(true)
++  lockerPriceDaily  Float?
++  premiumPriceDaily Float?
++  bookings          Booking[]
++  bookingIntents    BookingIntent[]
++  library           Library         @relation(fields: [libraryId], references: [id])
+ 
+   @@index([libraryId])
+ }
+ 
+ model Plan {
+-  id             String           @id @default(uuid())
++  id             String          @id @default(uuid())
+   libraryId      String
+   name           String
+   type           PlanType
+@@ -152,12 +142,12 @@ model Plan {
+   validityDays   Int
+   price          Float
+   discount       Float?
+-  createdAt      DateTime         @default(now())
+-  updatedAt      DateTime         @updatedAt
+-  isActive       Boolean          @default(true)
++  createdAt      DateTime        @default(now())
++  updatedAt      DateTime        @updatedAt
++  isActive       Boolean         @default(true)
+   bookings       Booking[]
+   bookingIntents BookingIntent[]
+-  library        Library          @relation(fields: [libraryId], references: [id])
++  library        Library         @relation(fields: [libraryId], references: [id])
+ 
+   @@index([libraryId])
+ }
+@@ -177,36 +167,33 @@ model StandaloneLocker {
+ }
+ 
+ model Booking {
+-  id                 String            @id @default(uuid())
+-  studentId          String
+-  libraryId          String
+-  seatId             String?
+-  planId             String
+-  startTime          DateTime
+-  endTime            DateTime
+-  status             BookingStatus     @default(PENDING_PAYMENT)
+-  paymentRef         String?           @unique
+-  createdAt          DateTime          @default(now())
+-  updatedAt          DateTime          @updatedAt
+-  hasLocker          Boolean           @default(false)
+-  standaloneLockerId String?
+-  isPaused           Boolean           @default(false)
+-  pausedAt           DateTime?
+-  totalPausedDays    Int               @default(0)
+-  revokedReason      String?
+-  
+-  // Payment Tracking
++  id                    String            @id @default(uuid())
++  studentId             String
++  libraryId             String
++  seatId                String?
++  planId                String
++  startTime             DateTime
++  endTime               DateTime
++  status                BookingStatus     @default(PENDING_PAYMENT)
++  paymentRef            String?           @unique
++  createdAt             DateTime          @default(now())
++  updatedAt             DateTime          @updatedAt
++  hasLocker             Boolean           @default(false)
++  standaloneLockerId    String?
++  isPaused              Boolean           @default(false)
++  pausedAt              DateTime?
++  totalPausedDays       Int               @default(0)
++  revokedReason         String?
++  amountDuePaise        Int?
+   amountPaidCashPaise   Int?
+   amountPaidOnlinePaise Int?
+-  amountDuePaise        Int?
+-
+-  library            Library           @relation(fields: [libraryId], references: [id])
+-  plan               Plan              @relation(fields: [planId], references: [id])
+-  seat               Seat?             @relation(fields: [seatId], references: [id])
+-  standaloneLocker   StandaloneLocker? @relation(fields: [standaloneLockerId], references: [id])
+-  student            User              @relation(fields: [studentId], references: [id])
+-  bookingIntent      BookingIntent?
+-  refundTasks        RefundTask[]
++  library               Library           @relation(fields: [libraryId], references: [id])
++  plan                  Plan              @relation(fields: [planId], references: [id])
++  seat                  Seat?             @relation(fields: [seatId], references: [id])
++  standaloneLocker      StandaloneLocker? @relation(fields: [standaloneLockerId], references: [id])
++  student               User              @relation(fields: [studentId], references: [id])
++  bookingIntent         BookingIntent?
++  refundTasks           RefundTask[]
+ 
+   @@index([libraryId, status])
+   @@index([libraryId, status, endTime])
+@@ -419,11 +406,11 @@ model Notification {
+   studentId   String
+   title       String
+   message     String
+-  type        String?  // e.g., "SYSTEM", "BILLING", "BOOKING"
+-  actionUrl   String?  // e.g., "/student/dashboard?renew=true"
+-  actionLabel String?  // e.g., "Renew Now"
+   isRead      Boolean  @default(false)
+   createdAt   DateTime @default(now())
++  actionLabel String?
++  actionUrl   String?
++  type        String?
+   student     User     @relation(fields: [studentId], references: [id])
+ 
+   @@index([studentId])
+diff --git a/src/app/(student)/student/dashboard/page.tsx b/src/app/(student)/student/dashboard/page.tsx
+index 7c43413..1a48985 100644
+--- a/src/app/(student)/student/dashboard/page.tsx
++++ b/src/app/(student)/student/dashboard/page.tsx
+@@ -10,8 +10,10 @@ import BookingSuccessToast from "./BookingSuccessToast";
+ import ExtendPlanModal from "./ExtendPlanModal";
+ import { AccessQRModal } from "@/components/AccessQRModal";
+ import { DigitalPassCard } from "@/components/dashboard/DigitalPassCard";
++import { StudentLeaderboard } from "@/components/dashboard/StudentLeaderboard";
+ 
+ import { formatStandardDate, formatStandardDateTime } from "@/lib/date-utils";
++import { startOfDay, startOfWeek, startOfMonth, differenceInMinutes } from 'date-fns';
+ 
+ const formatDate = (date: Date) => formatStandardDate(date);
+ const formatDateTime = (date: Date) => formatStandardDateTime(date);
+@@ -122,6 +124,63 @@ export default async function StudentDashboardPage() {
+   if (hour >= 5 && hour < 12) greeting = 'Good morning';
+   else if (hour >= 12 && hour < 17) greeting = 'Good afternoon';
+ 
++  // Leaderboard Calculation
++  const leaderboards = { today: [] as any[], week: [] as any[], month: [] as any[] };
++  const activeLibraryId = activeBookings[0]?.libraryId;
++  const activeLibraryName = activeBookings[0]?.library?.name || "FocusX Library";
++
++  if (activeLibraryId) {
++    
++    const getLeaderboardForRange = async (startDate: Date) => {
++      const logs = await prisma.checkinLog.findMany({
++        where: { libraryId: activeLibraryId, timestamp: { gte: startDate, lte: now } },
++        orderBy: { timestamp: 'asc' },
++        include: { student: { select: { id: true, name: true, profilePhotoUrl: true } } }
++      });
++
++      const logsByStudent: Record<string, typeof logs> = {};
++      logs.forEach(log => {
++        if (!logsByStudent[log.studentId]) logsByStudent[log.studentId] = [];
++        logsByStudent[log.studentId].push(log);
++      });
++
++      const durations: { id: string, name: string; avatar: string | null; minutes: number }[] = [];
++
++      for (const [sId, studentLogs] of Object.entries(logsByStudent)) {
++        let totalMinutes = 0;
++        let lastCheckin: Date | null = null;
++        for (const log of studentLogs) {
++          if (log.status === 'CHECK_IN') lastCheckin = log.timestamp;
++          else if (log.status === 'CHECK_OUT' && lastCheckin) {
++            totalMinutes += differenceInMinutes(log.timestamp, lastCheckin);
++            lastCheckin = null;
++          }
++        }
++        if (lastCheckin) totalMinutes += differenceInMinutes(now, lastCheckin);
++
++        if (totalMinutes > 0) {
++          durations.push({ id: sId, name: studentLogs[0].student.name, avatar: studentLogs[0].student.profilePhotoUrl, minutes: totalMinutes });
++        }
++      }
++
++      durations.sort((a, b) => b.minutes - a.minutes);
++      
++      const myIndex = durations.findIndex(d => d.id === session.userId);
++      let myRankData = null;
++      if (myIndex !== -1 && myIndex >= 5) {
++        myRankData = { ...durations[myIndex], rank: myIndex + 1, isCurrentUser: true };
++      }
++
++      const top5 = durations.slice(0, 5).map((d, i) => ({ ...d, rank: i + 1, isCurrentUser: d.id === session.userId }));
++      if (myRankData) top5.push(myRankData);
++      return top5;
++    };
++    
++    leaderboards.today = await getLeaderboardForRange(startOfDay(now));
++    leaderboards.week = await getLeaderboardForRange(startOfWeek(now, { weekStartsOn: 1 }));
++    leaderboards.month = await getLeaderboardForRange(startOfMonth(now));
++  }
++
+   return (
+     <div className="container mx-auto px-4 py-8 max-w-5xl">
+       <Suspense fallback={null}><BookingSuccessToast /></Suspense>
+@@ -140,6 +199,14 @@ export default async function StudentDashboardPage() {
+             isCheckedIn={recentLogs.length > 0 && recentLogs[recentLogs.length - 1].status === 'CHECK_IN' && recentLogs[recentLogs.length - 1].libraryId === activeBookings[0]?.libraryId}
+           />
+ 
++          {/* Student Leaderboard */}
++          {activeLibraryId && (
++            <StudentLeaderboard 
++              libraryName={activeLibraryName} 
++              leaderboards={leaderboards} 
++            />
++          )}
++
+           {/* Focus Activity Calendar */}
+           <FocusActivityCalendar logs={recentLogs} />
+ 
+diff --git a/src/app/actions/hardware-actions.ts b/src/app/actions/hardware-actions.ts
+index 7c2e3b9..bbdb89f 100644
+--- a/src/app/actions/hardware-actions.ts
++++ b/src/app/actions/hardware-actions.ts
+@@ -10,18 +10,22 @@ import {
+ } from "@/lib/booking-authority";
+ import { invalidateLibraryRuntimeCache } from "@/lib/library-cache";
+ 
+-export async function generateEntryQR(libraryId: string, doorId: string = "MAIN_GATE") {
+-  const session = await getSession();
+-  if (!session || !session.userId) {
+-    return { error: "Unauthorized" };
++export async function generateEntryQR(libraryId: string, doorId: string = "MAIN_GATE", overrideUserId?: string) {
++  let finalUserId = overrideUserId;
++  
++  if (!finalUserId) {
++    const session = await getSession();
++    if (!session || !session.userId) {
++      return { error: "Unauthorized" };
++    }
++    finalUserId = session.userId;
+   }
+ 
++  // Verify the user has an active booking for this library right now
+   const now = new Date();
+-  
+-  // Start the background queries immediately and concurrently
+-  const activeBookingPromise = prisma.booking.findFirst({
++  const activeBooking = await prisma.booking.findFirst({
+     where: {
+-      studentId: session.userId,
++      studentId: finalUserId,
+       libraryId: libraryId,
+       status: "CONFIRMED",
+       startTime: { lte: now },
+@@ -30,32 +34,14 @@ export async function generateEntryQR(libraryId: string, doorId: string = "MAIN_
+     }
+   });
+ 
+-  const latestLogPromise = prisma.checkinLog.findFirst({
+-    where: { studentId: session.userId, libraryId: libraryId },
+-    orderBy: { timestamp: 'desc' }
+-  });
+-
+-  const today = new Date();
+-  today.setHours(0, 0, 0, 0);
+-  const todaysLogsPromise = prisma.checkinLog.findMany({
+-    where: { studentId: session.userId, libraryId: libraryId, timestamp: { gte: today } },
+-    orderBy: { timestamp: 'asc' }
+-  });
+-
+-  const [activeBooking, latestLog, todaysLogs] = await Promise.all([
+-    activeBookingPromise,
+-    latestLogPromise,
+-    todaysLogsPromise
+-  ]);
+-
+   if (!activeBooking) {
+     // Maybe they are the librarian or staff?
+     const library = await prisma.library.findFirst({
+       where: {
+         id: libraryId,
+         OR: [
+-          { librarianId: session.userId },
+-          { staff: { some: { id: session.userId } } }
++          { librarianId: finalUserId },
++          { staff: { some: { id: finalUserId } } }
+         ]
+       }
+     });
+@@ -71,56 +57,63 @@ export async function generateEntryQR(libraryId: string, doorId: string = "MAIN_
+   // Format A: {"uid":"EMP001", "iat":1718790000, "qid":"uuid", "sig":"..."}
+   // The ESP32 will verify the signature over: uid + iat + qid
+   const qid = crypto.randomUUID();
+-  const payloadToSign = `${session.userId}${timestamp}${qid}`;
++  const payloadToSign = `${finalUserId}${timestamp}${qid}`;
+ 
+   const privateKeyBase64 = process.env.ECDSA_PRIVATE_KEY;
+-  if (!privateKeyBase64) {
+-    console.error("Missing ECDSA_PRIVATE_KEY in environment");
+-    return { error: "Server configuration error" };
+-  }
++  let signature = "DEV_MOCK_SIGNATURE";
+ 
+-  try {
+-    let privateKey = privateKeyBase64;
+-    if (!privateKeyBase64.includes('-----BEGIN PRIVATE KEY-----')) {
+-      // It must be base64 encoded, let's decode it
+-      try {
+-        privateKey = Buffer.from(privateKeyBase64, 'base64').toString('utf-8');
+-      } catch {
+-        console.error("Failed to decode ECDSA_PRIVATE_KEY from base64");
++  if (!privateKeyBase64) {
++    console.warn("Missing ECDSA_PRIVATE_KEY in environment. Using mock signature for development.");
++  } else {
++    try {
++      let privateKey = privateKeyBase64;
++      if (!privateKeyBase64.includes('-----BEGIN PRIVATE KEY-----')) {
++        try {
++          privateKey = Buffer.from(privateKeyBase64, 'base64').toString('utf-8');
++        } catch {
++          console.error("Failed to decode ECDSA_PRIVATE_KEY from base64");
++        }
+       }
++
++      const sign = crypto.createSign('SHA256');
++      sign.update(payloadToSign);
++      sign.end();
++      signature = sign.sign(privateKey, 'base64');
++    } catch (error) {
++      console.error("Failed to sign QR payload:", error);
+     }
++  }
+ 
+-    const sign = crypto.createSign('SHA256');
+-    sign.update(payloadToSign);
+-    sign.end();
+-    
+-    // The ESP32 mbedtls ECDSA requires the signature to be standard DER or raw.
+-    // Node.js createSign defaults to DER format.
+-    const signature = sign.sign(privateKey, 'base64');
++  const qrData = {
++    uid: finalUserId,
++    iat: timestamp,
++    qid: qid,
++    door: doorId,
++    sig: signature
++  };
+ 
+-    const qrData = {
+-      uid: session.userId,
+-      iat: timestamp,
+-      qid: qid,
+-      door: doorId,
+-      sig: signature
+-    };
++  const latestLog = await prisma.checkinLog.findFirst({
++    where: { studentId: finalUserId, libraryId: libraryId },
++    orderBy: { timestamp: 'desc' }
++  });
+ 
+-    const firstIn = todaysLogs.find(l => l.status === 'CHECK_IN');
+-    const lastOut = [...todaysLogs].reverse().find(l => l.status === 'CHECK_OUT');
+-    
+-    return { 
+-      success: true, 
+-      qrPayload: JSON.stringify(qrData), 
+-      isCheckedIn: latestLog?.status === 'CHECK_IN',
+-      firstIn: firstIn ? firstIn.timestamp : null,
+-      lastOut: lastOut ? lastOut.timestamp : null
+-    };
++  const today = new Date();
++  today.setHours(0, 0, 0, 0);
++  const todaysLogs = await prisma.checkinLog.findMany({
++    where: { studentId: finalUserId, libraryId: libraryId, timestamp: { gte: today } },
++    orderBy: { timestamp: 'asc' }
++  });
+ 
+-  } catch (error: unknown) {
+-    console.error("Error signing QR:", error);
+-    return { error: "Failed to generate secure QR code" };
+-  }
++  const firstIn = todaysLogs.find(l => l.status === 'CHECK_IN');
++  const lastOut = [...todaysLogs].reverse().find(l => l.status === 'CHECK_OUT');
++  
++  return { 
++    success: true, 
++    qrPayload: JSON.stringify(qrData), 
++    isCheckedIn: latestLog?.status === 'CHECK_IN',
++    firstIn: firstIn ? firstIn.timestamp : null,
++    lastOut: lastOut ? lastOut.timestamp : null
++  };
+ }
+ 
+ export async function generateProvisioningQR(libraryId: string, ssid: string, pass: string) {
+diff --git a/src/app/actions/student-profile-actions.ts b/src/app/actions/student-profile-actions.ts
+index 7bc1bca..76249cb 100644
+--- a/src/app/actions/student-profile-actions.ts
++++ b/src/app/actions/student-profile-actions.ts
+@@ -157,16 +157,3 @@ export async function syncUpdatedPhone() {
+   revalidatePath("/student/profile");
+   return { success: true, phone: newPhone };
+ }
+-
+-export async function updatePassColor(color: string) {
+-  const session = await getSession();
+-  if (!session) throw new Error("Unauthorized");
+-
+-  await prisma.user.update({
+-    where: { id: session.userId },
+-    data: { passColor: color }
+-  });
+-
+-  revalidatePath("/student/dashboard");
+-  return { success: true };
+-}
+diff --git a/src/app/prototype/calendar/CalendarPrototype.tsx b/src/app/prototype/calendar/CalendarPrototype.tsx
+index c6b6d2a..e749d65 100644
+--- a/src/app/prototype/calendar/CalendarPrototype.tsx
++++ b/src/app/prototype/calendar/CalendarPrototype.tsx
+@@ -1,87 +1,242 @@
+ 'use client';
++
+ import { useState } from 'react';
+-import { Calendar as CalendarIcon } from 'lucide-react';
++import { 
++  ChevronDown, 
++  ChevronLeft, 
++  ChevronRight, 
++  Home, 
++  BookOpen, 
++  Coffee, 
++  Car, 
++  Footprints,
++  MoreVertical,
++  Edit2
++} from 'lucide-react';
++import { format, isSameDay } from 'date-fns';
+ 
+ export function CalendarPrototype() {
+-  const [selectedDay, setSelectedDay] = useState(26);
++  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
++  const [selectedDate, setSelectedDate] = useState(new Date(2026, 6, 24)); // July 24, 2026
++
++  // Dummy activity dates for the blue dots (e.g. July 2026)
++  const activeDates = [3, 5, 12, 14, 18, 19, 21, 24, 26, 28, 29];
+ 
+-  // Dummy activity data matching the screenshot
+-  const activityMap: Record<number, number> = {
+-    11: 1, // light blue
+-  };
++  // Dummy timeline data for the selected day
++  const timelineEvents = [
++    {
++      type: 'location',
++      title: 'Home',
++      subtitle: 'Started at 8:15 AM',
++      icon: <Home className="w-4 h-4 text-white" />,
++      iconBg: 'bg-blue-500',
++    },
++    {
++      type: 'action',
++      title: 'Commuting',
++      duration: '45 min',
++      timeRange: '8:15 AM - 9:00 AM',
++      icon: <Car className="w-4 h-4 text-gray-700" />,
++    },
++    {
++      type: 'location',
++      title: 'FocusX Library',
++      subtitle: '9:00 AM - 1:15 PM',
++      icon: <BookOpen className="w-4 h-4 text-white" />,
++      iconBg: 'bg-indigo-500',
++    },
++    {
++      type: 'action',
++      title: 'Deep Work Session',
++      duration: '4 hr 15 min',
++      timeRange: '9:00 AM - 1:15 PM',
++      icon: <Footprints className="w-4 h-4 text-gray-700" />, // Using footprint as a generic action icon
++    },
++    {
++      type: 'location',
++      title: 'Nico\'s Cafe',
++      subtitle: '1:15 PM - 2:00 PM',
++      icon: <Coffee className="w-4 h-4 text-white" />,
++      iconBg: 'bg-orange-400',
++    },
++    {
++      type: 'action',
++      title: 'Lunch Break',
++      duration: '45 min',
++      timeRange: '1:15 PM - 2:00 PM',
++      icon: <Footprints className="w-4 h-4 text-gray-700" />,
++    },
++    {
++      type: 'location',
++      title: 'FocusX Library',
++      subtitle: '2:00 PM - 5:30 PM',
++      icon: <BookOpen className="w-4 h-4 text-white" />,
++      iconBg: 'bg-indigo-500',
++    },
++    {
++      type: 'action',
++      title: 'Study Session',
++      duration: '3 hr 30 min',
++      timeRange: '2:00 PM - 5:30 PM',
++      icon: <Footprints className="w-4 h-4 text-gray-700" />,
++    },
++    {
++      type: 'location',
++      title: 'Home',
++      subtitle: 'Arrived at 6:15 PM',
++      icon: <Home className="w-4 h-4 text-white" />,
++      iconBg: 'bg-blue-500',
++    }
++  ];
+ 
+-  // Calendar logic for August 2026
+-  // Starts on Saturday (August 1st 2026 is a Saturday)
+-  const startPadding = 6;
++  // Calendar logic for July 2026
++  // Starts on Wednesday (July 1st 2026 is a Wednesday)
++  const startPadding = 3;
+   const daysInMonth = 31;
+   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+ 
+   return (
+-    <div className="bg-white rounded-[24px] p-6 shadow-[0_2px_12px_rgb(0,0,0,0.04)] border border-slate-100 font-sans w-full max-w-[340px]">
+-      {/* Header */}
+-      <div className="flex items-center justify-between mb-8">
+-        <h2 className="text-3xl font-black tracking-tight text-slate-900 font-serif">August</h2>
+-        <button className="flex items-center gap-2 bg-slate-50 hover:bg-slate-100 transition-colors text-slate-700 px-3 py-1.5 rounded-xl border border-slate-100 text-[13px] font-medium">
+-          August, 2026
+-          <CalendarIcon className="w-3.5 h-3.5 ml-1" />
++    <div className="relative w-full max-w-[400px] h-[750px] bg-white overflow-hidden shadow-2xl sm:rounded-[40px] border-[8px] border-slate-900 font-sans flex flex-col">
++      
++      {/* App Bar */}
++      <div className="flex items-center px-4 pt-12 pb-4 bg-white border-b border-gray-100 sticky top-0 z-10">
++        <button className="p-2 -ml-2 rounded-full hover:bg-gray-100 transition-colors">
++          <ChevronLeft className="w-6 h-6 text-gray-700" />
++        </button>
++        <button 
++          onClick={() => setIsCalendarOpen(true)}
++          className="mx-auto flex items-center gap-1 px-3 py-1.5 rounded-lg hover:bg-gray-50 active:bg-gray-100 transition-colors"
++        >
++          <span className="font-medium text-[17px] text-gray-900">
++            {format(selectedDate, 'MMM d') === format(new Date(2026, 6, 24), 'MMM d') ? 'Today' : 'Sat, Jul 24'}
++          </span>
++          <ChevronDown className="w-5 h-5 text-gray-500" />
+         </button>
++        <div className="w-10" /> {/* Spacer for centering */}
+       </div>
+ 
+-      {/* Days of week */}
+-      <div className="grid grid-cols-7 gap-2 mb-3">
+-        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, i) => (
+-          <div key={i} className="text-center text-[11px] font-bold text-slate-500 mb-1">
+-            {day}
+-          </div>
+-        ))}
++      {/* Timeline List */}
++      <div className="flex-1 overflow-y-auto px-4 py-6 bg-white pb-24 relative">
++        {/* The continuous vertical blue line */}
++        <div className="absolute left-[39px] top-8 bottom-12 w-[3px] bg-[#4285F4] rounded-full" />
++
++        <div className="space-y-0">
++          {timelineEvents.map((event, i) => {
++            if (event.type === 'location') {
++              return (
++                <div key={i} className="flex items-start gap-4 py-3 relative z-10">
++                  <div className="w-12 flex justify-center mt-1">
++                    <div className={`w-8 h-8 rounded-full flex items-center justify-center shadow-sm z-10 ${event.iconBg}`}>
++                      {event.icon}
++                    </div>
++                  </div>
++                  <div className="flex-1 pt-1.5">
++                    <h3 className="font-bold text-[15px] text-gray-900 leading-tight">{event.title}</h3>
++                    <p className="text-[13px] text-gray-500 mt-0.5">{event.subtitle}</p>
++                  </div>
++                  <button className="pt-1.5 text-gray-400 hover:text-gray-600">
++                    <MoreVertical className="w-5 h-5" />
++                  </button>
++                </div>
++              );
++            } else {
++              // Action type
++              return (
++                <div key={i} className="flex items-start gap-4 py-3 relative z-10">
++                  <div className="w-12 flex justify-center mt-3">
++                    <div className="w-8 h-8 rounded-full bg-white border border-gray-300 flex items-center justify-center z-10">
++                      {event.icon}
++                    </div>
++                  </div>
++                  <div className="flex-1 pt-1">
++                    <div className="border border-blue-500 rounded-[20px] p-3 inline-block pr-6 bg-white/50 backdrop-blur-sm">
++                      <h3 className="font-bold text-[15px] text-gray-900 leading-tight">{event.title}</h3>
++                      <div className="flex items-center gap-2 mt-0.5 text-[13px] text-gray-500">
++                        <span>{event.duration}</span>
++                      </div>
++                      <div className="text-[13px] text-gray-500 mt-0.5">
++                        {event.timeRange}
++                      </div>
++                    </div>
++                  </div>
++                  <button className="pt-3 text-gray-400 hover:text-gray-600">
++                    <MoreVertical className="w-5 h-5" />
++                  </button>
++                </div>
++              );
++            }
++          })}
++        </div>
+       </div>
+ 
+-      {/* Grid */}
+-      <div className="grid grid-cols-7 gap-2 mb-8">
+-        {Array.from({ length: startPadding }).map((_, i) => (
+-          <div key={`pad-${i}`} className="aspect-square" />
+-        ))}
+-        {days.map((day) => {
+-          const activityLevel = activityMap[day] || 0;
+-          const isSelected = day === selectedDay;
++      {/* Floating Edit Button (like Google Maps bottom right) */}
++      <button className="absolute bottom-6 right-6 w-14 h-14 bg-white border border-gray-200 shadow-[0_4px_12px_rgb(0,0,0,0.15)] rounded-full flex items-center justify-center text-blue-600 hover:bg-gray-50 transition-colors z-10">
++        <Edit2 className="w-6 h-6" />
++      </button>
+ 
+-          let bgClass = "bg-[#f8f9fa] text-slate-300"; // default empty (very light gray)
+-          
+-          if (activityLevel === 1) bgClass = "bg-[#b9d5ee] text-white"; // light blue
+-          if (activityLevel === 2) bgClass = "bg-[#7ba9df] text-white"; // medium blue
+-          if (activityLevel === 3) bgClass = "bg-[#4582c7] text-white"; // darker blue
+-          if (activityLevel === 4) bgClass = "bg-[#1860ad] text-white"; // darkest blue
++      {/* Calendar Overlay Modal */}
++      {isCalendarOpen && (
++        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
++          <div className="bg-white w-full max-w-[340px] rounded-2xl shadow-2xl overflow-hidden pb-4">
++            {/* Header */}
++            <div className="px-6 pt-6 pb-2">
++              <h2 className="text-[28px] text-gray-700 tracking-tight">Sat, Jul 24</h2>
++            </div>
++            
++            {/* Month Nav */}
++            <div className="flex items-center justify-center px-4 py-2 gap-4">
++              <button className="p-2 hover:bg-gray-100 rounded-full text-gray-600">
++                <ChevronLeft className="w-5 h-5" />
++              </button>
++              <span className="text-[14px] font-medium text-gray-700">July 2026</span>
++              <button className="p-2 hover:bg-gray-100 rounded-full text-gray-600">
++                <ChevronRight className="w-5 h-5" />
++              </button>
++            </div>
+ 
+-          let borderClass = "border-2 border-transparent";
+-          if (isSelected) {
+-            bgClass = "bg-white text-slate-400";
+-            borderClass = "border-2 border-slate-400";
+-          }
++            {/* Days of week */}
++            <div className="grid grid-cols-7 gap-1 px-4 mb-2">
++              {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, i) => (
++                <div key={i} className="text-center text-[11px] font-medium text-gray-400">
++                  {day}
++                </div>
++              ))}
++            </div>
+ 
+-          return (
+-            <button
+-              key={day}
+-              onClick={() => setSelectedDay(day)}
+-              className={`aspect-square rounded-xl flex items-center justify-center text-[13px] font-medium transition-all ${bgClass} ${borderClass}`}
+-            >
+-              {day}
+-            </button>
+-          );
+-        })}
+-      </div>
++            {/* Grid */}
++            <div className="grid grid-cols-7 gap-y-2 px-4">
++              {Array.from({ length: startPadding }).map((_, i) => (
++                <div key={`pad-${i}`} className="aspect-square flex flex-col items-center justify-center relative">
++                  <span className="text-[13px] text-gray-300">
++                    {30 - startPadding + i + 1} {/* Previous month dummy dates */}
++                  </span>
++                </div>
++              ))}
++              {days.map((day) => {
++                const isActive = activeDates.includes(day);
++                const isSelected = day === 24;
+ 
+-      {/* Legend */}
+-      <div className="flex items-center justify-between text-[11px] font-medium text-slate-500">
+-        <span>Less</span>
+-        <div className="flex gap-1.5">
+-          <div className="w-3.5 h-3.5 rounded-[4px] bg-[#f8f9fa]" />
+-          <div className="w-3.5 h-3.5 rounded-[4px] bg-[#b9d5ee]" />
+-          <div className="w-3.5 h-3.5 rounded-[4px] bg-[#7ba9df]" />
+-          <div className="w-3.5 h-3.5 rounded-[4px] bg-[#4582c7]" />
+-          <div className="w-3.5 h-3.5 rounded-[4px] bg-[#1860ad]" />
++                return (
++                  <div 
++                    key={day}
++                    onClick={() => setIsCalendarOpen(false)}
++                    className="aspect-[1/1.1] flex flex-col items-center justify-center relative cursor-pointer group"
++                  >
++                    <div className={`w-9 h-9 rounded-full flex items-center justify-center text-[13px] font-medium transition-colors
++                      ${isSelected ? 'bg-[#1a73e8] text-white' : 'text-[#1a73e8] group-hover:bg-blue-50'}
++                    `}>
++                      {day}
++                    </div>
++                    {isActive && !isSelected && (
++                      <div className="absolute bottom-1 w-1 h-1 rounded-full bg-[#1a73e8]" />
++                    )}
++                  </div>
++                );
++              })}
++            </div>
++          </div>
+         </div>
+-        <span>More</span>
+-      </div>
++      )}
+     </div>
+   );
+ }
+diff --git a/src/components/AccessQRModal.tsx b/src/components/AccessQRModal.tsx
+index 4b2bcb4..c9b8804 100644
+--- a/src/components/AccessQRModal.tsx
++++ b/src/components/AccessQRModal.tsx
+@@ -203,15 +203,13 @@ export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: ini
+             <div className="py-8 flex flex-col items-center justify-center gap-4 bg-slate-50/50 rounded-2xl border border-slate-100 p-6">
+                 <QrCode className="w-10 h-10 text-rose-500 opacity-50" />
+                 <div className="text-center">
+-                  <h3 className="font-bold text-slate-800 text-lg mb-1">{!studentId ? "Not Signed In" : error || "No Active Plan"}</h3>
++                  <h3 className="font-bold text-slate-800 text-lg mb-1">{!studentId ? "Not Signed In" : "No Active Plan"}</h3>
+                   <p className="text-sm text-slate-500 font-medium max-w-[250px] mx-auto">
+                     {!studentId
+                       ? "Please sign in to view your library access QR code."
+-                      : error === "Server configuration error"
+-                        ? "Contact support. Hardware signature keys are missing."
+-                        : error
+-                          ? "You do not have a confirmed subscription active right now."
+-                          : "You do not have an active booking at any library yet."}
++                      : libraryId 
++                        ? "Your plan has expired. Please renew your plan to generate an access QR code." 
++                        : "You do not have an active booking at any library yet."}
+                   </p>
+                 </div>
+                 {!studentId ? (
+diff --git a/src/components/dashboard/DigitalPassCard.tsx b/src/components/dashboard/DigitalPassCard.tsx
+index 14e22ad..2000b2d 100644
+--- a/src/components/dashboard/DigitalPassCard.tsx
++++ b/src/components/dashboard/DigitalPassCard.tsx
+@@ -1,18 +1,16 @@
+ 'use client';
+ 
+-import { Flame, ScanLine, Camera, QrCode } from 'lucide-react';
++import { ScanLine, Camera, QrCode } from 'lucide-react';
+ import { AccessQRModal } from '@/components/AccessQRModal';
+-import { useEffect, useState } from 'react';
+-import { updatePassColor } from '@/app/actions/student-profile-actions';
++import Link from 'next/link';
+ 
+ interface DigitalPassCardProps {
+   student: {
+     name: string | null;
+     uniqueId: string;
+     profilePhotoUrl: string | null;
+-    passColor?: string | null;
+   };
+-  currentStreak: number;
++  currentStreak: number; // Keeping prop to avoid breaking page.tsx, but unused in UI
+   libraryId: string;
+   studentId: string;
+   isCheckedIn: boolean;
+@@ -20,24 +18,6 @@ interface DigitalPassCardProps {
+ 
+ export function DigitalPassCard({ student, currentStreak, libraryId, studentId, isCheckedIn }: DigitalPassCardProps) {
+   const theme: string = 'light'; // Hardcoded to match the finalized light mode preference
+-  const [greeting, setGreeting] = useState('Good evening,');
+-  const [passColor, setPassColor] = useState(student.passColor || '#2781CA');
+-
+-  const handleColorChange = async (color: string) => {
+-    setPassColor(color);
+-    try {
+-      await updatePassColor(color);
+-    } catch (e) {
+-      setPassColor(student.passColor || '#2781CA'); // revert on error
+-    }
+-  };
+-
+-  useEffect(() => {
+-    const hour = new Date().getHours();
+-    if (hour < 12) setGreeting('Good morning,');
+-    else if (hour < 17) setGreeting('Good afternoon,');
+-    else setGreeting('Good evening,');
+-  }, []);
+ 
+   const formatName = (name: string | null) => {
+     if (!name) return "STUDENT";
+@@ -48,28 +28,27 @@ export function DigitalPassCard({ student, currentStreak, libraryId, studentId,
+ 
+   const formattedName = formatName(student.name);
+ 
+-
+   return (
+     <div className="relative w-full max-w-[400px] mx-auto">
+       {/* The Poster Card */}
+       <div className={`relative w-full rounded-sm overflow-hidden shadow-2xl transition-colors duration-500 ${theme === 'dark' ? 'bg-[#1A1A1A] text-white shadow-black/80' : 'bg-white text-black shadow-black/20'}`}>
+         
+         {/* Top Graphic Header */}
+-        <div className={`w-full px-6 py-4 flex items-center justify-between border-b-[3px] ${theme === 'dark' ? 'border-[#333] bg-[#222]' : 'border-black bg-slate-100'}`}>
++        <div className={`w-full px-6 py-5 flex items-center justify-between border-b-[3px] ${theme === 'dark' ? 'border-[#333] bg-[#222]' : 'border-black bg-slate-100'}`}>
+           <div className="flex flex-col justify-center">
+-            <span className="font-serif italic text-lg opacity-80 mb-1">{greeting}</span>
+-            <span className="font-heading font-black text-4xl uppercase tracking-tighter leading-none">{formattedName}</span>
+-          </div>
+-          <div className="flex flex-col items-end">
+-            <span className="text-[10px] font-bold tracking-[0.3em] uppercase opacity-50">Streak</span>
+-            <span className="font-mono font-bold text-xl flex items-center gap-1">
+-              <Flame className="w-5 h-5" style={{ color: passColor, filter: `drop-shadow(0 0 8px ${passColor}CC)` }} /> {currentStreak}
+-            </span>
++            <span className="font-serif font-bold text-xl text-slate-800 tracking-tight mb-1">Welcome back,</span>
++            <span className="font-heading font-black text-[2.5rem] uppercase tracking-tighter leading-none text-slate-900">{formattedName}</span>
+           </div>
++          {currentStreak > 0 && (
++            <div className="flex flex-col items-end justify-center">
++              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Streak</span>
++              <span className="font-serif italic font-bold text-2xl text-[#2781CA] leading-none mt-1">{currentStreak}</span>
++            </div>
++          )}
+         </div>
+ 
+-        {/* Photo Framing Area - Stylized colored block */}
+-        <div className="relative w-full aspect-square flex flex-col items-center justify-end overflow-hidden p-6 transition-colors duration-500" style={{ backgroundColor: passColor }}>
++        {/* Photo Framing Area - Stylized blue block */}
++        <div className="relative w-full aspect-[4/3] bg-[#2781CA] flex flex-col items-center justify-end overflow-hidden p-6 pb-2">
+           {/* Lanyard Hole Mockup */}
+           <div className={`absolute top-4 left-1/2 -translate-x-1/2 w-16 h-3 rounded-full border-2 shadow-inner ${theme === 'dark' ? 'bg-[#111] border-black/50' : 'bg-[#ddd] border-black/10'}`}></div>
+ 
+@@ -79,24 +58,24 @@ export function DigitalPassCard({ student, currentStreak, libraryId, studentId,
+           </div>
+ 
+           <div className="absolute bottom-6 right-6 w-16 h-16 rounded-full bg-white flex items-center justify-center shadow-xl rotate-12">
+-            <span className="font-heading font-bold text-xl leading-none text-center" style={{ color: passColor }}>FX<br/>48</span>
++            <span className="text-[#2781CA] font-heading font-bold text-xl leading-none text-center">FX<br/>48</span>
+           </div>
+ 
+           {/* The Student Photo inside a graphic frame */}
+-          <div className="relative w-[85%] aspect-[3/4] border-[4px] border-white shadow-2xl bg-[#0a0a0a] overflow-hidden -mb-16 rotate-[-2deg] flex items-center justify-center">
++          <div className="relative w-[85%] aspect-square border-[4px] border-white shadow-2xl bg-[#0a0a0a] overflow-hidden -mb-6 rotate-[-2deg] flex items-center justify-center">
+             <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCI+CiAgPHBhdGggZD0iTTAgMGg0MHY0MEgweiIgZmlsbD0ibm9uZSIvPgogIDxwYXRoIGQ9Ik0wIDM5aDQwVjQwSDB6IiBmaWxsPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMDUpIi8+CiAgPHBhdGggZD0iTTM5IDB2NDBoMVYweiIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjA1KSIvPgo8L3N2Zz4=')] opacity-30 mix-blend-overlay z-20 pointer-events-none"></div>
+             {student.profilePhotoUrl ? (
+               <img src={student.profilePhotoUrl} alt="Student" className="w-full h-full object-cover relative z-10" />
+             ) : (
+-              <>
+-                <img src={`https://api.dicebear.com/9.x/micah/svg?seed=placeholder&backgroundColor=${passColor.replace('#', '')}`} alt="Placeholder" className="w-full h-full object-cover opacity-90 relative z-10" />
+-                <div className="absolute inset-0 backdrop-blur-sm bg-black/30 flex flex-col items-center justify-center gap-3 text-white z-30 transition-all duration-300">
+-                  <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-md border border-white/30 shadow-lg">
++              <Link href="/student/profile" className="absolute inset-0 z-30 group">
++                <img src="https://api.dicebear.com/9.x/micah/svg?seed=placeholder&backgroundColor=2781CA" alt="Placeholder" className="w-full h-full object-cover opacity-90 relative z-10 transition-opacity group-hover:opacity-50" />
++                <div className="absolute inset-0 backdrop-blur-sm bg-black/30 flex flex-col items-center justify-center gap-3 text-white transition-all duration-300">
++                  <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-md border border-white/30 shadow-lg group-hover:bg-white/40 group-hover:scale-110 transition-all">
+                     <Camera className="w-5 h-5 text-white" strokeWidth={1.5} />
+                   </div>
+                   <span className="font-sans text-[11px] font-medium tracking-wide text-white/90 drop-shadow-md">Choose a photo</span>
+                 </div>
+-              </>
++              </Link>
+             )}
+             {/* Photo overlay texture */}
+             <div className="absolute inset-0 shadow-[inset_0_0_40px_rgba(0,0,0,0.6)] z-20 pointer-events-none"></div>
+@@ -123,36 +102,19 @@ export function DigitalPassCard({ student, currentStreak, libraryId, studentId,
+               <div className={`relative w-full max-w-[280px] mx-auto aspect-[4/1] flex items-center justify-center border border-black group cursor-pointer overflow-hidden transition-all duration-300`}>
+                 
+                 {/* Faded QR Background */}
+-                <QrCode className="absolute inset-0 w-full h-full opacity-[0.04] text-black mix-blend-overlay -rotate-6 scale-125 pointer-events-none" strokeWidth={0.5} />
++                <QrCode className="absolute inset-0 w-full h-full opacity-10 text-slate-800 scale-150 pointer-events-none transition-transform duration-500 group-hover:scale-125" strokeWidth={1} />
+ 
+                 {/* Scanner line horizontal */}
+-                <div className="absolute -left-[1px] -right-[1px] h-[1px] animate-scan z-20" style={{ backgroundColor: passColor }}></div>
++                <div className="absolute -left-[1px] -right-[1px] h-[1px] bg-[#2781CA] animate-scan z-20 opacity-50 group-hover:opacity-100"></div>
+ 
+                 <div className="relative z-10 flex items-center gap-3">
+-                  <ScanLine className="w-5 h-5 opacity-70" />
+-                  <span className="font-mono font-bold text-sm tracking-[0.2em] uppercase">Tap to Scan Pass</span>
++                  <ScanLine className="w-5 h-5 opacity-70 group-hover:opacity-100 transition-opacity" />
++                  <span className="font-mono font-bold text-sm tracking-[0.2em] uppercase">Tap to Show QR</span>
+                 </div>
+               </div>
+             </AccessQRModal>
+           </div>
+ 
+-          {/* Color Customization Palette */}
+-          <div className="flex justify-center gap-3 pt-3 opacity-20 hover:opacity-100 transition-opacity duration-300">
+-            {['#2781CA', '#10B981', '#F59E0B', '#EC4899', '#8B5CF6', '#111827'].map((c) => (
+-              <button 
+-                key={c}
+-                onClick={() => handleColorChange(c)}
+-                className={`w-3 h-3 rounded-full transition-transform cursor-pointer shadow-sm`}
+-                style={{ 
+-                  backgroundColor: c, 
+-                  boxShadow: passColor === c ? `0 0 0 2px white, 0 0 0 3px ${c}` : 'none',
+-                  transform: passColor === c ? 'scale(1.2)' : 'scale(1)'
+-                }}
+-                title="Change Pass Color"
+-                aria-label={`Change color to ${c}`}
+-              />
+-            ))}
+-          </div>
+         </div>
+       </div>
+     </div>
+diff --git a/src/components/dashboard/FocusActivityCalendar.tsx b/src/components/dashboard/FocusActivityCalendar.tsx
+index 86756bb..99831f9 100644
+--- a/src/components/dashboard/FocusActivityCalendar.tsx
++++ b/src/components/dashboard/FocusActivityCalendar.tsx
+@@ -13,7 +13,9 @@ import {
+   addDays,
+   parseISO
+ } from 'date-fns';
+-import { Clock } from 'lucide-react';
++import { Clock, ChevronLeft, ChevronRight, Calendar as CalendarIcon } from 'lucide-react';
++// ... (I need to be careful, I am replacing from line 16, which is where Clock is imported)
++// Let's replace the whole header block instead.
+ import {
+   Dialog,
+   DialogContent,
+@@ -155,16 +157,38 @@ export function FocusActivityCalendar({ logs }: { logs: Log[] }) {
+       >
+         {/* Header */}
+         <div className="flex justify-between items-center mb-6">
+-          <h2 className="text-2xl font-heading font-black text-foreground tracking-tight capitalize select-none">
+-            {format(currentDate, 'MMMM')}
+-          </h2>
+-          <div className="relative">
+-            <input 
+-              type="month" 
+-              value={format(currentDate, 'yyyy-MM')} 
+-              onChange={handleMonthChange}
+-              className="bg-muted text-foreground font-medium text-sm rounded-lg px-3 py-1.5 border border-border outline-none focus:ring-2 focus:ring-primary/50 cursor-pointer"
+-            />
++          <div className="flex flex-col">
++            <h2 className="text-xl font-medium text-slate-800 tracking-tight">
++              {format(selectedDay || new Date(), 'EEE, MMMM d')}
++            </h2>
++          </div>
++          
++          <div className="flex items-center gap-1 bg-slate-50/80 rounded-xl p-1 border border-slate-100">
++            <button 
++              onClick={() => {
++                if (navigator.vibrate) navigator.vibrate(10);
++                const newDate = new Date(currentDate);
++                newDate.setMonth(newDate.getMonth() - 1);
++                setCurrentDate(newDate);
++              }}
++              className="p-1.5 hover:bg-white rounded-lg transition-colors text-slate-400 hover:text-slate-900 shadow-sm border border-transparent hover:border-slate-200"
++            >
++              <ChevronLeft className="w-4 h-4" />
++            </button>
++            <span className="text-xs font-bold px-2 text-slate-600 min-w-[70px] text-center">
++              {format(currentDate, 'MMM yyyy')}
++            </span>
++            <button 
++              onClick={() => {
++                if (navigator.vibrate) navigator.vibrate(10);
++                const newDate = new Date(currentDate);
++                newDate.setMonth(newDate.getMonth() + 1);
++                setCurrentDate(newDate);
++              }}
++              className="p-1.5 hover:bg-white rounded-lg transition-colors text-slate-400 hover:text-slate-900 shadow-sm border border-transparent hover:border-slate-200"
++            >
++              <ChevronRight className="w-4 h-4" />
++            </button>
+           </div>
+         </div>
+ 
+diff --git a/src/components/user-nav.tsx b/src/components/user-nav.tsx
+index f72106f..6556f4a 100644
+--- a/src/components/user-nav.tsx
++++ b/src/components/user-nav.tsx
+@@ -22,9 +22,9 @@ export function UserNav({ user }: { user: UserRecord }) {
+   return (
+     <DropdownMenu>
+       <DropdownMenuTrigger className="focus:outline-none">
+-        <div className="h-8 w-8 rounded-full overflow-hidden border-2 border-transparent hover:border-border flex items-center justify-center bg-[#8B5CF6] text-white font-medium text-sm transition-all">
++        <div className="h-10 w-10 rounded-full overflow-hidden border border-border/50 hover:border-border flex items-center justify-center bg-slate-100 text-slate-700 font-medium text-base transition-all shadow-sm">
+           {user?.profilePhotoUrl ? (
+-            <Image src={user.profilePhotoUrl} alt={user.name || "User"} width={32} height={32} className="object-cover h-full w-full" />
++            <Image src={user.profilePhotoUrl} alt={user.name || "User"} width={40} height={40} className="object-cover h-full w-full" />
+           ) : (
+             initials
+           )}

@@ -1,0 +1,19 @@
+flowchart TD
+    Start([Student Opens App])
+    Login[Login via Firebase]
+    Browse[Browse Libraries]
+    View[View Library Details]
+    Book[Select Plan & Seat]
+    Payment[Pay via Razorpay]
+    Confirm[Booking Confirmed]
+    QR[View Access QR]
+    End([Access Granted])
+
+    Start --> Login
+    Login --> Browse
+    Browse --> View
+    View --> Book
+    Book --> Payment
+    Payment --> Confirm
+    Confirm --> QR
+    QR --> End

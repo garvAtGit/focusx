@@ -1,0 +1,1 @@
+import { Pool } from 'pg'; const pool = new Pool({ connectionString: 'postgresql://postgres.iiozcipbxsmjasgglsyf:0GUUxdo6XOgiQFIR@aws-1-ap-southeast-1.pooler.supabase.com:6543/postgres' }); async function main() { const outbox = await pool.query('SELECT * FROM "RealtimeOutbox" ORDER BY "createdAt" DESC LIMIT 3'); console.log('OUTBOX:', outbox.rows); pool.end(); } main();

@@ -1,0 +1,14 @@
+flowchart TD
+    Start([Receptionist Logs In])
+    Dashboard[View Assigned Library]
+    
+    ManualBook[Process Manual/Cash Bookings]
+    Verify[Verify Student Identity]
+    Logs[Monitor Live Entry Logs]
+    Queries[Handle Student Queries]
+
+    Start --> Dashboard
+    Dashboard --> ManualBook
+    Dashboard --> Verify
+    Dashboard --> Logs
+    Dashboard --> Queries

@@ -1,0 +1,8 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "in.focusx.www.twa",
+    "sha256_cert_fingerprints": ["04:65:95:27:42:5E:D6:FB:63:5D:6F:E8:AB:67:60:56:FC:72:66:CA:E0:07:61:60:9B:28:BB:17:11:76:1A:4F"]
+  }
+}]
