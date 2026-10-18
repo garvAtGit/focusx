@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { Prisma } from "@prisma/client";
 import { formatStandardDate } from "@/lib/date-utils";
 import { getActiveLibrary } from "@/lib/dashboard-utils";
+import { getCachedStudentPage, getCachedStudentMetadata } from "@/lib/student-cache";
 
 export default async function StudentsPage(props: { searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
   const searchParams = await props.searchParams;
@@ -22,6 +23,7 @@ export default async function StudentsPage(props: { searchParams: Promise<{ [key
 
   const now = new Date();
   now.setHours(0,0,0,0);
+  const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   
   const sevenDaysFromNow = new Date(now);
   sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7);
@@ -66,102 +68,113 @@ export default async function StudentsPage(props: { searchParams: Promise<{ [key
       )`
     : Prisma.empty;
 
-  const [pagedIds, countRows] = await Promise.all([
-    prisma.$queryRaw<Array<{ id: string; createdAt: Date }>>(Prisma.sql`
-      SELECT candidate."id", candidate."createdAt"
-      FROM (
-        SELECT DISTINCT ON (b."studentId")
-          b."id",
-          b."createdAt",
-          b."studentId"
-        FROM "Booking" b
-        INNER JOIN "User" u ON u."id" = b."studentId"
-        WHERE b."libraryId" = ${library.id}
-          AND ${tabPredicate}
+  const fetchView = async () => {
+    const [pagedIds, countRows] = await Promise.all([
+      prisma.$queryRaw<Array<{ id: string; createdAt: Date }>>(Prisma.sql`
+        SELECT candidate."id", candidate."createdAt"
+        FROM (
+          SELECT DISTINCT ON (b."studentId")
+            b."id",
+            b."createdAt",
+            b."studentId"
+          FROM "Booking" b
+          INNER JOIN "User" u ON u."id" = b."studentId"
+          WHERE b."libraryId" = ${library.id}
+            AND ${tabPredicate}
+            ${searchPredicate}
+          ORDER BY b."studentId", b."createdAt" DESC
+        ) candidate
+        ORDER BY candidate."createdAt" DESC
+        LIMIT ${PAGE_SIZE}
+        OFFSET ${(page - 1) * PAGE_SIZE}
+      `),
+      prisma.$queryRaw<Array<{
+        active: number;
+        paused: number;
+        dues: number;
+        expiring: number;
+        inactive: number;
+        expired: number;
+        revoked: number;
+      }>>(Prisma.sql`
+        WITH StudentStates AS (
+          SELECT 
+            b."studentId",
+            BOOL_OR(b."status" = 'CONFIRMED' AND b."endTime" >= ${now} AND b."isPaused" = false) AS has_active,
+            BOOL_OR(b."status" = 'CONFIRMED' AND b."isPaused" = true) AS has_paused,
+            BOOL_OR(b."status" = 'CONFIRMED' AND b."amountDuePaise" > 0) AS has_dues,
+            BOOL_OR(b."status" = 'CONFIRMED' AND b."endTime" >= ${now} AND b."endTime" <= ${sevenDaysFromNow} AND b."isPaused" = false) AS has_expiring,
+            (
+              SELECT b2."status"
+              FROM "Booking" b2
+              WHERE b2."studentId" = b."studentId" AND b2."libraryId" = ${library.id}
+              ORDER BY b2."createdAt" DESC
+              LIMIT 1
+            ) AS latest_status,
+            BOOL_OR(u."isExpiredLead" = true) AS is_expired_lead
+          FROM "Booking" b
+          INNER JOIN "User" u ON u."id" = b."studentId"
+          WHERE b."libraryId" = ${library.id}
           ${searchPredicate}
-        ORDER BY b."studentId", b."createdAt" DESC
-      ) candidate
-      ORDER BY candidate."createdAt" DESC
-      LIMIT ${PAGE_SIZE}
-      OFFSET ${(page - 1) * PAGE_SIZE}
-    `),
-    prisma.$queryRaw<Array<{
-      active: number;
-      paused: number;
-      dues: number;
-      expiring: number;
-      inactive: number;
-      expired: number;
-      revoked: number;
-    }>>(Prisma.sql`
-      WITH StudentStates AS (
+          GROUP BY b."studentId"
+        )
         SELECT 
-          b."studentId",
-          BOOL_OR(b."status" = 'CONFIRMED' AND b."endTime" >= ${now} AND b."isPaused" = false) AS has_active,
-          BOOL_OR(b."status" = 'CONFIRMED' AND b."isPaused" = true) AS has_paused,
-          BOOL_OR(b."status" = 'CONFIRMED' AND b."amountDuePaise" > 0) AS has_dues,
-          BOOL_OR(b."status" = 'CONFIRMED' AND b."endTime" >= ${now} AND b."endTime" <= ${sevenDaysFromNow} AND b."isPaused" = false) AS has_expiring,
-          (
-            SELECT b2."status"
-            FROM "Booking" b2
-            WHERE b2."studentId" = b."studentId" AND b2."libraryId" = ${library.id}
-            ORDER BY b2."createdAt" DESC
-            LIMIT 1
-          ) AS latest_status,
-          BOOL_OR(u."isExpiredLead" = true) AS is_expired_lead
-        FROM "Booking" b
-        INNER JOIN "User" u ON u."id" = b."studentId"
-        WHERE b."libraryId" = ${library.id}
-        ${searchPredicate}
-        GROUP BY b."studentId"
-      )
-      SELECT 
-        COUNT(*) FILTER (WHERE has_active)::int AS "active",
-        COUNT(*) FILTER (WHERE has_paused)::int AS "paused",
-        COUNT(*) FILTER (WHERE has_dues)::int AS "dues",
-        COUNT(*) FILTER (WHERE has_expiring)::int AS "expiring",
-        COUNT(*) FILTER (WHERE NOT has_active AND NOT has_paused AND latest_status <> 'CANCELLED' AND NOT is_expired_lead)::int AS "inactive",
-        COUNT(*) FILTER (WHERE NOT has_active AND NOT has_paused AND latest_status <> 'CANCELLED' AND is_expired_lead)::int AS "expired",
-        COUNT(*) FILTER (WHERE NOT has_active AND NOT has_paused AND latest_status = 'CANCELLED')::int AS "revoked"
-      FROM StudentStates
-    `),
-  ]);
+          COUNT(*) FILTER (WHERE has_active)::int AS "active",
+          COUNT(*) FILTER (WHERE has_paused)::int AS "paused",
+          COUNT(*) FILTER (WHERE has_dues)::int AS "dues",
+          COUNT(*) FILTER (WHERE has_expiring)::int AS "expiring",
+          COUNT(*) FILTER (WHERE NOT has_active AND NOT has_paused AND latest_status <> 'CANCELLED' AND NOT is_expired_lead)::int AS "inactive",
+          COUNT(*) FILTER (WHERE NOT has_active AND NOT has_paused AND latest_status <> 'CANCELLED' AND is_expired_lead)::int AS "expired",
+          COUNT(*) FILTER (WHERE NOT has_active AND NOT has_paused AND latest_status = 'CANCELLED')::int AS "revoked"
+        FROM StudentStates
+      `),
+    ]);
 
-  const bookingIds = pagedIds.map(({ id }) => id);
-  const unorderedBookings = await prisma.booking.findMany({
-    where: { id: { in: bookingIds } },
-    include: {
-      student: {
-        include: {
-          bookings: {
-            include: {
-              plan: true,
-              seat: true,
-              standaloneLocker: true,
-            },
-            orderBy: { createdAt: 'desc' }
-          }
-        }
+    const bookingIds = pagedIds.map(({ id }) => id);
+    const unorderedBookings = await prisma.booking.findMany({
+      where: { id: { in: bookingIds } },
+      include: {
+        student: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            uniqueId: true,
+            profilePhotoUrl: true,
+            rfidTag: true,
+            crmNote: true,
+            isExpiredLead: true,
+            digilockerVerified: true,
+            kycAadhaarStatus: true,
+          },
+        },
+        plan: true,
+        seat: true,
+        standaloneLocker: true,
       },
-      plan: true,
-      seat: true,
-      standaloneLocker: true,
-    },
-  });
-  const bookingOrder = new Map(bookingIds.map((id, index) => [id, index]));
-  const bookings = unorderedBookings.sort(
-    (a, b) => (bookingOrder.get(a.id) ?? 0) - (bookingOrder.get(b.id) ?? 0),
-  );
+    });
+    const bookingOrder = new Map(bookingIds.map((id, index) => [id, index]));
+    const bookings = unorderedBookings.sort(
+      (a, b) => (bookingOrder.get(a.id) ?? 0) - (bookingOrder.get(b.id) ?? 0),
+    );
 
-  const counts = countRows[0] ?? {
-    active: 0,
-    paused: 0,
-    dues: 0,
-    expiring: 0,
-    inactive: 0,
-    expired: 0,
-    revoked: 0,
+    const counts = countRows[0] ?? {
+      active: 0,
+      paused: 0,
+      dues: 0,
+      expiring: 0,
+      inactive: 0,
+      expired: 0,
+      revoked: 0,
+    };
+
+    return { bookings, counts };
   };
+
+  const { bookings, counts } = query
+    ? await fetchView()
+    : await getCachedStudentPage(library.id, normalizedTab, page, dateStr, fetchView);
   const totalStudentsCount =
     normalizedTab === "PAUSED"
       ? counts.paused
@@ -177,8 +190,20 @@ export default async function StudentsPage(props: { searchParams: Promise<{ [key
                 ? counts.revoked
                 : counts.active;
 
-  const plans = await prisma.plan.findMany({
-    where: { libraryId: library.id, isActive: true }
+  const { plans, seats, standaloneLockers } = await getCachedStudentMetadata(library.id, async () => {
+    const [plans, seats, standaloneLockers] = await Promise.all([
+      prisma.plan.findMany({
+        where: { libraryId: library.id, isActive: true }
+      }),
+      prisma.seat.findMany({
+        where: { libraryId: library.id },
+        orderBy: { name: 'asc' }
+      }),
+      prisma.standaloneLocker.findMany({
+        where: { libraryId: library.id }
+      }),
+    ]);
+    return { plans, seats, standaloneLockers };
   });
 
   const checkinLogsRaw = await prisma.checkinLog.findMany({
@@ -230,15 +255,6 @@ export default async function StudentsPage(props: { searchParams: Promise<{ [key
     where: { libraryId: library.id }
   });
 
-  const seats = await prisma.seat.findMany({
-    where: { libraryId: library.id },
-    orderBy: { name: 'asc' }
-  });
-
-  const standaloneLockers = await prisma.standaloneLocker.findMany({
-    where: { libraryId: library.id }
-  });
-
   const [activeBookings, activeLeases] = await Promise.all([
     prisma.booking.findMany({
       where: {
@@ -270,7 +286,7 @@ export default async function StudentsPage(props: { searchParams: Promise<{ [key
   return (
     <div className="w-full mx-auto space-y-6">
       <StudentsClient 
-        bookings={bookings} 
+        bookings={bookings as any} 
         plans={plans} 
         logs={logs} 
         relays={relays} 

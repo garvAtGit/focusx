@@ -14,6 +14,7 @@ import {
   revokeConfirmedBookings,
 } from "@/lib/booking-authority"
 import { invalidateLibraryRuntimeCache } from "@/lib/library-cache"
+import { invalidateStudentsCache } from "@/lib/student-cache"
 
 function isPrismaUniqueError(error: unknown, target?: string): boolean {
   if (
@@ -102,6 +103,15 @@ export async function assignUniqueIdToStudent(studentId: string) {
     where: { id: studentId },
     data: { uniqueId: newId }
   });
+
+  const studentBooking = await prisma.booking.findFirst({
+    where: { studentId },
+    select: { libraryId: true },
+    orderBy: { createdAt: "desc" },
+  });
+  if (studentBooking?.libraryId) {
+    await invalidateStudentsCache(studentBooking.libraryId);
+  }
 
   revalidatePath("/dashboard/students");
   return { success: true, uniqueId: newId };
@@ -623,6 +633,8 @@ export async function createOfflineStudentWithRFID(libraryId: string, name: stri
       return { error: qrResult.error };
     }
 
+    await invalidateStudentsCache(libraryId);
+
     return { success: true, student: newStudent, qrPayload: qrResult.qrPayload };
   } catch (error: unknown) {
     console.error("Failed to create offline student:", error);
@@ -793,6 +805,15 @@ export async function updateCrmNote(studentId: string, note: string, isExpiredLe
         ...(isExpiredLead !== undefined ? { isExpiredLead } : {})
       }
     });
+
+    const studentBooking = await prisma.booking.findFirst({
+      where: { studentId },
+      select: { libraryId: true },
+      orderBy: { createdAt: "desc" },
+    });
+    if (studentBooking?.libraryId) {
+      await invalidateStudentsCache(studentBooking.libraryId);
+    }
     
     revalidatePath("/dashboard/students");
     return { success: true };
@@ -830,6 +851,7 @@ export async function collectDues(bookingId: string, additionalCashPaise: number
       }
     });
 
+    await invalidateStudentsCache(booking.libraryId);
     revalidatePath("/dashboard/students");
     revalidatePath("/dashboard/financials");
     

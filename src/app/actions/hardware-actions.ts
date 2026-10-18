@@ -10,6 +10,7 @@ import {
   manualPaymentReference,
 } from "@/lib/booking-authority";
 import { invalidateLibraryRuntimeCache } from "@/lib/library-cache";
+import { invalidateStudentsCache } from "@/lib/student-cache";
 
 export async function generateEntryQR(libraryId: string, doorId: string = "MAIN_GATE", overrideUserId?: string) {
   let finalUserId = overrideUserId;
@@ -228,6 +229,15 @@ export async function generateRFIDCommandQR(studentId: string, cmd: "ADD_RFID" |
         where: { id: studentId },
         data: { rfidTag: null }
       });
+    }
+
+    const studentBooking = await prisma.booking.findFirst({
+      where: { studentId },
+      select: { libraryId: true },
+      orderBy: { createdAt: "desc" },
+    });
+    if (studentBooking?.libraryId) {
+      await invalidateStudentsCache(studentBooking.libraryId);
     }
   } catch (error) {
     console.error("Failed to update RFID in DB:", error);

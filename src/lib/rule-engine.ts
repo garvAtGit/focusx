@@ -18,6 +18,7 @@ import type {
   RuleOperator,
   RuleAction,
 } from '@prisma/client'
+import { invalidateStudentsCache } from "@/lib/student-cache"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -290,6 +291,7 @@ export async function fireRules(input: FireRulesInput): Promise<number> {
   const ordered        = [...nonDestructive, ...destructive]
 
   let executed = 0
+  const touchedLibraries = new Set<string>()
 
   for (const rule of ordered) {
     // 1. Evaluate condition
@@ -306,6 +308,10 @@ export async function fireRules(input: FireRulesInput): Promise<number> {
     if (alreadyRan) continue
 
     // 3. Execute action + log result
+    if (['REVOKE_BOOKING', 'ADD_CRM_NOTE', 'FLAG_FOR_REVIEW', 'MARK_EXPIRED_LEAD'].includes(rule.action)) {
+      touchedLibraries.add(libraryId)
+    }
+
     try {
       await executeAction(rule.action, rule, studentId, libraryId, context)
 
@@ -335,6 +341,8 @@ export async function fireRules(input: FireRulesInput): Promise<number> {
       })
     }
   }
+
+  await Promise.all([...touchedLibraries].map(invalidateStudentsCache))
 
   return executed
 }
