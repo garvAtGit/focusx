@@ -1,4 +1,4 @@
-import { redis, deleteByPattern } from "@/lib/redis";
+import { redis } from "@/lib/redis";
 
 export interface TabCounts {
   active: number;
@@ -10,22 +10,9 @@ export interface TabCounts {
   revoked: number;
 }
 
-export interface StudentStaticMetadata {
-  plans: any[];
-  seats: any[];
-  standaloneLockers: any[];
-}
-
-import type { FetchedStudentBookings } from "@/app/dashboard/students/page";
-
-export interface CachedStudentPageData<T = FetchedStudentBookings> {
-  bookings: T;
-  totalCount: number;
-}
-
 // TTL configuration
-export const DYNAMIC_TTL_SECONDS = 600; // 10 minutes as a safety net (date-stamped keys)
-export const STATIC_META_TTL_SECONDS = 3600; // 1 hour for plans, seats, lockers
+export const DYNAMIC_TTL_SECONDS = 600; // 10 minutes for page entry
+export const STATIC_META_TTL_SECONDS = 3600; // 1 hour for static metadata
 export const REDIS_TIMEOUT_MS = 1500; // 1500ms timeout
 
 export const KNOWN_DATE_FIELDS = new Set([
@@ -99,74 +86,58 @@ function safeSerialize(data: unknown): string {
 }
 
 /**
- * Invalidates all student caches for the given library.
+ * Retrieves the current cache version number for a library.
+ * Returns 0 if missing, or null on error/timeout.
+ */
+export async function getStudentsVersion(libraryId: string): Promise<number | null> {
+  try {
+    const raw = await withTimeout(redis.get<string | number>(`students:${libraryId}:v`));
+    if (raw === null || raw === undefined) return 0;
+    const num = Number(raw);
+    return isNaN(num) ? 0 : num;
+  } catch (err) {
+    console.warn(`[student-cache] Failed to fetch version for library ${libraryId}:`, err);
+    return null;
+  }
+}
+
+/**
+ * Invalidates all student caches for the given library by incrementing its version counter.
+ * Uses a single atomic INCR without scanning keyspace. Never throws.
  */
 export async function invalidateStudentsCache(libraryId: string): Promise<void> {
   try {
     if (!libraryId) return;
-    await withTimeout(deleteByPattern(`students:${libraryId}:*`));
+    await withTimeout(redis.incr(`students:${libraryId}:v`));
   } catch (error) {
     console.warn(`[student-cache] Invalidation failed for library ${libraryId}:`, error);
   }
 }
 
 /**
- * Retrieves tab counts from Redis (10m TTL, date-stamped) or executes the fallback fetcher.
+ * Retrieves paginated bookings and counts from Redis or executes fallback fetcher.
+ * Returns { bookings, counts } generic over the bookings type.
  * Separate try/catch for get and set, 1500ms timeout, never throws.
  */
-export async function getCachedStudentCounts(
-  libraryId: string,
-  dateStr: string,
-  fetcher: () => Promise<TabCounts>
-): Promise<TabCounts> {
-  const cacheKey = `students:${libraryId}:counts:${dateStr}`;
-
-  // 1. Separate GET try/catch with 1500ms timeout
-  let cached: TabCounts | null = null;
-  try {
-    const raw = await withTimeout(redis.get<string | TabCounts>(cacheKey));
-    if (raw) {
-      cached = typeof raw === "string" ? JSON.parse(raw) : raw;
-    }
-  } catch (err) {
-    console.warn(`[student-cache] Redis get failed for ${cacheKey}:`, err);
-  }
-
-  if (cached !== null && cached !== undefined) {
-    console.log(`[student-cache] HIT ${cacheKey}`);
-    return reviveDates(cached);
-  }
-
-  console.log(`[student-cache] MISS ${cacheKey}`);
-
-  // 2. Fallthrough to fetcher exactly once
-  const counts = await fetcher();
-
-  // 3. Separate non-blocking SET with timeout so caller is never delayed by writes
-  withTimeout(redis.set(cacheKey, safeSerialize(counts), { ex: DYNAMIC_TTL_SECONDS })).catch((err) => {
-    console.warn(`[student-cache] Redis set failed for ${cacheKey}:`, err);
-  });
-
-  return counts;
-}
-
-/**
- * Retrieves a paginated student tab from Redis (10m TTL, date-stamped) or executes fallback fetcher.
- * Separate try/catch for get and set, 1500ms timeout, never throws.
- */
-export async function getCachedStudentPage<T = FetchedStudentBookings>(
+export async function getCachedStudentPage<T>(
   libraryId: string,
   tab: string,
   page: number,
   dateStr: string,
-  fetcher: () => Promise<CachedStudentPageData<T>>
-): Promise<CachedStudentPageData<T>> {
-  const cacheKey = `students:${libraryId}:tab:${tab}:p:${page}:${dateStr}`;
+  fetcher: () => Promise<{ bookings: T; counts: TabCounts }>
+): Promise<{ bookings: T; counts: TabCounts }> {
+  const ver = await getStudentsVersion(libraryId);
+  if (ver === null) {
+    console.warn(`[student-cache] Skipping cache due to version check failure for library ${libraryId}`);
+    return await fetcher();
+  }
 
-  // 1. Separate GET try/catch with 1500ms timeout
-  let cached: CachedStudentPageData<T> | null = null;
+  const cacheKey = `students:${libraryId}:v${ver}:tab:${tab}:p:${page}:${dateStr}`;
+
+  // 1. Separate GET try/catch with timeout
+  let cached: { bookings: T; counts: TabCounts } | null = null;
   try {
-    const raw = await withTimeout(redis.get<string | CachedStudentPageData<T>>(cacheKey));
+    const raw = await withTimeout(redis.get<string | { bookings: T; counts: TabCounts }>(cacheKey));
     if (raw) {
       cached = typeof raw === "string" ? JSON.parse(raw) : raw;
     }
@@ -184,7 +155,7 @@ export async function getCachedStudentPage<T = FetchedStudentBookings>(
   // 2. Fallthrough to fetcher exactly once
   const result = await fetcher();
 
-  // 3. Separate non-blocking SET with timeout so caller is never delayed by writes
+  // 3. Separate non-blocking SET with timeout
   withTimeout(redis.set(cacheKey, safeSerialize(result), { ex: DYNAMIC_TTL_SECONDS })).catch((err) => {
     console.warn(`[student-cache] Redis set failed for ${cacheKey}:`, err);
   });
@@ -194,18 +165,23 @@ export async function getCachedStudentPage<T = FetchedStudentBookings>(
 
 /**
  * Retrieves static reference metadata (plans, seats, lockers) cached for 1 hour.
- * Relays and occupied resources are fetched live and not cached here.
  * Separate try/catch for get and set, 1500ms timeout, never throws.
  */
-export async function getCachedStudentMetadata(
+export async function getCachedStudentMetadata<T>(
   libraryId: string,
-  fetcher: () => Promise<StudentStaticMetadata>
-): Promise<StudentStaticMetadata> {
-  const staticCacheKey = `students:${libraryId}:static_meta`;
+  fetcher: () => Promise<T>
+): Promise<T> {
+  const ver = await getStudentsVersion(libraryId);
+  if (ver === null) {
+    console.warn(`[student-cache] Skipping cache due to version check failure for library ${libraryId}`);
+    return await fetcher();
+  }
 
-  let cachedStatic: StudentStaticMetadata | null = null;
+  const staticCacheKey = `students:${libraryId}:v${ver}:static_meta`;
+
+  let cachedStatic: T | null = null;
   try {
-    const rawStatic = await withTimeout(redis.get<string | StudentStaticMetadata>(staticCacheKey));
+    const rawStatic = await withTimeout(redis.get<string | T>(staticCacheKey));
     if (rawStatic) {
       cachedStatic = typeof rawStatic === "string" ? JSON.parse(rawStatic) : rawStatic;
     }
@@ -215,11 +191,7 @@ export async function getCachedStudentMetadata(
 
   if (cachedStatic !== null && cachedStatic !== undefined) {
     console.log(`[student-cache] HIT ${staticCacheKey}`);
-    return reviveDates({
-      plans: cachedStatic.plans ?? [],
-      seats: cachedStatic.seats ?? [],
-      standaloneLockers: cachedStatic.standaloneLockers ?? [],
-    });
+    return reviveDates(cachedStatic);
   }
 
   console.log(`[student-cache] MISS ${staticCacheKey}`);
@@ -227,12 +199,7 @@ export async function getCachedStudentMetadata(
   // Fallthrough to fetcher exactly once
   const fresh = await fetcher();
 
-  const staticData: StudentStaticMetadata = {
-    plans: fresh.plans,
-    seats: fresh.seats,
-    standaloneLockers: fresh.standaloneLockers,
-  };
-  withTimeout(redis.set(staticCacheKey, safeSerialize(staticData), { ex: STATIC_META_TTL_SECONDS })).catch((err) => {
+  withTimeout(redis.set(staticCacheKey, safeSerialize(fresh), { ex: STATIC_META_TTL_SECONDS })).catch((err) => {
     console.warn(`[student-cache] Redis set failed for ${staticCacheKey}:`, err);
   });
 

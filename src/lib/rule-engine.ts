@@ -18,7 +18,7 @@ import type {
   RuleOperator,
   RuleAction,
 } from '@prisma/client'
-import { invalidateStudentsCache } from '@/lib/student-cache'
+import { invalidateStudentsCache } from "@/lib/student-cache"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -293,60 +293,56 @@ export async function fireRules(input: FireRulesInput): Promise<number> {
   let executed = 0
   const touchedLibraries = new Set<string>()
 
-  try {
-    for (const rule of ordered) {
-      // 1. Evaluate condition
-      const passes = evaluateCondition(
-        rule.conditionField,
-        rule.conditionOperator,
-        rule.conditionValue,
-        context,
-      )
-      if (!passes) continue
+  for (const rule of ordered) {
+    // 1. Evaluate condition
+    const passes = evaluateCondition(
+      rule.conditionField,
+      rule.conditionOperator,
+      rule.conditionValue,
+      context,
+    )
+    if (!passes) continue
 
-      // 2. Cooldown check
-      const alreadyRan = await hasRecentExecution(rule.id, studentId)
-      if (alreadyRan) continue
+    // 2. Cooldown check
+    const alreadyRan = await hasRecentExecution(rule.id, studentId)
+    if (alreadyRan) continue
 
-      // 3. Execute action + log result
-      if (['REVOKE_BOOKING', 'ADD_CRM_NOTE', 'FLAG_FOR_REVIEW', 'MARK_EXPIRED_LEAD'].includes(rule.action)) {
-        touchedLibraries.add(libraryId)
-      }
-
-      try {
-        await executeAction(rule.action, rule, studentId, libraryId, context)
-
-        await prisma.ruleExecution.create({
-          data: {
-            ruleId:    rule.id,
-            libraryId,
-            studentId,
-            trigger,
-            action:    rule.action,
-            status:    'SUCCESS',
-          },
-        })
-        executed++
-      } catch (err) {
-        console.error(`[RuleEngine] Failed to execute rule ${rule.id}:`, err)
-        await prisma.ruleExecution.create({
-          data: {
-            ruleId:       rule.id,
-            libraryId,
-            studentId,
-            trigger,
-            action:       rule.action,
-            status:       'FAILED',
-            errorMessage: err instanceof Error ? err.message : String(err),
-          },
-        })
-      }
+    // 3. Execute action + log result
+    if (['REVOKE_BOOKING', 'ADD_CRM_NOTE', 'FLAG_FOR_REVIEW', 'MARK_EXPIRED_LEAD'].includes(rule.action)) {
+      touchedLibraries.add(libraryId)
     }
-  } finally {
-    if (touchedLibraries.size > 0) {
-      await Promise.all(Array.from(touchedLibraries).map(libId => invalidateStudentsCache(libId)))
+
+    try {
+      await executeAction(rule.action, rule, studentId, libraryId, context)
+
+      await prisma.ruleExecution.create({
+        data: {
+          ruleId:    rule.id,
+          libraryId,
+          studentId,
+          trigger,
+          action:    rule.action,
+          status:    'SUCCESS',
+        },
+      })
+      executed++
+    } catch (err) {
+      console.error(`[RuleEngine] Failed to execute rule ${rule.id}:`, err)
+      await prisma.ruleExecution.create({
+        data: {
+          ruleId:       rule.id,
+          libraryId,
+          studentId,
+          trigger,
+          action:       rule.action,
+          status:       'FAILED',
+          errorMessage: err instanceof Error ? err.message : String(err),
+        },
+      })
     }
   }
+
+  await Promise.all([...touchedLibraries].map(invalidateStudentsCache))
 
   return executed
 }
