@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma"
 import { getSession } from "./auth-actions"
 import { revalidatePath } from "next/cache"
 import { uploadImage } from "@/lib/imagekit"
+import { invalidateStudentsCache } from "@/lib/student-cache"
 
 function getFormString(formData: FormData, key: string): string {
   const value = formData.get(key);
@@ -91,6 +92,13 @@ export async function updateStudentProfile(formData: FormData): Promise<{ succes
     }
     throw error;
   }
+
+  const studentBookings = await prisma.booking.findMany({
+    where: { studentId: session.userId, status: { in: ['CONFIRMED', 'PENDING_PAYMENT'] } },
+    select: { libraryId: true },
+    distinct: ['libraryId']
+  });
+  await Promise.all(studentBookings.map(b => invalidateStudentsCache(b.libraryId)));
 
   revalidatePath("/student/profile");
   revalidatePath("/dashboard/students");
