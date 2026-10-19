@@ -68,7 +68,7 @@ export default function SeatsManagerPage() {
   const [isPopupLoading, setIsPopupLoading] = useState(false);
   const [libraryId, setLibraryId] = useState<string>("");
   const [initialOccupied, setInitialOccupied] = useState<string[]>([]);
-  const { occupiedSeatIds: realtimeOccupiedSeatIds, occupantData } = useAdminRealtimeSeats(libraryId, initialOccupied);
+  const { occupiedSeatIds: realtimeOccupiedSeatIds, occupantData, unreservedLiveStudents } = useAdminRealtimeSeats(libraryId, initialOccupied);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
@@ -107,14 +107,38 @@ export default function SeatsManagerPage() {
     }
   };
 
-  const handlePreviewSeatClick = async (seat: LiveSeat) => {
+  const handlePreviewSeatClick = async (seat: LiveSeat, occupant?: any) => {
     if (seat.type === 'NON_RESERVABLE' || seat.type === 'EMPTY') return;
 
     setPopupSeatId(seat.id);
     setPopupSeatLabel(seat.name || seat.id);
     setPopupData(null);
 
-    if (!realtimeOccupiedSeatIds.includes(seat.id)) {
+    // If it's an unreserved live student dynamically placed on this seat:
+    if (occupant && !occupant.isReserved) {
+      setPopupData({
+        booking: {
+          endTime: occupant.endTime || new Date(Date.now() + 86400000).toISOString(),
+          student: {
+            id: occupant.studentId || '',
+            name: occupant.name,
+            phone: occupant.phone || null,
+            profilePhotoUrl: occupant.profilePhotoUrl,
+          },
+          plan: {
+            name: occupant.planName || "Flexible Plan (Unreserved)"
+          }
+        },
+        latestCheckin: {
+          status: 'CHECK_IN',
+          timestamp: new Date().toISOString()
+        }
+      });
+      setIsPopupLoading(false);
+      return;
+    }
+
+    if (!realtimeOccupiedSeatIds.includes(seat.id) && !realtimeOccupiedSeatIds.includes(seat.name)) {
       // Seat is vacant, no need to fetch booking details
       return;
     }
@@ -718,6 +742,7 @@ export default function SeatsManagerPage() {
                 }}
                 occupiedSeatIds={realtimeOccupiedSeatIds} 
                 occupantData={occupantData}
+                unreservedLiveStudents={unreservedLiveStudents}
                 compactMode={false}
                 interactive={true}
                 adminMode={true}
