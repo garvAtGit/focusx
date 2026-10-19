@@ -206,55 +206,6 @@ export default async function StudentsPage(props: { searchParams: Promise<{ [key
     return { plans, seats, standaloneLockers };
   });
 
-  const checkinLogsRaw = await prisma.checkinLog.findMany({
-    where: { libraryId: library.id },
-    include: { student: true, relay: true },
-    orderBy: { timestamp: 'desc' },
-    take: 50
-  });
-
-  const entryLogsRaw = await prisma.entryLog.findMany({
-    where: { libraryId: library.id, status: { in: ['SUCCESS', 'DENIED', 'IN', 'OUT'] } },
-    include: { user: true },
-    orderBy: { timestamp: 'desc' },
-    take: 50
-  });
-
-  const logs = [
-    ...checkinLogsRaw.map(log => ({
-      id: log.id,
-      studentId: log.studentId,
-      libraryId: log.libraryId,
-      relayId: log.relayId,
-      status: log.status,
-      reason: null,
-      timestamp: log.timestamp,
-      isOfflineSync: log.isOfflineSync,
-      createdAt: log.createdAt,
-      student: log.student,
-      relay: log.relay
-    })),
-    ...entryLogsRaw.map(log => ({
-      id: log.id,
-      studentId: log.userId || '',
-      libraryId: log.libraryId,
-      relayId: log.doorId,
-      status: (log.status === 'DENIED' ? 'DENIED' : 'CHECK_IN') as
-        | 'DENIED'
-        | 'CHECK_IN',
-      reason: log.reason,
-      timestamp: log.timestamp,
-      isOfflineSync: false,
-      createdAt: log.createdAt,
-      student: log.user || { id: '', name: 'Unknown', email: '', phone: '', authId: '', role: 'STUDENT' as const, employerLibraryId: null, isKycVerified: false, kycStatus: 'PENDING', createdAt: log.timestamp, updatedAt: log.timestamp },
-      relay: null
-    }))
-  ].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 50);
-
-  const relays = await prisma.relay.findMany({
-    where: { libraryId: library.id }
-  });
-
   const [activeBookings, activeLeases] = await Promise.all([
     prisma.booking.findMany({
       where: {
@@ -288,8 +239,6 @@ export default async function StudentsPage(props: { searchParams: Promise<{ [key
       <StudentsClient 
         bookings={bookings as any} 
         plans={plans} 
-        logs={logs} 
-        relays={relays} 
         seats={seats} 
         standaloneLockers={standaloneLockers}
         occupiedStandaloneLockerIds={occupiedStandaloneLockerIds}

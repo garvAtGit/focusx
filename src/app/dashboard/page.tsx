@@ -41,7 +41,10 @@ export default async function LibrarianDashboardPage() {
     entryLogs,
     todaysBookings,
     latestEntryStates,
-    thirtyDayBookings
+    thirtyDayBookings,
+    relays,
+    checkinLogsForActivity,
+    entryLogsForActivity
   ] = await Promise.all([
     prisma.user.count({
       where: {
@@ -124,6 +127,22 @@ export default async function LibrarianDashboardPage() {
         status: { in: ["CONFIRMED", "COMPLETED"] }
       },
       select: { createdAt: true, paymentRef: true }
+    }),
+    prisma.relay.findMany({
+      where: { libraryId: library.id },
+      orderBy: { createdAt: 'desc' }
+    }),
+    prisma.checkinLog.findMany({
+      where: { libraryId: library.id },
+      include: { student: { select: { id: true, name: true, uniqueId: true } }, relay: true },
+      orderBy: { timestamp: 'desc' },
+      take: 50
+    }),
+    prisma.entryLog.findMany({
+      where: { libraryId: library.id, status: { in: ['SUCCESS', 'DENIED', 'IN', 'OUT'] } },
+      include: { user: { select: { id: true, name: true, uniqueId: true } } },
+      orderBy: { timestamp: 'desc' },
+      take: 50
     })
   ]);
 
@@ -440,6 +459,34 @@ export default async function LibrarianDashboardPage() {
     };
   });
 
+  // Formatting Live Activity Logs
+  const activityLogs = [
+    ...checkinLogsForActivity.map(log => ({
+      id: log.id,
+      studentId: log.studentId,
+      status: log.status,
+      reason: null,
+      timestamp: log.timestamp,
+      isOfflineSync: log.isOfflineSync,
+      student: log.student
+    })),
+    ...entryLogsForActivity.map(log => ({
+      id: log.id,
+      studentId: log.userId || '',
+      status: (log.status === 'DENIED' ? 'DENIED' : log.status === 'OUT' ? 'CHECK_OUT' : 'CHECK_IN') as
+        | 'DENIED'
+        | 'CHECK_IN'
+        | 'CHECK_OUT',
+      reason: log.reason,
+      timestamp: log.timestamp,
+      isOfflineSync: false,
+      student: log.user ? {
+        name: log.user.name,
+        uniqueId: log.user.uniqueId
+      } : { name: 'Unknown', uniqueId: null }
+    }))
+  ].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 50);
+
   return (
     <DashboardOverviewClient 
       library={library}
@@ -456,6 +503,8 @@ export default async function LibrarianDashboardPage() {
       liveAccess={liveAccess}
       recentActivity={recentActivityData}
       todaysTransactions={todaysTransactionsData}
+      relays={relays}
+      logs={activityLogs}
     />
   );
 }
