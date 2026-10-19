@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/app/actions/auth-actions";
 
+import { startOfDayIST } from "@/lib/date-utils";
+
 export async function GET(request: Request) {
   const session = await getSession();
 
@@ -34,8 +36,7 @@ export async function GET(request: Request) {
     }
 
     const now = new Date();
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
+    const startOfDay = startOfDayIST(now);
 
     // Fetch active bookings (both reserved and unreserved) along with today's presence logs
     const [checkinLogs, entryLogs, activeReservedBookings, activeUnreservedBookings] = await Promise.all([
