@@ -50,7 +50,6 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
-import { AssignRFIDModal } from "@/components/AssignRFIDModal"
 import { StudentProfileModal } from "@/components/StudentProfileModal"
 import { AttendanceCalendar } from "@/components/AttendanceCalendar"
 import { ManualNotifyModal } from "@/components/ManualNotifyModal"
@@ -195,7 +194,6 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
   const [rfidTagInput, setRfidTagInput] = useState("");
   const [rfidQrPayload, setRfidQrPayload] = useState<string | null>(null);
   const [rfidLoading, setRfidLoading] = useState(false);
-  const [rfidTagToAssign, setRfidTagToAssign] = useState<string | null>(null);
 
   // OTP Verification States
   const [step, setStep] = useState<1 | 2>(1)
@@ -1732,94 +1730,6 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
         }}
       />
 
-      {/* Hardware Status & Live Logs */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
-        {/* Hardware Status */}
-        <div className="bg-card rounded-2xl border border-border shadow-sm p-6 lg:col-span-1 flex flex-col">
-          <h2 className="text-xl font-bold text-foreground mb-4">Hardware Relays</h2>
-          <div className="space-y-4 flex-1">
-            {relays.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No relays configured for this library yet.</p>
-            ) : (
-              relays.map(relay => {
-                const isOffline = new Date().getTime() - new Date(relay.lastSync).getTime() > 10 * 60 * 1000; // 10 mins
-                return (
-                  <div key={relay.id} className="p-4 border border-border rounded-xl flex items-center justify-between">
-                    <div>
-                      <p className="font-bold text-sm text-foreground">Relay {relay.id.substring(0,6)}</p>
-                      <p className="text-xs text-muted-foreground mt-1">Tag: <span className="font-mono">{relay.nfcTagId}</span></p>
-                      <p className="text-[10px] text-muted-foreground mt-1">Last Sync: {new Date(relay.lastSync).toLocaleTimeString()}</p>
-                    </div>
-                    <div className="flex flex-col items-end">
-                      <span className="flex items-center gap-1.5 text-xs font-bold uppercase">
-                        <span className={`w-2 h-2 rounded-full ${isOffline ? 'bg-destructive' : 'bg-success'}`} />
-                        <span className={isOffline ? 'text-destructive' : 'text-success'}>{isOffline ? 'OFFLINE' : 'ONLINE'}</span>
-                      </span>
-                    </div>
-                  </div>
-                )
-              })
-            )}
-          </div>
-        </div>
-
-        {/* Live Logs */}
-        <div className="bg-card rounded-2xl border border-border shadow-sm lg:col-span-2 overflow-hidden flex flex-col h-[400px]">
-          <div className="p-4 md:p-6 border-b border-border bg-muted/20">
-            <h2 className="text-xl font-bold text-foreground">Live Activity Log</h2>
-          </div>
-          <div className="flex-1 overflow-y-auto">
-            {logs.length === 0 ? (
-              <div className="p-6 text-center text-muted-foreground text-sm">No recent activity</div>
-            ) : (
-              <table className="w-full text-left border-collapse">
-                <thead className="sticky top-0 bg-card border-b border-border z-10">
-                  <tr>
-                    <th className="p-4 text-xs uppercase tracking-wider font-bold text-muted-foreground">Time</th>
-                    <th className="p-4 text-xs uppercase tracking-wider font-bold text-muted-foreground">Student</th>
-                    <th className="p-4 text-xs uppercase tracking-wider font-bold text-muted-foreground">Event</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {logs.map(log => (
-                    <tr key={log.id} className="hover:bg-muted/30 transition-colors">
-                      <td className="p-4 text-sm text-muted-foreground">
-                        {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        {log.isOfflineSync && <span className="block text-[10px] text-warning mt-0.5">Synced Offline</span>}
-                      </td>
-                      <td className="p-4 cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => log.studentId && setProfileStudentId(log.studentId)}>
-                        <p className="font-medium text-sm text-foreground hover:underline">{log.student?.name || 'Unknown'}</p>
-                        {log.student?.uniqueId && <p className="text-xs font-mono text-muted-foreground">{log.student.uniqueId}</p>}
-                      </td>
-                      <td className="p-4">
-                        <span className={`text-xs font-bold px-2 py-1 rounded uppercase tracking-wider ${
-                          log.status === 'CHECK_IN' ? 'bg-success/10 text-success' : 'bg-destructive/10 text-destructive'
-                        }`}>
-                          {log.status.replace('_', ' ')}
-                        </span>
-                        {log.reason && (log.status === 'DENIED') && (
-                          <span className="block mt-1 text-[10px] text-muted-foreground">
-                            {log.reason}
-                          </span>
-                        )}
-                        {log.reason?.startsWith("Unregistered RFID") && (
-                          <button 
-                            onClick={() => setRfidTagToAssign(log.reason?.replace("Unregistered RFID:", "").trim() ?? null)}
-                            className="mt-1 block text-xs bg-primary text-primary-foreground font-bold px-2 py-1 rounded-md hover:opacity-90"
-                          >
-                            Assign RFID
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
-      </div>
-
       {/* Revoke Access Dialog */}
       <Dialog open={revokeModalOpen} onOpenChange={setRevokeModalOpen}>
         <DialogContent className="sm:max-w-[425px]">
@@ -2291,13 +2201,6 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
           )}
         </DialogContent>
       </Dialog>
-      <AssignRFIDModal 
-        rfidTag={rfidTagToAssign || ""}
-        open={!!rfidTagToAssign}
-        onOpenChange={(open) => {
-          if (!open) setRfidTagToAssign(null);
-        }}
-      />
     </>
   )
 }
