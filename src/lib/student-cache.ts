@@ -11,9 +11,66 @@ export interface TabCounts {
 }
 
 // TTL configuration
-export const DYNAMIC_TTL_SECONDS = 600; // 10 minutes for page entry
-export const STATIC_META_TTL_SECONDS = 3600; // 1 hour for static metadata
+export const SHORT_TERM_MEMORY_TTL_MS = 3000; // 3 seconds fast in-memory cache
+export const DYNAMIC_TTL_SECONDS = 600; // 10 minutes for page entry in Redis
+export const STATIC_META_TTL_SECONDS = 3600; // 1 hour for static metadata in Redis
 export const REDIS_TIMEOUT_MS = 1500; // 1500ms timeout
+
+interface MemoryCacheRecord<T> {
+  data: T;
+  expiresAt: number;
+  libraryId: string;
+  version: number;
+}
+
+// Global in-memory cache to ensure survival across request cycles in server runtime
+const globalMemCache = (() => {
+  const g = globalThis as unknown as { __studentMemoryCache?: Map<string, MemoryCacheRecord<unknown>> };
+  if (!g.__studentMemoryCache) {
+    g.__studentMemoryCache = new Map<string, MemoryCacheRecord<unknown>>();
+  }
+  return g.__studentMemoryCache;
+})();
+
+export function clearMemoryCacheForLibrary(libraryId: string): void {
+  for (const [k, v] of globalMemCache.entries()) {
+    if (v.libraryId === libraryId) {
+      globalMemCache.delete(k);
+    }
+  }
+}
+
+function getMemoryCache<T>(key: string): T | null {
+  const record = globalMemCache.get(key);
+  if (!record) return null;
+
+  const now = Date.now();
+  if (record.expiresAt <= now) {
+    globalMemCache.delete(key);
+    return null;
+  }
+
+  return record.data as T;
+}
+
+function setMemoryCache<T>(key: string, data: T, libraryId: string, version: number = 0): void {
+  // Prune expired entries if map gets large (> 1000)
+  if (globalMemCache.size > 1000) {
+    const now = Date.now();
+    for (const [k, v] of globalMemCache.entries()) {
+      if (v.expiresAt <= now) {
+        globalMemCache.delete(k);
+      }
+    }
+  }
+
+  globalMemCache.set(key, {
+    data,
+    expiresAt: Date.now() + SHORT_TERM_MEMORY_TTL_MS,
+    libraryId,
+    version,
+  });
+}
 
 export const KNOWN_DATE_FIELDS = new Set([
   "createdAt",
@@ -51,11 +108,11 @@ export function reviveDates<T>(value: T, keyName?: string): T {
   }
 
   if (typeof value === "object") {
-    const copy: any = {};
+    const copy: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value)) {
       copy[k] = reviveDates(v, k);
     }
-    return copy;
+    return copy as unknown as T;
   }
 
   return value;
@@ -102,12 +159,17 @@ export async function getStudentsVersion(libraryId: string): Promise<number | nu
 }
 
 /**
- * Invalidates all student caches for the given library by incrementing its version counter.
- * Uses a single atomic INCR without scanning keyspace. Never throws.
+ * Invalidates all student caches for the given library:
+ * 1. Synchronously wipes out the 3-second in-memory server cache.
+ * 2. Increments Redis version counter.
  */
 export async function invalidateStudentsCache(libraryId: string): Promise<void> {
   try {
     if (!libraryId) return;
+    // Immediately clear in-memory fast cache
+    clearMemoryCacheForLibrary(libraryId);
+
+    // Atomically increment Redis version
     await withTimeout(redis.incr(`students:${libraryId}:v`));
   } catch (error) {
     console.warn(`[student-cache] Invalidation failed for library ${libraryId}:`, error);
@@ -115,17 +177,29 @@ export async function invalidateStudentsCache(libraryId: string): Promise<void> 
 }
 
 /**
- * Retrieves paginated bookings and counts from Redis or executes fallback fetcher.
- * Returns { bookings, counts } generic over the bookings type.
- * Separate try/catch for get and set, 1500ms timeout, never throws.
+ * Retrieves paginated bookings and counts using 3-tier architecture:
+ * Tier 1: 3-second server-side in-memory cache (user/library session)
+ * Tier 2: Redis cache (10 min TTL)
+ * Tier 3: PostgreSQL DB query
  */
 export async function getCachedStudentPage<T>(
   libraryId: string,
   tab: string,
   page: number,
   dateStr: string,
-  fetcher: () => Promise<{ bookings: T; counts: TabCounts }>
+  fetcher: () => Promise<{ bookings: T; counts: TabCounts }>,
+  userId?: string
 ): Promise<{ bookings: T; counts: TabCounts }> {
+  const memKey = `mem:${libraryId}:${userId || "all"}:tab:${tab}:p:${page}:${dateStr}`;
+
+  // 1. Tier 1: Check 3-second in-memory cache
+  const memCached = getMemoryCache<{ bookings: T; counts: TabCounts }>(memKey);
+  if (memCached) {
+    console.log(`[student-cache] MEMORY HIT (3s) ${memKey}`);
+    return reviveDates(memCached);
+  }
+
+  // 2. Fetch version from Redis
   const ver = await getStudentsVersion(libraryId);
   if (ver === null) {
     console.warn(`[student-cache] Skipping cache due to version check failure for library ${libraryId}`);
@@ -134,7 +208,7 @@ export async function getCachedStudentPage<T>(
 
   const cacheKey = `students:${libraryId}:v${ver}:tab:${tab}:p:${page}:${dateStr}`;
 
-  // 1. Separate GET try/catch with timeout
+  // 3. Tier 2: Check Redis cache
   let cached: { bookings: T; counts: TabCounts } | null = null;
   try {
     const raw = await withTimeout(redis.get<string | { bookings: T; counts: TabCounts }>(cacheKey));
@@ -146,31 +220,49 @@ export async function getCachedStudentPage<T>(
   }
 
   if (cached !== null && cached !== undefined) {
-    console.log(`[student-cache] HIT ${cacheKey}`);
-    return reviveDates(cached);
+    console.log(`[student-cache] REDIS HIT ${cacheKey}`);
+    const revived = reviveDates(cached);
+    // Populate 3-second memory cache
+    setMemoryCache(memKey, revived, libraryId, ver);
+    return revived;
   }
 
-  console.log(`[student-cache] MISS ${cacheKey}`);
+  console.log(`[student-cache] MISS (DB fetch) ${cacheKey}`);
 
-  // 2. Fallthrough to fetcher exactly once
+  // 4. Tier 3: Fallthrough to DB fetcher
   const result = await fetcher();
 
-  // 3. Separate non-blocking SET with timeout
+  // 5. Populate Redis (10 minutes)
   withTimeout(redis.set(cacheKey, safeSerialize(result), { ex: DYNAMIC_TTL_SECONDS })).catch((err) => {
     console.warn(`[student-cache] Redis set failed for ${cacheKey}:`, err);
   });
+
+  // 6. Populate 3-second memory cache
+  setMemoryCache(memKey, result, libraryId, ver);
 
   return result;
 }
 
 /**
  * Retrieves static reference metadata (plans, seats, lockers) cached for 1 hour.
- * Separate try/catch for get and set, 1500ms timeout, never throws.
+ * Tier 1: 3-second in-memory cache
+ * Tier 2: Redis cache (1 hour TTL)
+ * Tier 3: PostgreSQL DB query
  */
 export async function getCachedStudentMetadata<T>(
   libraryId: string,
-  fetcher: () => Promise<T>
+  fetcher: () => Promise<T>,
+  userId?: string
 ): Promise<T> {
+  const memKey = `mem:${libraryId}:${userId || "all"}:static_meta`;
+
+  // 1. Tier 1: Check 3-second in-memory cache
+  const memCached = getMemoryCache<T>(memKey);
+  if (memCached) {
+    console.log(`[student-cache] MEMORY HIT (3s) ${memKey}`);
+    return reviveDates(memCached);
+  }
+
   const ver = await getStudentsVersion(libraryId);
   if (ver === null) {
     console.warn(`[student-cache] Skipping cache due to version check failure for library ${libraryId}`);
@@ -190,18 +282,22 @@ export async function getCachedStudentMetadata<T>(
   }
 
   if (cachedStatic !== null && cachedStatic !== undefined) {
-    console.log(`[student-cache] HIT ${staticCacheKey}`);
-    return reviveDates(cachedStatic);
+    console.log(`[student-cache] REDIS HIT ${staticCacheKey}`);
+    const revived = reviveDates(cachedStatic);
+    setMemoryCache(memKey, revived, libraryId, ver);
+    return revived;
   }
 
-  console.log(`[student-cache] MISS ${staticCacheKey}`);
+  console.log(`[student-cache] MISS (DB fetch) ${staticCacheKey}`);
 
-  // Fallthrough to fetcher exactly once
+  // Fallthrough to fetcher
   const fresh = await fetcher();
 
   withTimeout(redis.set(staticCacheKey, safeSerialize(fresh), { ex: STATIC_META_TTL_SECONDS })).catch((err) => {
     console.warn(`[student-cache] Redis set failed for ${staticCacheKey}:`, err);
   });
+
+  setMemoryCache(memKey, fresh, libraryId, ver);
 
   return fresh;
 }

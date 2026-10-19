@@ -141,6 +141,13 @@ export async function processAttendanceIntent(intent: AttendanceIntent) {
       console.error("[processAttendanceIntent] Realtime publish failed:", e);
     }
 
+    try {
+      const { invalidateStudentsCache } = await import("@/lib/student-cache");
+      await invalidateStudentsCache(libraryId);
+    } catch (e) {
+      console.warn("[processAttendanceIntent] Invalidate student cache failed:", e);
+    }
+
     if (txResult.newStatus === "CHECK_IN") {
       try {
         const { updateStreak } = await import("@/lib/streak-utils");

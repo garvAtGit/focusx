@@ -174,7 +174,7 @@ export default async function StudentsPage(props: { searchParams: Promise<{ [key
 
   const { bookings, counts } = query
     ? await fetchView()
-    : await getCachedStudentPage(library.id, normalizedTab, page, dateStr, fetchView);
+    : await getCachedStudentPage(library.id, normalizedTab, page, dateStr, fetchView, session.userId);
   const totalStudentsCount =
     normalizedTab === "PAUSED"
       ? counts.paused
@@ -204,7 +204,7 @@ export default async function StudentsPage(props: { searchParams: Promise<{ [key
       }),
     ]);
     return { plans, seats, standaloneLockers };
-  });
+  }, session.userId);
 
   const [activeBookings, activeLeases] = await Promise.all([
     prisma.booking.findMany({

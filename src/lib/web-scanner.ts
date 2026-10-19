@@ -177,6 +177,13 @@ export async function processWebScanCore(
     }
   }
 
+  try {
+    const { invalidateStudentsCache } = await import("@/lib/student-cache");
+    await invalidateStudentsCache(libraryId);
+  } catch (e) {
+    console.warn("[WebScan] Invalidate student cache failed:", e);
+  }
+
 
   if (txResult.newStatus === "CHECK_IN") {
     // dynamically import to avoid circular dependencies if any
