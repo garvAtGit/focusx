@@ -133,6 +133,20 @@ function isSortMethod(value: unknown): value is SortMethod {
   return value === 'LATEST' || value === 'EXPIRY' || value === 'DURATION' || value === 'ALPHABETICAL'
 }
 
+type ClientTabCacheEntry = {
+  bookings: BookingWithDetails[];
+  tabCounts: StudentsClientProps['tabCounts'];
+  totalCount: number;
+  timestamp: number;
+};
+
+// Client-side cache across tab switches stored in browser RAM
+const clientStudentCache = new Map<string, ClientTabCacheEntry>();
+
+export function clearStudentClientCache() {
+  clientStudentCache.clear();
+}
+
 export function StudentsClient({ bookings, plans, logs = [], relays = [], seats = [], standaloneLockers = [], occupiedStandaloneLockerIds = [], occupiedSeatIds = [], totalCount = 0, tabCounts = { active: 0, paused: 0, dues: 0, expiring: 0, inactive: 0, expired: 0, revoked: 0 }, currentPage = 1, searchQuery = "" }: StudentsClientProps) {
   const router = useRouter()
   const searchParamsHook = useSearchParams()
@@ -187,6 +201,38 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
   const [sortMethod, setSortMethod] = useState<SortMethod>('LATEST')
   const [filterPlanId, setFilterPlanId] = useState<string | null>(null)
 
+  // Client-side in-memory cache state for instant tab switching
+  const cacheKey = `${activeTab}:${currentPage}:${searchQuery}`;
+  const [localData, setLocalData] = useState<{
+    bookings: BookingWithDetails[];
+    tabCounts: StudentsClientProps['tabCounts'];
+    totalCount: number;
+  }>({
+    bookings,
+    tabCounts,
+    totalCount,
+  });
+
+  // When server props arrive, update browser RAM cache and local data
+  useEffect(() => {
+    clientStudentCache.set(cacheKey, {
+      bookings,
+      tabCounts,
+      totalCount,
+      timestamp: Date.now()
+    });
+    setLocalData({
+      bookings,
+      tabCounts,
+      totalCount,
+    });
+  }, [cacheKey, bookings, tabCounts, totalCount]);
+
+  const refreshData = () => {
+    clientStudentCache.clear();
+    router.refresh();
+  };
+
   // RFID Modal States
   const [addFormHasLocker, setAddFormHasLocker] = useState<boolean>(true);
   const [rfidModalOpen, setRfidModalOpen] = useState(false);
@@ -199,12 +245,23 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
   const [step, setStep] = useState<1 | 2>(1)
   const [phone, setPhone] = useState("+91 ")
 
-  
   // Pagination
   const PAGE_SIZE = 20
-  const totalPages = Math.ceil(totalCount / PAGE_SIZE) || 1;
+  const currentTabCounts = localData.tabCounts || tabCounts;
+  const currentTotalCount = localData.totalCount ?? totalCount;
+  const totalPages = Math.ceil(currentTotalCount / PAGE_SIZE) || 1;
 
   const handlePageChange = (newPage: number) => {
+    const targetKey = `${activeTab}:${newPage}:${searchQuery}`;
+    const cached = clientStudentCache.get(targetKey);
+    if (cached) {
+      setLocalData({
+        bookings: cached.bookings,
+        tabCounts: cached.tabCounts,
+        totalCount: cached.totalCount,
+      });
+    }
+
     const params = new URLSearchParams(window.location.search);
     params.set('page', newPage.toString());
     router.replace(`?${params.toString()}`, { scroll: false });
@@ -351,7 +408,7 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
       setIsOpen(false);
       setPhone("+91 "); setOtp(""); setStep(1); setVerifiedAuthId(null); setSelectedPlanId(null); setAddFormStandaloneLockerId(null);
       setStudentFormData({ name: "", email: "", dob: "", gender: "", address: "", isKycVerified: false });
-      router.refresh();
+      refreshData();
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Failed to add student."));
     } finally {
@@ -366,7 +423,7 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
       await updateBookingSeat(seatChangeBookingId, selectedNewSeatId === "NONE" ? null : selectedNewSeatId);
       toast.success("Seat updated successfully");
       setSeatChangeBookingId(null);
-      router.refresh();
+      refreshData();
     } catch(error: unknown) {
       toast.error(getErrorMessage(error, "Failed to update seat"));
     } finally {
@@ -377,8 +434,19 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
   const now = new Date();
   now.setHours(0,0,0,0);
 
-  // Handle URL updates for tabs
+  // Handle URL updates for tabs with instant client-side cache
   const handleTabChange = (tab: typeof activeTab) => {
+    const targetKey = `${tab}:1:${searchQuery}`;
+    const cached = clientStudentCache.get(targetKey);
+    if (cached) {
+      // Instant switch in 0ms from browser RAM!
+      setLocalData({
+        bookings: cached.bookings,
+        tabCounts: cached.tabCounts,
+        totalCount: cached.totalCount,
+      });
+    }
+
     startTransition(() => {
       const params = new URLSearchParams(window.location.search);
       params.set('page', '1');
@@ -387,7 +455,9 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
     });
   };
 
-  const searchedBookings = bookings.filter(b => 
+  const currentBookings = localData.bookings || bookings;
+
+  const searchedBookings = currentBookings.filter(b => 
     (b.student.name || '').toLowerCase().includes(search.toLowerCase()) ||
     (b.student.uniqueId && b.student.uniqueId.toLowerCase().includes(search.toLowerCase())) ||
     (b.student.phone && b.student.phone.includes(search))
@@ -949,43 +1019,43 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
               className={`flex-1 px-5 py-2.5 whitespace-nowrap text-sm font-semibold rounded-full transition-all ${activeTab === 'ACTIVE' ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-slate-200/50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
               onClick={() => handleTabChange('ACTIVE')}
             >
-              Active ({tabCounts.active})
+              Active ({currentTabCounts.active})
             </button>
             <button
               className={`flex-1 px-5 py-2.5 whitespace-nowrap text-sm font-semibold rounded-full transition-all ${activeTab === 'PAUSED' ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-slate-200/50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
               onClick={() => handleTabChange('PAUSED')}
             >
-              Paused ({tabCounts.paused})
+              Paused ({currentTabCounts.paused})
             </button>
             <button
               className={`flex-1 px-5 py-2.5 whitespace-nowrap text-sm font-semibold rounded-full transition-all ${activeTab === 'DUES' ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-slate-200/50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
               onClick={() => handleTabChange('DUES')}
             >
-              Dues ({tabCounts.dues})
+              Dues ({currentTabCounts.dues})
             </button>
             <button
               className={`flex-1 px-5 py-2.5 whitespace-nowrap text-sm font-semibold rounded-full transition-all ${activeTab === 'EXPIRING' ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-slate-200/50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
               onClick={() => handleTabChange('EXPIRING')}
             >
-              Expiring Soon ({tabCounts.expiring})
+              Expiring Soon ({currentTabCounts.expiring})
             </button>
             <button
               className={`flex-1 px-5 py-2.5 whitespace-nowrap text-sm font-semibold rounded-full transition-all ${activeTab === 'INACTIVE' ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-slate-200/50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
               onClick={() => handleTabChange('INACTIVE')}
             >
-              Expired ({tabCounts.inactive})
+              Expired ({currentTabCounts.inactive})
             </button>
             <button
               className={`flex-1 px-5 py-2.5 whitespace-nowrap text-sm font-semibold rounded-full transition-all ${activeTab === 'EXPIRED' ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-slate-200/50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
               onClick={() => handleTabChange('EXPIRED')}
             >
-              Inactive ({tabCounts.expired})
+              Inactive ({currentTabCounts.expired})
             </button>
             <button
               className={`flex-1 px-5 py-2.5 whitespace-nowrap text-sm font-semibold rounded-full transition-all ${activeTab === 'REVOKED' ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-slate-200/50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
               onClick={() => handleTabChange('REVOKED')}
             >
-              Revoked ({tabCounts.revoked})
+              Revoked ({currentTabCounts.revoked})
             </button>
             {isPending && (
               <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center justify-center">

@@ -243,6 +243,12 @@ export async function POST(request: Request) {
              after(async () => {
                 const { publishOutbox } = await import("@/lib/realtime-publisher");
                 await publishOutbox(outboxEventId);
+                try {
+                  const { invalidateStudentsCache } = await import("@/lib/student-cache");
+                  await invalidateStudentsCache(log.libraryId);
+                } catch (e) {
+                  console.warn("[hardwareLog] Invalidate student cache failed:", e);
+                }
              });
 
              if (transactionResult.newStatus === "CHECK_IN") {

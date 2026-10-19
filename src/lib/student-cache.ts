@@ -11,8 +11,8 @@ export interface TabCounts {
 }
 
 // TTL configuration
-export const DYNAMIC_TTL_SECONDS = 600; // 10 minutes for page entry
-export const STATIC_META_TTL_SECONDS = 3600; // 1 hour for static metadata
+export const DYNAMIC_TTL_SECONDS = 600; // 10 minutes for page entry in Redis
+export const STATIC_META_TTL_SECONDS = 3600; // 1 hour for static metadata in Redis
 export const REDIS_TIMEOUT_MS = 1500; // 1500ms timeout
 
 export const KNOWN_DATE_FIELDS = new Set([
@@ -51,11 +51,11 @@ export function reviveDates<T>(value: T, keyName?: string): T {
   }
 
   if (typeof value === "object") {
-    const copy: any = {};
+    const copy: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value)) {
       copy[k] = reviveDates(v, k);
     }
-    return copy;
+    return copy as unknown as T;
   }
 
   return value;
