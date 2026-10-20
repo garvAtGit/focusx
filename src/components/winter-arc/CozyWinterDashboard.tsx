@@ -229,10 +229,20 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
     });
   }
 
-  // Group sessions by the IST date of check-in
+  const ARC_START_KEY = '2026-10-06';
+
+  const getArcDayNumber = (dateKey: string) => {
+    const start = new Date('2026-10-06T00:00:00+05:30').getTime();
+    const current = new Date(`${dateKey}T00:00:00+05:30`).getTime();
+    const diffDays = Math.round((current - start) / (24 * 60 * 60 * 1000));
+    return Math.max(1, diffDays + 1);
+  };
+
+  // Group sessions by the IST date of check-in (scoped to Winter Arc start date)
   const groupedByDate: Record<string, SessionItem[]> = {};
   for (const s of builtSessions) {
     const dateKey = toISTDateStr(s.inTime);
+    if (dateKey < ARC_START_KEY) continue; // Filter out old pre-challenge logs
     if (!groupedByDate[dateKey]) groupedByDate[dateKey] = [];
     groupedByDate[dateKey].push(s);
   }
@@ -257,22 +267,21 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
     }
   }
 
-  // Compute Monthly Arc hours (current month in IST)
-  const currentMonthIST = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit' }).format(nowTime);
-  let monthlyMinutes = 0;
+  // Compute Arc Total hours (since Oct 6 start)
+  let arcTotalMinutes = 0;
   for (const s of builtSessions) {
-    if (toISTDateStr(s.inTime).startsWith(currentMonthIST)) {
-      monthlyMinutes += s.durationMinutes;
+    if (toISTDateStr(s.inTime) >= ARC_START_KEY) {
+      arcTotalMinutes += s.durationMinutes;
     }
   }
-  const monthlyHours = Math.floor(monthlyMinutes / 60);
+  const monthlyHours = Math.floor(arcTotalMinutes / 60);
 
   const focusStr = `${Math.floor(todaysFocusMinutes / 60)}h ${todaysFocusMinutes % 60}m`;
   const progressPercent = Math.min(100, Math.floor((todaysFocusMinutes / (dailyTargetHours * 60)) * 100));
 
   // Build ledger items (sorted newest first)
   const sortedDateKeys = Object.keys(groupedByDate).sort((a, b) => b.localeCompare(a));
-  const allLedgerLogs = sortedDateKeys.map((dateKey, index) => {
+  const allLedgerLogs = sortedDateKeys.map((dateKey) => {
     const daySessions = groupedByDate[dateKey];
     const totalMs = daySessions.reduce((sum, s) => sum + s.durationMs, 0);
     const totalMinutes = Math.floor(totalMs / 60000);
@@ -290,7 +299,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
     const displayDate = isToday ? 'Today' : toISTDisplayDate(firstSession.inTime);
 
     return {
-      day: `Day ${sortedDateKeys.length - index}`,
+      day: `Day ${getArcDayNumber(dateKey)}`,
       dateKey,
       date: displayDate,
       in: inStr,
