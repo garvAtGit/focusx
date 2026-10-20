@@ -71,6 +71,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
   const seasonTargetHours = pledge?.targetHours || 200;
   const [activeTab, setActiveTab] = useState('Today');
   const [expandedDays, setExpandedDays] = useState<Record<string, boolean>>({});
+  const [showFullArchive, setShowFullArchive] = useState(false);
 
   const toggleDay = (dayKey: string) => {
     setExpandedDays(prev => ({
@@ -134,22 +135,35 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
         // Ignore duplicate rapid scans within 30 seconds
         if (diffMs < 30000) continue;
 
-        // Cap unclosed prior session at 16h to prevent runaway phantom hours
-        const effectiveDuration = Math.min(diffMs, 16 * 60 * 60 * 1000);
         const crossDay = toISTDateStr(pendingIn) !== toISTDateStr(logTime);
+        let effectiveOut = logTime;
+        let effectiveDuration = diffMs;
+
+        // If checkout was forgotten and scan happens on another day, auto-checkout at midnight (23:59:59 IST)
+        if (crossDay) {
+          const [py, pm, pd] = toISTDateStr(pendingIn).split('-').map(Number);
+          const midnightIST = new Date(Date.UTC(py, pm - 1, pd, 23, 59, 59, 999) - (5.5 * 3600 * 1000));
+          if (midnightIST < logTime) {
+            effectiveOut = midnightIST;
+            effectiveDuration = Math.max(0, midnightIST.getTime() - pendingIn.getTime());
+          }
+        } else {
+          effectiveDuration = Math.min(diffMs, 16 * 60 * 60 * 1000);
+        }
+
         const minutes = Math.floor(effectiveDuration / 60000);
         const seconds = Math.floor((effectiveDuration % 60000) / 1000);
 
         builtSessions.push({
           inTime: pendingIn,
-          outTime: logTime,
+          outTime: effectiveOut,
           durationMs: effectiveDuration,
           durationMinutes: minutes,
           durationSeconds: seconds,
           isOngoing: false,
           crossMidnight: crossDay,
           inStr: toISTTimeStr(pendingIn),
-          outStr: toISTTimeStr(logTime) + (crossDay ? ' (+1d)' : ''),
+          outStr: toISTTimeStr(effectiveOut) + (crossDay ? ' (+1d)' : ''),
           durationStr: formatDurationStr(minutes, seconds)
         });
       }
@@ -157,21 +171,35 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
     } else if (status === 'CHECK_OUT' || status === 'AUTO_CHECKOUT') {
       if (pendingIn) {
         const diffMs = Math.max(0, logTime.getTime() - pendingIn.getTime());
-        const effectiveDuration = Math.min(diffMs, 24 * 60 * 60 * 1000);
         const crossDay = toISTDateStr(pendingIn) !== toISTDateStr(logTime);
+        let effectiveOut = logTime;
+        let effectiveDuration = diffMs;
+
+        // If checkout happens after more than 16 hours or across multiple days, cap at midnight (23:59:59 IST)
+        if (crossDay && diffMs > 16 * 60 * 60 * 1000) {
+          const [py, pm, pd] = toISTDateStr(pendingIn).split('-').map(Number);
+          const midnightIST = new Date(Date.UTC(py, pm - 1, pd, 23, 59, 59, 999) - (5.5 * 3600 * 1000));
+          if (midnightIST < logTime) {
+            effectiveOut = midnightIST;
+            effectiveDuration = Math.max(0, midnightIST.getTime() - pendingIn.getTime());
+          }
+        } else {
+          effectiveDuration = Math.min(diffMs, 24 * 60 * 60 * 1000);
+        }
+
         const minutes = Math.floor(effectiveDuration / 60000);
         const seconds = Math.floor((effectiveDuration % 60000) / 1000);
 
         builtSessions.push({
           inTime: pendingIn,
-          outTime: logTime,
+          outTime: effectiveOut,
           durationMs: effectiveDuration,
           durationMinutes: minutes,
           durationSeconds: seconds,
           isOngoing: false,
           crossMidnight: crossDay,
           inStr: toISTTimeStr(pendingIn),
-          outStr: toISTTimeStr(logTime) + (crossDay ? ' (+1d)' : ''),
+          outStr: toISTTimeStr(effectiveOut) + (crossDay ? ' (+1d)' : ''),
           durationStr: formatDurationStr(minutes, seconds)
         });
         pendingIn = null;
@@ -244,7 +272,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
 
   // Build ledger items (sorted newest first)
   const sortedDateKeys = Object.keys(groupedByDate).sort((a, b) => b.localeCompare(a));
-  const dynamicLogs = sortedDateKeys.slice(0, 5).map((dateKey, index) => {
+  const allLedgerLogs = sortedDateKeys.map((dateKey, index) => {
     const daySessions = groupedByDate[dateKey];
     const totalMs = daySessions.reduce((sum, s) => sum + s.durationMs, 0);
     const totalMinutes = Math.floor(totalMs / 60000);
@@ -273,6 +301,8 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
       sessions: daySessions
     };
   });
+
+  const dynamicLogs = showFullArchive ? allLedgerLogs : allLedgerLogs.slice(0, 5);
 
   return (
     <div className="min-h-screen bg-[#0a0705] text-[#e8ded1] flex flex-col items-center relative overflow-x-hidden font-serif selection:bg-[#4a2e1b] selection:text-[#fff6e5] pb-24">
@@ -484,9 +514,16 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
             })}
           </div>
           
-          <button onClick={() => window.location.href = '/student/profile'} className={`${inter.className} w-full mt-4 py-3 text-[10px] uppercase tracking-widest text-[#8c7c6c] hover:text-[#d9a05b] transition-colors border border-transparent hover:border-[#4a3b32]`}>
-            View Full Archive
-          </button>
+          {allLedgerLogs.length > 5 && (
+            <button 
+              type="button"
+              onClick={() => setShowFullArchive(prev => !prev)} 
+              className={`${inter.className} w-full mt-4 py-3 text-[10px] uppercase tracking-widest text-[#8c7c6c] hover:text-[#d9a05b] transition-colors border border-transparent hover:border-[#4a3b32] flex items-center justify-center gap-1.5`}
+            >
+              <span>{showFullArchive ? "Collapse Archive" : `View Full Archive (${allLedgerLogs.length} Days)`}</span>
+              <ChevronDown size={14} className={`transition-transform duration-200 ${showFullArchive ? 'rotate-180 text-[#d9a05b]' : ''}`} />
+            </button>
+          )}
         </motion.div>
 
         {/* The Daily Charter (Plan Details) */}
