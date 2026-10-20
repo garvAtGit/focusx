@@ -13,7 +13,7 @@ import { AccessQRModal } from "@/components/AccessQRModal";
 import { DigitalPassCard } from "@/components/dashboard/DigitalPassCard";
 import { StudentLeaderboard } from "@/components/dashboard/StudentLeaderboard";
 
-import { formatStandardDate, formatStandardDateTime } from "@/lib/date-utils";
+import { formatStandardDate, formatStandardDateTime, startOfDayIST } from "@/lib/date-utils";
 import { startOfDay, startOfWeek, startOfMonth, differenceInMinutes } from 'date-fns';
 import CozyWinterDashboard from "@/components/winter-arc/CozyWinterDashboard";
 
@@ -38,13 +38,13 @@ export default async function StudentDashboardPage() {
     pledgeData = pledge;
 
     if (hasPledged) {
-      const todayStart = startOfDay(new Date());
+      const todayStart = startOfDayIST(new Date());
       const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 }); // Monday
       const monthStart = startOfMonth(new Date());
       
       const allMonthLogs = await prisma.checkinLog.findMany({
         where: { timestamp: { gte: monthStart } },
-        include: { student: { select: { name: true } } }
+        include: { student: { select: { name: true, profilePhotoUrl: true } } }
       });
 
       const getTop = (logsArray: any[]) => {

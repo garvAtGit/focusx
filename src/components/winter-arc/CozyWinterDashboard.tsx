@@ -65,85 +65,214 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
   const studentId = student?.uniqueId || "FD-000000";
   const studentPhoto = student?.profilePhotoUrl || 'https://images.unsplash.com/photo-1507842217343-583bb7270b66?q=80&w=2000&auto=format&fit=crop';
   const streak = student?.currentStreak || 0;
-  const targetHours = pledge?.targetHours || 8;
+  // Daily target in hours (dynamic from DB pledge.leagueHours e.g. 6, 8, 10, 12, 24)
+  const dailyTargetHours = pledge?.leagueHours || (pledge?.targetHours && pledge.targetHours <= 24 ? pledge.targetHours : 8);
+  // Season/Monthly target in hours (dynamic from DB pledge.targetHours e.g. 150, 200, 250, 300)
+  const seasonTargetHours = pledge?.targetHours || 200;
   const [activeTab, setActiveTab] = useState('Today');
+  const [expandedDays, setExpandedDays] = useState<Record<string, boolean>>({});
 
-  // Compute Today's Focus from recentLogs
-  let todaysFocusMinutes = 0;
-  if (recentLogs && Array.isArray(recentLogs)) {
-    const todayLogs = recentLogs.filter(l => new Date(l.timestamp).toDateString() === new Date().toDateString());
-    const sorted = todayLogs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-    let lastIn = null;
-    for (const log of sorted) {
-      if (log.status === 'CHECK_IN') {
-        lastIn = new Date(log.timestamp);
-      } else if (log.status === 'CHECK_OUT' && lastIn) {
-        todaysFocusMinutes += Math.floor((new Date(log.timestamp).getTime() - lastIn.getTime()) / 60000);
-        lastIn = null;
+  const toggleDay = (dayKey: string) => {
+    setExpandedDays(prev => ({
+      ...prev,
+      [dayKey]: !prev[dayKey]
+    }));
+  };
+
+  // IST Timezone Helpers
+  const toISTDateStr = (d: Date | string | number) =>
+    new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date(d));
+
+  const toISTDisplayDate = (d: Date | string | number) =>
+    new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Asia/Kolkata' }).format(new Date(d));
+
+  const toISTTimeStr = (d: Date | string | number) =>
+    new Intl.DateTimeFormat('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }).format(new Date(d));
+
+  const formatDurationStr = (minutes: number, seconds: number = 0) => {
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${seconds > 0 ? `${seconds}s` : ''}`.trim();
+    return `${seconds}s`;
+  };
+
+  // Pair raw CheckinLog events into continuous sessions (handling cross-midnight, auto-checkout, and debouncing)
+  const sortedAll = (recentLogs || [])
+    .filter((l: any) => l.timestamp)
+    .sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+  interface SessionItem {
+    inTime: Date;
+    outTime: Date | null;
+    durationMs: number;
+    durationMinutes: number;
+    durationSeconds: number;
+    isOngoing: boolean;
+    crossMidnight: boolean;
+    inStr: string;
+    outStr: string;
+    durationStr: string;
+  }
+
+  const builtSessions: SessionItem[] = [];
+  let pendingIn: Date | null = null;
+  const nowTime = new Date();
+
+  for (const log of sortedAll) {
+    const logTime = new Date(log.timestamp);
+    const status = log.status;
+
+    if (status === 'CHECK_IN') {
+      if (pendingIn) {
+        const diffMs = logTime.getTime() - pendingIn.getTime();
+        // Ignore duplicate rapid scans within 30 seconds
+        if (diffMs < 30000) continue;
+
+        // Cap unclosed prior session at 16h to prevent runaway phantom hours
+        const effectiveDuration = Math.min(diffMs, 16 * 60 * 60 * 1000);
+        const crossDay = toISTDateStr(pendingIn) !== toISTDateStr(logTime);
+        const minutes = Math.floor(effectiveDuration / 60000);
+        const seconds = Math.floor((effectiveDuration % 60000) / 1000);
+
+        builtSessions.push({
+          inTime: pendingIn,
+          outTime: logTime,
+          durationMs: effectiveDuration,
+          durationMinutes: minutes,
+          durationSeconds: seconds,
+          isOngoing: false,
+          crossMidnight: crossDay,
+          inStr: toISTTimeStr(pendingIn),
+          outStr: toISTTimeStr(logTime) + (crossDay ? ' (+1d)' : ''),
+          durationStr: formatDurationStr(minutes, seconds)
+        });
       }
-    }
-    if (lastIn) {
-      todaysFocusMinutes += Math.floor((new Date().getTime() - lastIn.getTime()) / 60000);
+      pendingIn = logTime;
+    } else if (status === 'CHECK_OUT' || status === 'AUTO_CHECKOUT') {
+      if (pendingIn) {
+        const diffMs = Math.max(0, logTime.getTime() - pendingIn.getTime());
+        const effectiveDuration = Math.min(diffMs, 24 * 60 * 60 * 1000);
+        const crossDay = toISTDateStr(pendingIn) !== toISTDateStr(logTime);
+        const minutes = Math.floor(effectiveDuration / 60000);
+        const seconds = Math.floor((effectiveDuration % 60000) / 1000);
+
+        builtSessions.push({
+          inTime: pendingIn,
+          outTime: logTime,
+          durationMs: effectiveDuration,
+          durationMinutes: minutes,
+          durationSeconds: seconds,
+          isOngoing: false,
+          crossMidnight: crossDay,
+          inStr: toISTTimeStr(pendingIn),
+          outStr: toISTTimeStr(logTime) + (crossDay ? ' (+1d)' : ''),
+          durationStr: formatDurationStr(minutes, seconds)
+        });
+        pendingIn = null;
+      }
     }
   }
 
-  const focusStr = `${Math.floor(todaysFocusMinutes / 60)}h ${todaysFocusMinutes % 60}m`;
-  const progressPercent = Math.min(100, Math.floor((todaysFocusMinutes / (targetHours * 60)) * 100));
+  // Active / Ongoing session
+  if (pendingIn) {
+    const diffMs = Math.max(0, nowTime.getTime() - pendingIn.getTime());
+    const isRecent = diffMs < 24 * 60 * 60 * 1000;
+    const crossDay = toISTDateStr(pendingIn) !== toISTDateStr(nowTime);
+    const minutes = Math.floor(diffMs / 60000);
+    const seconds = Math.floor((diffMs % 60000) / 1000);
 
-  // Convert live recentLogs from Prisma to the formatted array needed by the UI
-  const formatLogs = () => {
-    if (!recentLogs || !Array.isArray(recentLogs)) return [];
-    
-    // Group logs by date
-    const grouped = recentLogs.reduce((acc: any, log: any) => {
-      const dateKey = new Date(log.timestamp).toLocaleDateString();
-      if (!acc[dateKey]) acc[dateKey] = [];
-      acc[dateKey].push(log);
-      return acc;
-    }, {});
-
-    const sortedDates = Object.keys(grouped).sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
-    
-    return sortedDates.map((dateStr, index) => {
-      const dayLogs = grouped[dateStr].sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-      
-      const firstIn = dayLogs.find((l: any) => l.status === 'CHECK_IN');
-      const lastOut = [...dayLogs].reverse().find((l: any) => l.status === 'CHECK_OUT');
-      
-      const inStr = firstIn ? new Date(firstIn.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--';
-      const outStr = lastOut ? new Date(lastOut.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Ongoing';
-      
-      const isActive = outStr === 'Ongoing' && new Date(dateStr).toDateString() === new Date().toDateString();
-
-      let dayMinutes = 0;
-      let lastInTime: Date | null = null;
-      for (const log of dayLogs) {
-        if (log.status === 'CHECK_IN') {
-          lastInTime = new Date(log.timestamp);
-        } else if ((log.status === 'CHECK_OUT' || log.status === 'AUTO_CHECKOUT') && lastInTime) {
-          dayMinutes += Math.floor((new Date(log.timestamp).getTime() - lastInTime.getTime()) / 60000);
-          lastInTime = null;
-        }
-      }
-      if (isActive && lastInTime) {
-        dayMinutes += Math.floor((new Date().getTime() - lastInTime.getTime()) / 60000);
-      }
-      const hours = Math.floor(dayMinutes / 60);
-      const mins = dayMinutes % 60;
-      const durStr = dayMinutes > 0 ? `${hours}h ${mins}m` : '0h 0m';
-      
-      return {
-        day: `Day ${sortedDates.length - index}`,
-        date: new Date(dateStr).toDateString() === new Date().toDateString() ? `Today` : dateStr,
-        in: inStr,
-        out: outStr,
-        duration: durStr,
-        active: isActive
-      };
+    builtSessions.push({
+      inTime: pendingIn,
+      outTime: null,
+      durationMs: diffMs,
+      durationMinutes: minutes,
+      durationSeconds: seconds,
+      isOngoing: isCheckedIn || isRecent,
+      crossMidnight: crossDay,
+      inStr: toISTTimeStr(pendingIn),
+      outStr: 'Ongoing',
+      durationStr: formatDurationStr(minutes, seconds)
     });
-  };
+  }
 
-  const dynamicLogs = formatLogs().slice(0, 5); // take last 5 days
+  // Group sessions by the IST date of check-in
+  const groupedByDate: Record<string, SessionItem[]> = {};
+  for (const s of builtSessions) {
+    const dateKey = toISTDateStr(s.inTime);
+    if (!groupedByDate[dateKey]) groupedByDate[dateKey] = [];
+    groupedByDate[dateKey].push(s);
+  }
+
+  const todayIST = toISTDateStr(nowTime);
+
+  // Compute Today's Focus in IST
+  const todaySessions = groupedByDate[todayIST] || [];
+  let todaysFocusMinutes = todaySessions.reduce((sum, s) => sum + s.durationMinutes, 0);
+
+  // Also account for sessions that started yesterday night and crossed midnight into today
+  for (const s of builtSessions) {
+    if (s.crossMidnight && toISTDateStr(s.inTime) !== todayIST) {
+      const sOut = s.outTime || nowTime;
+      if (toISTDateStr(sOut) === todayIST) {
+        // Find start of today in IST
+        const [y, m, d] = todayIST.split('-').map(Number);
+        const midnightToday = new Date(Date.UTC(y, m - 1, d, 0, 0, 0) - (5.5 * 3600 * 1000));
+        const afterMidnightMinutes = Math.floor((sOut.getTime() - midnightToday.getTime()) / 60000);
+        if (afterMidnightMinutes > 0) todaysFocusMinutes += afterMidnightMinutes;
+      }
+    }
+  }
+
+  // Compute Monthly Arc hours (current month in IST)
+  const currentMonthIST = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit' }).format(nowTime);
+  let monthlyMinutes = 0;
+  for (const s of builtSessions) {
+    if (toISTDateStr(s.inTime).startsWith(currentMonthIST)) {
+      monthlyMinutes += s.durationMinutes;
+    }
+  }
+  const monthlyHours = Math.floor(monthlyMinutes / 60);
+
+  const focusStr = `${Math.floor(todaysFocusMinutes / 60)}h ${todaysFocusMinutes % 60}m`;
+  const progressPercent = Math.min(100, Math.floor((todaysFocusMinutes / (dailyTargetHours * 60)) * 100));
+
+  // Build ledger items (sorted newest first)
+  const sortedDateKeys = Object.keys(groupedByDate).sort((a, b) => b.localeCompare(a));
+  const dynamicLogs = sortedDateKeys.slice(0, 5).map((dateKey, index) => {
+    const daySessions = groupedByDate[dateKey];
+    const totalMs = daySessions.reduce((sum, s) => sum + s.durationMs, 0);
+    const totalMinutes = Math.floor(totalMs / 60000);
+    const totalHours = Math.floor(totalMinutes / 60);
+    const remMinutes = totalMinutes % 60;
+    const durStr = totalMinutes > 0 ? `${totalHours}h ${remMinutes}m` : (totalMs > 0 ? `${Math.floor(totalMs / 1000)}s` : '0h 0m');
+
+    const firstSession = daySessions[0];
+    const lastSession = daySessions[daySessions.length - 1];
+
+    const inStr = firstSession.inStr;
+    const outStr = lastSession.outStr;
+    const isActive = lastSession.isOngoing && dateKey === todayIST;
+    const isToday = dateKey === todayIST;
+    const displayDate = isToday ? 'Today' : toISTDisplayDate(firstSession.inTime);
+
+    return {
+      day: `Day ${sortedDateKeys.length - index}`,
+      dateKey,
+      date: displayDate,
+      in: inStr,
+      out: outStr,
+      duration: durStr,
+      active: isActive,
+      totalMinutes,
+      sessions: daySessions
+    };
+  });
 
   return (
     <div className="min-h-screen bg-[#0a0705] text-[#e8ded1] flex flex-col items-center relative overflow-x-hidden font-serif selection:bg-[#4a2e1b] selection:text-[#fff6e5] pb-24">
@@ -255,7 +384,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
             </div>
             <div className="text-right">
               <p className={`${inter.className} text-[10px] uppercase tracking-[0.2em] text-[#8c7c6c] mb-1`}>Goal</p>
-              <p className={`${playfair.className} text-xl text-[#a39687]`}>{targetHours}h 00m</p>
+              <p className={`${playfair.className} text-xl text-[#a39687]`}>{dailyTargetHours}h 00m</p>
             </div>
           </div>
 
@@ -270,7 +399,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
           </div>
 
           <div className="flex justify-between items-center text-[11px] text-[#8c7c6c]">
-            <span className={`${inter.className} uppercase tracking-wider`}>Monthly Arc: 42 / 240 hrs</span>
+            <span className={`${inter.className} uppercase tracking-wider`}>Monthly Arc: {monthlyHours} / {seasonTargetHours} hrs</span>
             <span className={`${playfair.className} italic text-[#d9a05b]`}>The hearth is lit.</span>
           </div>
         </motion.div>
@@ -288,23 +417,71 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
           </div>
 
           <div className="space-y-4">
-            {dynamicLogs.map((log, i) => (
-              <div key={i} className="flex items-center justify-between border-b border-[#261d18] pb-4 last:border-0 last:pb-0">
-                <div>
-                  <p className={`${inter.className} text-[10px] uppercase tracking-widest ${log.active ? 'text-[#d9a05b]' : 'text-[#8c7c6c]'} mb-1`}>
-                    <span className="font-bold text-[#b5a796]">{log.day}</span> &nbsp;•&nbsp; {log.date}
-                  </p>
-                  <p className={`${playfair.className} text-sm text-[#e8ded1]`}>
-                    {log.in} <span className="text-[#8c7c6c] mx-1">→</span> {log.out}
-                  </p>
+            {dynamicLogs.map((log: any, i: number) => {
+              const isExpanded = !!expandedDays[log.day];
+              return (
+                <div key={log.day || i} className="border-b border-[#261d18] pb-4 last:border-0 last:pb-0">
+                  <div 
+                    onClick={() => toggleDay(log.day)} 
+                    className="flex items-center justify-between cursor-pointer group select-none"
+                  >
+                    <div>
+                      <p className={`${inter.className} text-[10px] uppercase tracking-widest ${log.active ? 'text-[#d9a05b]' : 'text-[#8c7c6c]'} mb-1 flex items-center gap-2`}>
+                        <span className="font-bold text-[#b5a796]">{log.day}</span> &nbsp;•&nbsp; {log.date}
+                        {log.sessions && log.sessions.length > 1 && (
+                          <span className="text-[9px] px-1.5 py-0.5 bg-[#261d18] text-[#a39687] rounded border border-[#3d2f26] normal-case tracking-normal">
+                            {log.sessions.length} sessions
+                          </span>
+                        )}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <p className={`${playfair.className} text-sm text-[#e8ded1]`}>
+                          {log.in} <span className="text-[#8c7c6c] mx-1">→</span> {log.out}
+                        </p>
+                        <button 
+                          type="button" 
+                          onClick={(e) => { e.stopPropagation(); toggleDay(log.day); }}
+                          aria-label="Toggle sessions breakdown"
+                          className="text-[#8c7c6c] group-hover:text-[#d9a05b] transition-colors p-0.5"
+                        >
+                          <ChevronDown 
+                            size={14} 
+                            className={`transition-transform duration-200 ${isExpanded ? 'rotate-180 text-[#d9a05b]' : ''}`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className={`${playfair.className} text-lg ${log.active ? 'text-[#93c5fd]' : 'text-[#b5a796]'}`}>
+                        {log.duration}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Expandable session breakdown */}
+                  {isExpanded && log.sessions && (
+                    <motion.div 
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="mt-3 pt-3 border-t border-[#261d18]/70 space-y-2 pl-2"
+                    >
+                      {log.sessions.map((sess: any, sIdx: number) => (
+                        <div key={sIdx} className="flex items-center justify-between text-xs text-[#a39687]">
+                          <div className="flex items-center gap-2 font-mono">
+                            <span className="text-[10px] text-[#6e5d4f]">#{sIdx + 1}</span>
+                            <span className="text-[#d8cdbf]">{sess.inStr}</span>
+                            <span className="text-[#6e5d4f]">→</span>
+                            <span className="text-[#d8cdbf]">{sess.outStr}</span>
+                          </div>
+                          <span className="font-mono text-[11px] text-[#d9a05b] font-medium">{sess.durationStr}</span>
+                        </div>
+                      ))}
+                    </motion.div>
+                  )}
                 </div>
-                <div className="text-right">
-                  <span className={`${playfair.className} text-lg ${log.active ? 'text-[#93c5fd]' : 'text-[#b5a796]'}`}>
-                    {log.duration}
-                  </span>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           
           <button onClick={() => window.location.href = '/student/profile'} className={`${inter.className} w-full mt-4 py-3 text-[10px] uppercase tracking-widest text-[#8c7c6c] hover:text-[#d9a05b] transition-colors border border-transparent hover:border-[#4a3b32]`}>
