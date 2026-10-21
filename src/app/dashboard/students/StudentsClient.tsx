@@ -1114,17 +1114,22 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                       statusBadge = <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-destructive/10 text-destructive">INACTIVE</span>;
                     } else if (booking.status === 'CANCELLED') {
                       statusBadge = (
-                        <div className="flex flex-col gap-1 items-start">
-                          <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-muted text-muted-foreground">REVOKED</span>
+                        <div className="inline-flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-rose-50 text-rose-600 border border-rose-200/60">
+                            REVOKED
+                          </span>
                           {booking.revokedReason && (
                             <span 
-                              className="text-[10px] text-muted-foreground max-w-[120px] truncate cursor-pointer hover:underline" 
-                              onClick={() => {
+                              className="text-[11px] font-medium text-slate-700 bg-slate-100 hover:bg-slate-200/80 border border-slate-200 px-2 py-0.5 rounded-md cursor-pointer transition-colors inline-flex items-center gap-1 shadow-sm" 
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 setViewReason(booking.revokedReason ?? "");
                                 setReasonModalOpen(true);
                               }}
+                              title="Click to view full reason"
                             >
-                              Reason: {booking.revokedReason}
+                              <span className="font-semibold text-slate-500">Reason:</span>
+                              <span className="italic text-slate-800 max-w-[200px] truncate">&ldquo;{booking.revokedReason}&rdquo;</span>
                             </span>
                           )}
                         </div>
@@ -1188,8 +1193,9 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                             )}
                           </div>
 
-                          <div className="flex flex-col gap-1">
-                            <div className="flex items-center gap-2">
+                          <div className="flex flex-col gap-1.5">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {statusBadge}
                               {assignedSeat ? (
                                 <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50/80 px-2.5 py-1 rounded-md border border-emerald-100/50">Seat {assignedSeat.name}{booking.hasLocker ? " + Locker" : ""}</span>
                               ) : (
@@ -1407,7 +1413,26 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                     if (isExpired) {
                       statusBadge = <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-destructive/10 text-destructive border border-destructive/20">INACTIVE</span>;
                     } else if (booking.status === 'CANCELLED') {
-                      statusBadge = <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200">REVOKED</span>;
+                      statusBadge = (
+                        <div className="inline-flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-600 border border-rose-200">
+                            REVOKED
+                          </span>
+                          {booking.revokedReason && (
+                            <span 
+                              className="text-[10px] font-medium text-slate-700 bg-slate-100 hover:bg-slate-200/80 px-1.5 py-0.5 rounded cursor-pointer transition-colors max-w-[130px] truncate"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setViewReason(booking.revokedReason ?? "");
+                                setReasonModalOpen(true);
+                              }}
+                              title="Click to view full reason"
+                            >
+                              <span className="font-semibold text-slate-500">Reason:</span> &ldquo;{booking.revokedReason}&rdquo;
+                            </span>
+                          )}
+                        </div>
+                      );
                     } else if (booking.status === 'CONFIRMED') {
                       if (booking.isPaused) {
                         statusBadge = <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200">PAUSED</span>;
