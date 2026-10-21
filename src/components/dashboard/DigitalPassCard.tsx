@@ -118,7 +118,7 @@ export function DigitalPassCard({ student, currentStreak, libraryId, studentId, 
             </AccessQRModal>
           </div>
 
-          <BluetoothUnlockButton libraryId={libraryId} />
+          <BluetoothUnlockButton libraryId={libraryId} isCheckedIn={isCheckedIn} studentId={studentId} />
 
         </div>
       </div>

@@ -139,16 +139,21 @@ export async function generateProvisioningQR(libraryId: string, ssid: string, pa
     return { error: "Unauthorized" };
   }
 
-  // Verify the user is the librarian or admin of this library
-  const library = await prisma.library.findFirst({
-    where: {
-      id: libraryId,
-      OR: [
-        { librarianId: session.userId },
-        { staff: { some: { id: session.userId } } }
-      ]
-    }
-  });
+  // Verify the user is the librarian, staff, or system admin
+  let library = null;
+  if (session.role === "ADMIN") {
+    library = await prisma.library.findUnique({ where: { id: libraryId } });
+  } else {
+    library = await prisma.library.findFirst({
+      where: {
+        id: libraryId,
+        OR: [
+          { librarianId: session.userId },
+          { staff: { some: { id: session.userId } } }
+        ]
+      }
+    });
+  }
 
   if (!library) {
     return { error: "Unauthorized: You do not have permission to provision hardware for this library." };

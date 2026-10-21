@@ -9,6 +9,9 @@ export type AttendanceIntent = {
   method: string;
   eventId?: string;
   relayId?: string;
+  timestamp?: Date;
+  authRevision?: number;
+  offlineDecision?: string;
 };
 
 export async function processAttendanceIntent(intent: AttendanceIntent) {
@@ -28,10 +31,22 @@ export async function processAttendanceIntent(intent: AttendanceIntent) {
         logId: existingLog.id 
       };
     }
+
+    const existingEntry = await prisma.entryLog.findUnique({
+      where: { eventId },
+      select: { status: true, reason: true }
+    });
+    if (existingEntry && existingEntry.status === "DENIED") {
+      return {
+        success: false,
+        error: existingEntry.reason || "ALREADY_PROCESSED_DENIED",
+        code: "ALREADY_PROCESSED_DENIED"
+      };
+    }
   }
 
   // 2. Eligibility / Active Booking
-  const now = new Date();
+  const now = intent.timestamp || new Date();
   const activeBooking = await prisma.booking.findFirst({
     where: {
       studentId,
@@ -45,16 +60,34 @@ export async function processAttendanceIntent(intent: AttendanceIntent) {
 
   if (!activeBooking) {
     // Log denied entry
-    await prisma.entryLog.create({
-      data: {
-        libraryId,
-        userId: studentId,
-        doorId,
-        timestamp: now,
-        status: "DENIED",
-        reason: "Access Denied: No active plan at this time."
+    if (eventId) {
+      try {
+        await prisma.entryLog.create({
+          data: {
+            libraryId,
+            userId: studentId,
+            doorId,
+            timestamp: now,
+            status: "DENIED",
+            reason: "Access Denied: No active plan at this time.",
+            eventId
+          }
+        });
+      } catch (e: any) {
+        if (e.code !== 'P2002') throw e;
       }
-    });
+    } else {
+      await prisma.entryLog.create({
+        data: {
+          libraryId,
+          userId: studentId,
+          doorId,
+          timestamp: now,
+          status: "DENIED",
+          reason: "Access Denied: No active plan at this time."
+        }
+      });
+    }
     return { success: false, error: "Access Denied: No active plan at this time.", code: "NO_ACTIVE_PLAN" };
   }
 
@@ -104,7 +137,8 @@ export async function processAttendanceIntent(intent: AttendanceIntent) {
           doorId,
           timestamp,
           status: action === "CHECK_IN" ? "IN" : "OUT",
-          reason: method
+          reason: method,
+          eventId: eventId ? eventId : undefined
         }
       });
 
@@ -114,11 +148,13 @@ export async function processAttendanceIntent(intent: AttendanceIntent) {
           eventId: logicalEventId,
           checkinLogId: newCheckinLog.id,
           studentId: studentId,
+          type: "REALTIME",
           payload: JSON.parse(JSON.stringify({
             status: action,
             timestamp: timestamp.toISOString(),
             libraryId,
             logId: newCheckinLog.id,
+            doorId,
             method
           }))
         }
@@ -189,6 +225,18 @@ export async function processAttendanceIntent(intent: AttendanceIntent) {
           status: originalLog.status, 
           message: "ALREADY_PROCESSED",
           logId: originalLog.id 
+        };
+      }
+      
+      const originalEntry = await prisma.entryLog.findUnique({
+        where: { eventId: eventId! },
+        select: { status: true, reason: true }
+      });
+      if (originalEntry && originalEntry.status === "DENIED") {
+        return {
+          success: false,
+          error: originalEntry.reason || "ALREADY_PROCESSED_DENIED",
+          code: "ALREADY_PROCESSED_DENIED"
         };
       }
     }

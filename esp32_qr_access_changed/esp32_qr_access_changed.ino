@@ -4,7 +4,7 @@
 #include <WiFi.h>
 #include <Preferences.h>
 #include <SPI.h>
-#include <MFRC522.h>
+#include <Adafruit_PN532.h>
 #include "config.h"
 #include "SecurityManager.h"
 #include "LogManager.h"
@@ -17,7 +17,9 @@ SecurityManager securityManager;
 LogManager logManager;
 HardwareController hwController;
 Preferences preferences;
-MFRC522 mfrc522(RFID_SS_PIN, RFID_RST_PIN);
+
+// PN532 Hardware SPI instantiation (Faster, required for strict Mifare timing)
+Adafruit_PN532 nfc(RFID_SS_PIN);
 
 String qrBuffer = "";
 unsigned long lastCachePurge = 0;
@@ -99,26 +101,34 @@ void setup() {
     delay(500);
 
     logManager.init();
-    hwController.showMessage(" Log Sys: [\x01] ", "", 0);
+    hwController.showMessage(" Log Sys: [OK] ", "", 0);
     delay(500);
 
     securityManager.init();
-    hwController.showMessage(" Security: [\x01] ", "", 0);
+    hwController.showMessage(" Security: [OK] ", "", 0);
     delay(500);
 
     loadState(); // Load persisted user states
-    hwController.showMessage(" States: [\x01] ", "", 0);
+    hwController.showMessage(" States: [OK] ", "", 0);
     delay(500);
 
-    // Initialize SPI and RFID
+    // Initialize RFID (Hardware SPI)
     SPI.begin();
-    mfrc522.PCD_Init();
-    hwController.showMessage(" RFID: [\x01] ", "", 0);
+    nfc.begin();
+    uint32_t versiondata = nfc.getFirmwareVersion();
+    if (!versiondata) {
+      Serial.println("Didn't find PN53x board");
+      hwController.showMessage(" RFID: ERROR ", "", 0);
+    } else {
+      hwController.showMessage(" RFID: [OK] ", "", 0);
+      nfc.setPassiveActivationRetries(0x0A); // Give white cards more retries to energize
+      nfc.SAMConfig();
+    }
     delay(500);
 
     // Initialize Scanner Serial
     ScannerSerial.begin(9600, SERIAL_8N1, QR_RX_PIN, QR_TX_PIN);
-    hwController.showMessage(" Scanner: [\x01] ", "", 0);
+    hwController.showMessage(" Scanner: [OK] ", "", 0);
     delay(500);
 
     // Read WiFi credentials from NVS
@@ -165,10 +175,10 @@ void setup() {
             hwController.showMessage(" WiFi Offline ", " Scanner Ready ", 2000);
             delay(2000);
             // DO NOT restart here, let it proceed to loop() so user can scan PROVISION QR!
-            hwController.showMessage(" All Set Up! [\x01]", " Ready to Scan! ", 3000);
+            hwController.showMessage(" All Set Up! [OK]", " Ready to Scan! ", 3000);
         } else {
             Serial.println("\nConnected to WiFi!");
-            hwController.showMessage(" WiFi: [\x01] ", " IP Assigned ", 1000);
+            hwController.showMessage(" WiFi: [OK] ", " IP Assigned ", 1000);
             Serial.print("IP Address: ");
             Serial.println(WiFi.localIP());
             delay(1000);
@@ -193,7 +203,7 @@ void setup() {
                     }
                 } else {
                     Serial.println(&timeinfo, "Time synced: %A, %B %d %Y %H:%M:%S");
-                    hwController.showMessage(" NTP Sync: [\x01] ", "", 1000);
+                    hwController.showMessage(" NTP Sync: [OK] ", "", 1000);
                     ntpSynced = true;
                 }
             }
@@ -205,7 +215,7 @@ void setup() {
         if (finalTime < 1000000000) {
             hwController.showMessage(" Clock Not Set! ", " Admin QR Only! ", 3000);
         } else {
-            hwController.showMessage(" All Set Up! [\x01]", " Ready to Scan! ", 3000);
+            hwController.showMessage(" All Set Up! [OK]", " Ready to Scan! ", 3000);
         }
     }
 }
@@ -291,11 +301,14 @@ void loop() {
     }
 
     // 3. Read from RFID
-    if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial()) {
+    uint8_t uid[] = {0,0,0,0,0,0,0};
+    uint8_t uidLength;
+    
+    if (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 100)) {
         String uidStr = "";
-        for (byte i = 0; i < mfrc522.uid.size; i++) {
-            uidStr += String(mfrc522.uid.uidByte[i] < 0x10 ? "0" : "");
-            uidStr += String(mfrc522.uid.uidByte[i], HEX);
+        for (uint8_t i = 0; i < uidLength; i++) {
+            uidStr += String(uid[i] < 0x10 ? "0" : "");
+            uidStr += String(uid[i], HEX);
         }
         uidStr.toUpperCase();
         
@@ -334,9 +347,6 @@ void loop() {
             hwController.showMessage(" Access Denied! ", "Unknown: " + uidStr, 4000);
             logManager.addLog(uidStr, String(DOOR_ID), now, "DENIED", "Unknown RFID");
         }
-        
-        mfrc522.PICC_HaltA();
-        mfrc522.PCD_StopCrypto1();
     }
 
     // 4. Periodic Background Tasks

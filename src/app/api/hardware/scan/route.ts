@@ -23,7 +23,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Malformed JSON" }, { status: 400 });
     }
 
-    const { eventId, readerId, scanType, payload } = body;
+    const { eventId, readerId, scanType, payload, timestampUnix, authRevision, offlineDecision, isExit } = body;
+    const hardwareTimestamp = timestampUnix ? new Date(timestampUnix * 1000) : undefined;
+    if (timestampUnix) {
+      const nowUnix = Math.floor(Date.now() / 1000);
+      if (timestampUnix > nowUnix + 300) {
+        return NextResponse.json({ error: "Timestamp too far in future" }, { status: 400 });
+      }
+    }
+
 
     if (!eventId || !readerId || !scanType || !payload) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
@@ -62,21 +70,56 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ status: "DENY", message: "INVALID QR" }, { status: 200 });
       }
     } else if (scanType.toUpperCase() === "RFID") {
-      const user = await prisma.user.findUnique({
+      let user = await prisma.user.findUnique({
         where: { rfidTag: payload }
       });
       if (!user) {
-        // Log unknown card so it appears in dashboard!
-        await prisma.entryLog.create({
-          data: {
-            libraryId,
-            doorId: readerId,
-            timestamp: new Date(),
-            status: "DENIED",
-            reason: `Unregistered RFID: ${payload}`
+        // Fallback: match normalized (strip colons/spaces/dashes, case-insensitive)
+        const cleanPayload = payload.replace(/[:\s-]/g, '').toUpperCase();
+        if (/^[0-9A-F]{4,32}$/.test(cleanPayload)) {
+          const colonSeparated = cleanPayload.length % 2 === 0 ? cleanPayload.match(/.{1,2}/g)?.join(':') : null;
+          const matchingUsers = await prisma.user.findMany({
+            where: {
+              OR: [
+                { rfidTag: { equals: cleanPayload, mode: 'insensitive' } },
+                ...(colonSeparated ? [{ rfidTag: { equals: colonSeparated, mode: 'insensitive' as const } }] : [])
+              ]
+            },
+            take: 2
+          });
+          if (matchingUsers.length === 1) {
+            user = matchingUsers[0];
+          } else if (matchingUsers.length > 1) {
+            // Ambiguity rejection: multiple candidate users match normalized tag
+            return NextResponse.json({ status: "DENY", message: "AMBIGUOUS CARD" }, { status: 200 });
           }
-        });
+        }
+      }
+      if (!user) {
+        // Log unknown card so it appears in dashboard!
+        try {
+          await prisma.entryLog.create({
+            data: {
+              libraryId,
+              doorId: readerId,
+              timestamp: new Date(),
+              status: "DENIED",
+              reason: `Unregistered RFID: ${payload}`,
+              eventId
+            }
+          });
+        } catch (e: any) {
+          if (e.code !== 'P2002') throw e;
+        }
         return NextResponse.json({ status: "DENY", message: "UNKNOWN CARD" }, { status: 200 });
+      }
+      studentId = user.id;
+      } else if (scanType.toUpperCase() === "BLE") {
+      const user = await prisma.user.findUnique({
+        where: { id: payload }
+      });
+      if (!user) {
+        return NextResponse.json({ status: "DENY", message: "UNKNOWN USER" }, { status: 200 });
       }
       studentId = user.id;
     } else {
@@ -96,7 +139,10 @@ export async function POST(request: NextRequest) {
     });
     
     const isInside = lastLog?.status === "CHECK_IN";
-    const intendedAction = isInside ? "CHECK_OUT" : "CHECK_IN";
+    let intendedAction: "CHECK_IN" | "CHECK_OUT" = isInside ? "CHECK_OUT" : "CHECK_IN";
+    if (typeof isExit === 'boolean') {
+      intendedAction = isExit ? "CHECK_OUT" : "CHECK_IN";
+    }
 
     // 6. Execute atomic, idempotent business transaction
     const result = await processAttendanceIntent({
@@ -106,7 +152,10 @@ export async function POST(request: NextRequest) {
       action: intendedAction,
       method: scanType,
       eventId,
-      relayId: relay.id
+      relayId: relay.id,
+      timestamp: hardwareTimestamp,
+      authRevision,
+      offlineDecision
     });
 
     // 7. Format response matching ESP32 contract perfectly
@@ -126,6 +175,7 @@ export async function POST(request: NextRequest) {
       if (result.code === "NO_ACTIVE_PLAN") denyMsg = "NO ACTIVE PLAN";
       if (result.code === "ALREADY_CHECKED_IN") denyMsg = "ALREADY IN";
       if (result.code === "ALREADY_CHECKED_OUT") denyMsg = "ALREADY OUT";
+      if (result.code === "ALREADY_PROCESSED_DENIED") denyMsg = "ACCESS DENIED"; // Preserve original reason ideally, but this is safe
       
       return NextResponse.json({
         status: "DENY",

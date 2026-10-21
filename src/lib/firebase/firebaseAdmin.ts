@@ -8,13 +8,17 @@ if (!getApps().length) {
   const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
 
   if (projectId && clientEmail && privateKey) {
-    initializeApp({
-      credential: cert({
-        projectId,
-        clientEmail,
-        privateKey,
-      }),
-    });
+    try {
+      initializeApp({
+        credential: cert({
+          projectId,
+          clientEmail,
+          privateKey,
+        }),
+      });
+    } catch (err) {
+      console.warn("Firebase Admin SDK failed to initialize with provided credentials:", err);
+    }
   } else {
     console.warn("Firebase Admin SDK not initialized. Missing environment variables.");
   }

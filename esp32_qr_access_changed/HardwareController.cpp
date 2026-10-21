@@ -9,22 +9,17 @@ void HardwareController::init() {
     pinMode(RELAY_PIN, OUTPUT);
     digitalWrite(RELAY_PIN, LOW); // Assume active HIGH relay
     
-    // Initialize LCD
+    // Initialize LCD (Added delay to let the LCD controller power up properly)
+    delay(100);
     Wire.begin(LCD_SDA_PIN, LCD_SCL_PIN);
+    Wire.setClock(100000); // Force 100kHz standard mode to prevent gibberish characters
+    delay(50);
     lcd.init();
+    delay(50);
     lcd.backlight();
-    
-    byte tickChar[8] = {
-      0b00000,
-      0b00000,
-      0b00001,
-      0b00010,
-      0b10100,
-      0b01000,
-      0b00000,
-      0b00000
-    };
-    lcd.createChar(1, tickChar);
+    delay(50);
+    lcd.clear();
+    delay(50);
 }
 
 void HardwareController::unlockDoor() {
