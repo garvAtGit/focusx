@@ -25,10 +25,15 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     },
   ];
 
-  const libraries = await prisma.library.findMany({
-    where: { kycStatus: 'APPROVED' },
-    select: { id: true, city: true, locality: true, updatedAt: true }
-  });
+  let libraries: Array<{ id: string; city: string | null; locality: string | null; updatedAt: Date }> = [];
+  try {
+    libraries = await prisma.library.findMany({
+      where: { kycStatus: 'APPROVED' },
+      select: { id: true, city: true, locality: true, updatedAt: true }
+    });
+  } catch (e) {
+    console.warn("Failed to fetch libraries for sitemap during build:", e);
+  }
 
   const libraryRoutes = libraries.map((lib) => ({
     url: `${baseUrl}/library/${lib.id}`,

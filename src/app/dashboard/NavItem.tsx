@@ -16,6 +16,7 @@ export function NavItem({ href, onClick, icon, children }: { href: string, onCli
     <Link 
       href={href} 
       onClick={onClick}
+      prefetch={true}
       className={`flex items-center gap-3 px-4 py-2.5 rounded-lg font-medium transition-colors ${
         isActive 
           ? 'bg-primary/10 text-primary border border-primary/20 shadow-sm' 

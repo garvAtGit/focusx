@@ -38,9 +38,9 @@ export function AssignRFIDModal({ rfidTag, open, onOpenChange, onSuccess }: Assi
   const [newName, setNewName] = useState("");
   const [newGender, setNewGender] = useState("");
 
-  async function loadStudents() {
+  async function loadStudents(searchQuery?: string) {
     setLoading(true);
-    const result = await searchActiveStudents();
+    const result = await searchActiveStudents(searchQuery);
     if (result.success && result.students) {
       setStudents(result.students);
     } else {
@@ -51,13 +51,19 @@ export function AssignRFIDModal({ rfidTag, open, onOpenChange, onSuccess }: Assi
 
   useEffect(() => {
     if (!open) return;
-    const timer = window.setTimeout(() => {
-      setQrPayload(null);
-      setSearch("");
-      void loadStudents();
-    }, 0);
-    return () => window.clearTimeout(timer);
+    setQrPayload(null);
+    setSearch("");
+    void loadStudents();
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!search.trim()) return;
+    const timer = setTimeout(() => {
+      void loadStudents(search);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search, open]);
 
   const filtered = students.filter(s => 
     s.name?.toLowerCase().includes(search.toLowerCase()) || 

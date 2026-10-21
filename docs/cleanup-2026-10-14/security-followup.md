@@ -33,6 +33,6 @@ Retained Python REST/device utilities (`check_db.py`, `dump_key.py`, `patch_db.p
 2. Inspect provider access logs, service-account/database permissions and unexpected changes. This cleanup makes no claim about misuse.
 3. Replace retained hardcoded private credentials with explicitly required environment configuration in a controlled, locally validated change. Do not execute the tools against production as a test.
 4. Perform an approved secret scan across current source and history; plan coordinated history remediation separately if warranted. Never force-push/history-rewrite as part of this cleanup.
-5. Verify Vercel build/deployment exclusions in a safe preview before merge/push. All cleanup changes remain uncommitted.
+5. Verify Vercel build/deployment exclusions in a safe preview before any push or deployment. The cleanup and `origin/master` integration were committed locally after user authorization; no push was performed.
 
 Deleting working-tree files or fixing `.gitignore` does not erase secrets from historical commits, prior clones or prior tool output. No plaintext archive was created. Hashes in manifests describe whole source files and are not secret values.

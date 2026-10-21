@@ -1,6 +1,18 @@
 'use client'
 import { useState, useEffect, useRef } from "react";
-import { Plus, Trash2, Save, Undo2, Loader2, Lock, X } from "lucide-react";
+import { Plus, Trash2, Save, Undo2, Loader2, Lock, X, Layers } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import toast from "react-hot-toast";
 import {
   saveSeatLayoutAndLockers,
   getSeatLayoutAndLockers,
@@ -39,6 +51,13 @@ export default function SeatsManagerPage() {
   
   const [seats, setSeats] = useState<SeatLayoutItem[]>([]);
   const [standaloneLockers, setStandaloneLockers] = useState<StandaloneLockerLayoutItem[]>([]);
+
+  // Bulk Lockers Modal States
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const [bulkPrefix, setBulkPrefix] = useState("L");
+  const [bulkStartNum, setBulkStartNum] = useState("1");
+  const [bulkCount, setBulkCount] = useState("10");
+  const [bulkPrice, setBulkPrice] = useState("");
   
   const [selectedSeatId, setSelectedSeatId] = useState<string | null>(null);
 
@@ -49,7 +68,7 @@ export default function SeatsManagerPage() {
   const [isPopupLoading, setIsPopupLoading] = useState(false);
   const [libraryId, setLibraryId] = useState<string>("");
   const [initialOccupied, setInitialOccupied] = useState<string[]>([]);
-  const { occupiedSeatIds: realtimeOccupiedSeatIds, occupantData } = useAdminRealtimeSeats(libraryId, initialOccupied);
+  const { occupiedSeatIds: realtimeOccupiedSeatIds, occupantData, unreservedLiveStudents } = useAdminRealtimeSeats(libraryId, initialOccupied);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
@@ -88,14 +107,38 @@ export default function SeatsManagerPage() {
     }
   };
 
-  const handlePreviewSeatClick = async (seat: LiveSeat) => {
+  const handlePreviewSeatClick = async (seat: LiveSeat, occupant?: any) => {
     if (seat.type === 'NON_RESERVABLE' || seat.type === 'EMPTY') return;
 
     setPopupSeatId(seat.id);
     setPopupSeatLabel(seat.name || seat.id);
     setPopupData(null);
 
-    if (!realtimeOccupiedSeatIds.includes(seat.id)) {
+    // If it's an unreserved live student dynamically placed on this seat:
+    if (occupant && !occupant.isReserved) {
+      setPopupData({
+        booking: {
+          endTime: occupant.endTime || new Date(Date.now() + 86400000).toISOString(),
+          student: {
+            id: occupant.studentId || '',
+            name: occupant.name,
+            phone: occupant.phone || null,
+            profilePhotoUrl: occupant.profilePhotoUrl,
+          },
+          plan: {
+            name: occupant.planName || "Flexible Plan (Unreserved)"
+          }
+        },
+        latestCheckin: {
+          status: 'CHECK_IN',
+          timestamp: new Date().toISOString()
+        }
+      });
+      setIsPopupLoading(false);
+      return;
+    }
+
+    if (!realtimeOccupiedSeatIds.includes(seat.id) && !realtimeOccupiedSeatIds.includes(seat.name)) {
       // Seat is vacant, no need to fetch booking details
       return;
     }
@@ -242,6 +285,73 @@ export default function SeatsManagerPage() {
       );
       setSelectedSeatId(null);
     }
+  };
+
+  const getNextLockerNumber = (prefix: string) => {
+    let maxNum = 0;
+    const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`^${escaped}(\\d+)$`, 'i');
+    for (const l of standaloneLockers) {
+      const match = l.name.trim().match(regex);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (!isNaN(num) && num > maxNum) {
+          maxNum = num;
+        }
+      }
+    }
+    return maxNum > 0 ? (maxNum + 1).toString() : "1";
+  };
+
+  const handleOpenBulkModal = () => {
+    const nextStart = getNextLockerNumber(bulkPrefix);
+    setBulkStartNum(nextStart);
+
+    if (!bulkPrice && standaloneLockers.length > 0) {
+      const existingPrice = standaloneLockers.find(l => l.price && l.price.trim() !== "")?.price;
+      if (existingPrice) setBulkPrice(existingPrice);
+    }
+    setBulkModalOpen(true);
+  };
+
+  const handlePrefixChange = (newPrefix: string) => {
+    setBulkPrefix(newPrefix);
+    setBulkStartNum(getNextLockerNumber(newPrefix));
+  };
+
+  const handleBulkAdd = () => {
+    const count = parseInt(bulkCount, 10);
+    const start = parseInt(bulkStartNum, 10);
+    if (isNaN(count) || count <= 0) {
+      toast.error("Please enter a valid locker quantity (at least 1)");
+      return;
+    }
+    if (count > 200) {
+      toast.error("You can add up to 200 lockers at once");
+      return;
+    }
+    if (isNaN(start) || start < 0) {
+      toast.error("Please enter a valid starting number");
+      return;
+    }
+
+    const cleanPrice = bulkPrice.trim() !== "" ? Math.max(0, parseFloat(bulkPrice) || 0).toString() : "";
+    const now = Date.now();
+    const newLockers: StandaloneLockerLayoutItem[] = [];
+
+    for (let i = 0; i < count; i++) {
+      const num = start + i;
+      const name = `${bulkPrefix.trim()}${num}`;
+      newLockers.push({
+        id: `bulk-${now}-${i}-${Math.random().toString(36).substring(2, 7)}`,
+        name,
+        price: cleanPrice,
+      });
+    }
+
+    setStandaloneLockers([...standaloneLockers, ...newLockers]);
+    setBulkModalOpen(false);
+    toast.success(`Added ${newLockers.length} standalone lockers`);
   };
 
   const addStandaloneLocker = () => {
@@ -548,14 +658,34 @@ export default function SeatsManagerPage() {
 
       {/* Standalone Lockers Manager */}
       <div className="bg-card rounded-2xl border border-border p-6 shadow-sm">
-        <div className="flex justify-between items-center mb-6">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
           <div>
-            <h2 className="font-bold text-foreground text-xl">Standalone Lockers</h2>
-            <p className="text-sm text-muted-foreground">Add lockers that aren&apos;t attached to any specific seat.</p>
+            <div className="flex items-center gap-3">
+              <h2 className="font-bold text-foreground text-xl">Standalone Lockers</h2>
+              {standaloneLockers.length > 0 && (
+                <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                  {standaloneLockers.length} {standaloneLockers.length === 1 ? 'Locker' : 'Lockers'}
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground mt-0.5">Add lockers that aren&apos;t attached to any specific seat.</p>
           </div>
-          <button onClick={addStandaloneLocker} className="bg-muted text-foreground border border-border font-semibold px-4 py-2 rounded-lg text-sm hover:bg-muted/80 transition-colors flex items-center gap-2">
-            <Plus className="w-4 h-4" /> Add Locker
-          </button>
+          <div className="flex items-center gap-2">
+            <button 
+              type="button"
+              onClick={handleOpenBulkModal} 
+              className="bg-primary/10 text-primary border border-primary/20 font-semibold px-4 py-2 rounded-lg text-sm hover:bg-primary/20 transition-colors flex items-center gap-2"
+            >
+              <Layers className="w-4 h-4" /> Bulk Add Lockers
+            </button>
+            <button 
+              type="button"
+              onClick={addStandaloneLocker} 
+              className="bg-muted text-foreground border border-border font-semibold px-4 py-2 rounded-lg text-sm hover:bg-muted/80 transition-colors flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" /> Add Locker
+            </button>
+          </div>
         </div>
 
         {standaloneLockers.length === 0 ? (
@@ -612,6 +742,7 @@ export default function SeatsManagerPage() {
                 }}
                 occupiedSeatIds={realtimeOccupiedSeatIds} 
                 occupantData={occupantData}
+                unreservedLiveStudents={unreservedLiveStudents}
                 compactMode={false}
                 interactive={true}
                 adminMode={true}
@@ -723,6 +854,115 @@ export default function SeatsManagerPage() {
             </div>
           </div>
       )}
+
+      {/* Bulk Add Lockers Modal */}
+      <Dialog open={bulkModalOpen} onOpenChange={setBulkModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl font-bold">
+              <Layers className="w-5 h-5 text-primary" />
+              Bulk Add Lockers
+            </DialogTitle>
+            <DialogDescription>
+              Quickly generate multiple sequential lockers with custom prefix and pricing.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-3">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="bulk-prefix">Locker Prefix</Label>
+                <Input
+                  id="bulk-prefix"
+                  value={bulkPrefix}
+                  onChange={(e) => handlePrefixChange(e.target.value)}
+                  placeholder="e.g. L"
+                />
+                <p className="text-[11px] text-muted-foreground">e.g. &quot;L&quot; for L1, L2...</p>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="bulk-start">Starting Number</Label>
+                <Input
+                  id="bulk-start"
+                  type="number"
+                  min={1}
+                  value={bulkStartNum}
+                  onChange={(e) => setBulkStartNum(e.target.value)}
+                  placeholder="1"
+                />
+                <p className="text-[11px] text-muted-foreground">Auto-detected next number</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="bulk-count">Quantity to Add</Label>
+                <Input
+                  id="bulk-count"
+                  type="number"
+                  min={1}
+                  max={200}
+                  value={bulkCount}
+                  onChange={(e) => setBulkCount(e.target.value)}
+                  placeholder="10"
+                />
+                <p className="text-[11px] text-muted-foreground">Count of lockers to create</p>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="bulk-price">Daily Price (₹)</Label>
+                <Input
+                  id="bulk-price"
+                  type="number"
+                  min={0}
+                  value={bulkPrice}
+                  onChange={(e) => setBulkPrice(e.target.value)}
+                  placeholder="e.g. 50"
+                />
+                <p className="text-[11px] text-muted-foreground">Default price per locker</p>
+              </div>
+            </div>
+
+            {/* Live Preview Box */}
+            <div className="bg-muted/50 p-3.5 rounded-xl border border-border text-sm space-y-1.5">
+              <div className="font-semibold text-xs text-muted-foreground uppercase tracking-wider">Preview</div>
+              <div className="text-foreground font-medium text-sm flex items-center justify-between">
+                <span>
+                  Will generate <strong>{parseInt(bulkCount, 10) || 0}</strong> lockers:
+                </span>
+                {bulkPrice && parseFloat(bulkPrice) >= 0 && (
+                  <span className="text-xs bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold px-2 py-0.5 rounded">
+                    ₹{bulkPrice}/day
+                  </span>
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground font-mono bg-background/80 p-2 rounded-lg border border-border/50 truncate">
+                {(() => {
+                  const count = Math.min(200, Math.max(0, parseInt(bulkCount, 10) || 0));
+                  const start = parseInt(bulkStartNum, 10) || 1;
+                  if (count === 0) return "No lockers to generate";
+                  if (count <= 6) {
+                    return Array.from({ length: count }, (_, i) => `${bulkPrefix}${start + i}`).join(", ");
+                  }
+                  const firstThree = Array.from({ length: 3 }, (_, i) => `${bulkPrefix}${start + i}`).join(", ");
+                  const lastOne = `${bulkPrefix}${start + count - 1}`;
+                  return `${firstThree}, ... , ${lastOne}`;
+                })()}
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setBulkModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleBulkAdd} className="bg-primary text-primary-foreground font-bold">
+              Add {parseInt(bulkCount, 10) || 0} Lockers
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

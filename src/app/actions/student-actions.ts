@@ -14,6 +14,8 @@ import {
   revokeConfirmedBookings,
 } from "@/lib/booking-authority"
 import { invalidateLibraryRuntimeCache } from "@/lib/library-cache"
+import { invalidateStudentsCache } from "@/lib/student-cache"
+import { getActiveLibrary } from "@/lib/dashboard-utils"
 
 function isPrismaUniqueError(error: unknown, target?: string): boolean {
   if (
@@ -102,6 +104,15 @@ export async function assignUniqueIdToStudent(studentId: string) {
     where: { id: studentId },
     data: { uniqueId: newId }
   });
+
+  const studentBooking = await prisma.booking.findFirst({
+    where: { studentId },
+    select: { libraryId: true },
+    orderBy: { createdAt: "desc" },
+  });
+  if (studentBooking?.libraryId) {
+    await invalidateStudentsCache(studentBooking.libraryId);
+  }
 
   revalidatePath("/dashboard/students");
   return { success: true, uniqueId: newId };
@@ -488,27 +499,33 @@ export async function renewPlan(
   return { success: true };
 }
 
-export async function searchActiveStudents() {
+export async function searchActiveStudents(query?: string) {
   const session = await getSession();
   if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN' && session.role !== 'RECEPTIONIST')) {
     return { error: 'Unauthorized' };
   }
 
-  const libraryId = session.role === 'RECEPTIONIST' ? session.employerLibraryId : (
-    await prisma.library.findFirst({ where: session.role === 'ADMIN' ? {} : { librarianId: session.userId } })
-  )?.id;
-
-  if (!libraryId) return { error: 'Library not found' };
+  const library = await getActiveLibrary(session);
+  if (!library) return { error: 'Library not found' };
+  const libraryId = library.id;
 
   try {
+    const trimmed = query?.trim();
     const students = await prisma.user.findMany({
       where: {
         bookings: {
           some: {
             libraryId,
-            status: { in: ['CONFIRMED', 'PENDING_PAYMENT', 'COMPLETED'] }
           }
-        }
+        },
+        ...(trimmed ? {
+          OR: [
+            { name: { contains: trimmed, mode: 'insensitive' } },
+            { phone: { contains: trimmed, mode: 'insensitive' } },
+            { uniqueId: { contains: trimmed, mode: 'insensitive' } },
+            { rfidTag: { contains: trimmed, mode: 'insensitive' } },
+          ]
+        } : {})
       },
       select: {
         id: true,
@@ -517,15 +534,14 @@ export async function searchActiveStudents() {
         uniqueId: true,
         rfidTag: true,
         bookings: {
-          where: {
-            libraryId,
-            status: { in: ['CONFIRMED', 'PENDING_PAYMENT', 'COMPLETED'] }
-          },
+          where: { libraryId },
           orderBy: { endTime: 'desc' },
           take: 1,
           select: { endTime: true }
         }
-      }
+      },
+      orderBy: { name: 'asc' },
+      take: 200
     });
 
     return { success: true, students };
@@ -541,11 +557,9 @@ export async function getStudentProfile(studentId: string) {
     return { error: 'Unauthorized' };
   }
 
-  const libraryId = session.role === 'RECEPTIONIST' ? session.employerLibraryId : (
-    await prisma.library.findFirst({ where: session.role === 'ADMIN' ? {} : { librarianId: session.userId } })
-  )?.id;
-
-  if (!libraryId) return { error: 'Library not found' };
+  const library = await getActiveLibrary(session);
+  if (!library) return { error: 'Library not found' };
+  const libraryId = library.id;
 
   try {
     const student = await prisma.user.findUnique({
@@ -581,13 +595,20 @@ export async function createOfflineStudentWithRFID(libraryId: string, name: stri
     return { error: 'Unauthorized' };
   }
 
+  let effectiveLibId = libraryId;
+  if (!effectiveLibId) {
+    const activeLib = await getActiveLibrary(session);
+    if (!activeLib) return { error: 'Library not found' };
+    effectiveLibId = activeLib.id;
+  }
+
   if (session.role === 'RECEPTIONIST') {
-    if (!session.employerLibraryId || session.employerLibraryId !== libraryId) {
+    if (!session.employerLibraryId || session.employerLibraryId !== effectiveLibId) {
       return { error: 'Unauthorized' };
     }
   } else if (session.role === 'LIBRARIAN') {
     const controlled = await prisma.library.findFirst({
-      where: { id: libraryId, librarianId: session.userId }
+      where: { id: effectiveLibId, librarianId: session.userId }
     });
     if (!controlled) return { error: 'Unauthorized' };
   }
@@ -613,6 +634,28 @@ export async function createOfflineStudentWithRFID(libraryId: string, name: stri
       }
     });
 
+    // Create an initial active booking for the student in this library if a plan exists
+    const oneYearFromNow = new Date();
+    oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
+
+    const defaultPlan = await prisma.plan.findFirst({
+      where: { libraryId: effectiveLibId, isActive: true },
+      select: { id: true }
+    });
+
+    if (defaultPlan) {
+      await prisma.booking.create({
+        data: {
+          studentId: newStudent.id,
+          libraryId: effectiveLibId,
+          planId: defaultPlan.id,
+          status: 'CONFIRMED',
+          startTime: new Date(),
+          endTime: oneYearFromNow,
+        }
+      });
+    }
+
     // We successfully created the student and assigned the RFID.
     // Now we must generate the PROVISION hardware QR so the door scanner learns this new RFID.
     // ADD_RFID requires an expiration timestamp (0 means never expires for the scanner itself)
@@ -622,6 +665,10 @@ export async function createOfflineStudentWithRFID(libraryId: string, name: stri
     if (qrResult.error) {
       return { error: qrResult.error };
     }
+
+    await invalidateStudentsCache(effectiveLibId);
+    await invalidateLibraryRuntimeCache(effectiveLibId);
+    revalidatePath("/dashboard/students");
 
     return { success: true, student: newStudent, qrPayload: qrResult.qrPayload };
   } catch (error: unknown) {
@@ -793,6 +840,15 @@ export async function updateCrmNote(studentId: string, note: string, isExpiredLe
         ...(isExpiredLead !== undefined ? { isExpiredLead } : {})
       }
     });
+
+    const studentBooking = await prisma.booking.findFirst({
+      where: { studentId },
+      select: { libraryId: true },
+      orderBy: { createdAt: "desc" },
+    });
+    if (studentBooking?.libraryId) {
+      await invalidateStudentsCache(studentBooking.libraryId);
+    }
     
     revalidatePath("/dashboard/students");
     return { success: true };
@@ -830,6 +886,7 @@ export async function collectDues(bookingId: string, additionalCashPaise: number
       }
     });
 
+    await invalidateStudentsCache(booking.libraryId);
     revalidatePath("/dashboard/students");
     revalidatePath("/dashboard/financials");
     

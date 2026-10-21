@@ -14,6 +14,7 @@ import { amountMatches } from "@/lib/booking-pricing"
 import { loadBookingFacts } from "@/lib/booking-engine/server/server-fact-loader"
 import { evaluateBookingSelection } from "@/lib/booking-engine/evaluate-selection"
 import { endOfDayIST } from "@/lib/date-utils"
+import { invalidateStudentsCache } from "@/lib/student-cache"
 
 const ONLINE_HOLD_MINUTES = 20
 const MANUAL_HOLD_MINUTES = 24 * 60
@@ -1871,9 +1872,10 @@ export async function resumePausedBooking(
 
 export async function expireStaleBookingIntents(limit = 100): Promise<number> {
   const batchSize = Math.max(1, Math.min(limit, 500))
-  return serializable(async (tx) => {
-    const stale = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-      SELECT "id"
+  let affectedLibraries: string[] = []
+  const count = await serializable(async (tx) => {
+    const stale = await tx.$queryRaw<Array<{ id: string; libraryId: string }>>(Prisma.sql`
+      SELECT "id", "libraryId"
       FROM "BookingIntent"
       WHERE "status" IN (
         'HOLDING'::"BookingIntentStatus",
@@ -1888,6 +1890,8 @@ export async function expireStaleBookingIntents(limit = 100): Promise<number> {
     if (stale.length === 0) return 0
 
     const ids = stale.map(({ id }) => id)
+    affectedLibraries = Array.from(new Set(stale.map((s) => s.libraryId).filter(Boolean)))
+
     await tx.bookingIntent.updateMany({
       where: {
         id: { in: ids },
@@ -1914,4 +1918,10 @@ export async function expireStaleBookingIntents(limit = 100): Promise<number> {
     })
     return ids.length
   })
+
+  if (affectedLibraries.length > 0) {
+    await Promise.all(affectedLibraries.map((libId) => invalidateStudentsCache(libId)))
+  }
+
+  return count
 }

@@ -1,13 +1,20 @@
 import { useEffect, useState } from "react"
 
-type OccupantData = {
+export type AdminOccupantData = {
+  studentId?: string;
   name: string;
+  phone?: string | null;
   profilePhotoUrl: string | null;
+  isLiveInside?: boolean;
+  isReserved?: boolean;
+  planName?: string | null;
+  endTime?: string;
 }
 
 type AdminAvailabilityResponse = {
   occupiedSeatIds?: unknown
   occupantData?: unknown
+  unreservedLiveStudents?: unknown
 }
 
 export function useAdminRealtimeSeats(
@@ -17,7 +24,8 @@ export function useAdminRealtimeSeats(
   const [occupiedSeatIds, setOccupiedSeatIds] = useState<string[]>(
     initialOccupiedSeatIds,
   )
-  const [occupantData, setOccupantData] = useState<Record<string, OccupantData>>({})
+  const [occupantData, setOccupantData] = useState<Record<string, AdminOccupantData>>({})
+  const [unreservedLiveStudents, setUnreservedLiveStudents] = useState<AdminOccupantData[]>([])
 
   useEffect(() => {
     if (!libraryId) return
@@ -57,7 +65,10 @@ export function useAdminRealtimeSeats(
         ) {
           setOccupiedSeatIds(result.occupiedSeatIds)
           if (result.occupantData && typeof result.occupantData === 'object') {
-            setOccupantData(result.occupantData as Record<string, OccupantData>)
+            setOccupantData(result.occupantData as Record<string, AdminOccupantData>)
+          }
+          if (Array.isArray(result.unreservedLiveStudents)) {
+            setUnreservedLiveStudents(result.unreservedLiveStudents as AdminOccupantData[])
           }
         }
       } catch (error) {
@@ -76,5 +87,5 @@ export function useAdminRealtimeSeats(
     }
   }, [libraryId])
 
-  return { occupiedSeatIds, occupantData }
+  return { occupiedSeatIds, occupantData, unreservedLiveStudents }
 }

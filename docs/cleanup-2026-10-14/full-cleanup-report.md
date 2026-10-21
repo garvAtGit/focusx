@@ -1,12 +1,12 @@
 # FOCUSDESK complete repository cleanup - second pass
 
-**CLEANUP COMPLETED - VALIDATION PARTIAL.** Retired source patching workflows, unsupported firmware generations and historical debugging artifacts were removed. Supported application source and explicitly protected firmware remain intact. Remaining source/dependency candidates are documented as deferred; provider rotation and controlled remediation of retained credentials remain separate work. All changes are unstaged and uncommitted.
+**CLEANUP COMPLETED - VALIDATION PARTIAL.** Retired source patching workflows, unsupported firmware generations and historical debugging artifacts were removed. Supported application source and explicitly protected firmware remain intact. Remaining source/dependency candidates are documented as deferred; provider rotation and controlled remediation of retained credentials remain separate work. Sections 1–10 record the cleanup state before the later, user-authorized local commit and merge.
 
 ## 1. Baseline and continuation
 
 Original branch: `master`; current branch: `chore/focusdesk-safe-repository-cleanup`. Recovery/unchanged HEAD: `90c4b5a1700d3f5308086aa1f42f8f9dff5289ee`. Original inventory: 875 non-Git files, 302 root files, 861 tracked entries and 14 pre-existing untracked audit/PRD files. The continuation started with 873 non-Git files, including the three first-pass reports and five prior deletions.
 
-The first-pass `report.md`, `candidate-manifest.csv` and `baseline.json` are immutable historical evidence. Their conservative retention decisions have been reassessed under the new user-authorized retirement policy. All original untracked audit/PRD files remain byte-for-byte unchanged. No resets, stashes, broad cleans, force restores, commits or pushes were used.
+The first-pass `report.md`, `candidate-manifest.csv` and `baseline.json` are immutable historical evidence. Their conservative retention decisions have been reassessed under the new user-authorized retirement policy. All original untracked audit/PRD files remain byte-for-byte unchanged. During the cleanup assessment, no resets, stashes, broad cleans, force restores, commits or pushes were used.
 
 Versions declared by current package.json: Next 16.2.7, React 19.2.4, Prisma ^7.8.0 / client ^7.10.0. Node 22.20.0 and npm 11.2.0 are available. node_modules and Arduino tooling are absent. AGENTS.md/CLAUDE.md, both prior manifests/baselines, PRD/audit/architecture references and current package/deployment/Prisma/compiler/test entry points were read. No dependencies were installed.
 
@@ -166,7 +166,7 @@ All supported Next app, API, middleware, public/PWA assets, Prisma migration his
 
 ## 9. Final Git diff and recovery
 
-Expected tracked diff: 245 exact unstaged deletions and four reviewed modifications. Untracked additions: seven second-pass reports/manifests, alongside the existing 14 user documents and three first-pass artifacts. No staged changes; HEAD remains `90c4b5a1700d3f5308086aa1f42f8f9dff5289ee`. The deleted-path set was compared with the two manifests; retained-file hash checks exclude only the four reviewed paths.
+At second-pass completion, the tracked diff was 245 exact unstaged deletions and four reviewed modifications. Untracked additions were seven second-pass reports/manifests, alongside the existing 14 user documents and three first-pass artifacts. No changes were staged; HEAD was `90c4b5a1700d3f5308086aa1f42f8f9dff5289ee`. The deleted-path set was compared with the two manifests; retained-file hash checks exclude only the four reviewed paths.
 
 All deleted files are individually recoverable using the recorded exact path and source commit. Recovery instructions in the CSV require an absent destination; never broadly restore/reset or overwrite subsequent user work. Recovery proves source availability, not that removed firmware was deployed.
 
@@ -177,4 +177,8 @@ All deleted files are individually recoverable using the recorded exact path and
 - Verify active firmware compilation and hardware contracts when the Arduino toolchain is available; no physical device action was performed.
 - Confirm ongoing operational ownership of retained data-repair/admin/redelivery tools; no production repair status was inferred from filenames.
 
-CLEANUP COMPLETED - VALIDATION PARTIAL. All authorized categories were reviewed and the defensible retirement set was executed. Deferred files were retained individually while independent safe batches continued. Supported behavior is protected structurally; production runtime behavior remains unverified. No commit or push was made.
+CLEANUP COMPLETED - VALIDATION PARTIAL. All authorized categories were reviewed and the defensible retirement set was executed. Deferred files were retained individually while independent safe batches continued. Supported behavior is protected structurally; production runtime behavior remains unverified. No commit or push was made during this second-pass assessment.
+
+## 11. Later local integration (2026-10-21)
+
+After the user authorized a local commit and merge, the exact 245 deletions, four reviewed modifications and ten cleanup artifacts were committed as `63a533b` on `chore/focusdesk-safe-repository-cleanup`. The fetched `origin/master` at `98b3805` was then merged locally. The merge retained the retirement of the V1 sketch and the one-time `patch_firmware.py` despite remote edits to those files. The `.gitignore` resolution combines the remote transient-file patterns with the cleanup credential and diagnostic exclusions. The 14 pre-existing untracked audit/PRD files were not staged. No push was performed.

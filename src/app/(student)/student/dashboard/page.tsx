@@ -13,8 +13,8 @@ import { AccessQRModal } from "@/components/AccessQRModal";
 import { DigitalPassCard } from "@/components/dashboard/DigitalPassCard";
 import { StudentLeaderboard } from "@/components/dashboard/StudentLeaderboard";
 
-import { formatStandardDate, formatStandardDateTime } from "@/lib/date-utils";
-import { startOfDay, startOfWeek, startOfMonth, differenceInMinutes } from 'date-fns';
+import { formatStandardDate, formatStandardDateTime, startOfDayIST } from "@/lib/date-utils";
+import { startOfDay, startOfWeek, startOfMonth, subDays, differenceInMinutes } from "date-fns";
 import CozyWinterDashboard from "@/components/winter-arc/CozyWinterDashboard";
 
 const formatDate = (date: Date) => formatStandardDate(date);
@@ -38,13 +38,14 @@ export default async function StudentDashboardPage() {
     pledgeData = pledge;
 
     if (hasPledged) {
-      const todayStart = startOfDay(new Date());
-      const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 }); // Monday
+const todayStart = startOfDayIST(new Date());
+      const weekStart = subDays(todayStart, 6); // 7-day rolling window
       const monthStart = startOfMonth(new Date());
+      const fetchStart = weekStart < monthStart ? weekStart : monthStart;
       
       const allMonthLogs = await prisma.checkinLog.findMany({
-        where: { timestamp: { gte: monthStart } },
-        include: { student: { select: { name: true } } }
+where: { timestamp: { gte: fetchStart } },
+        include: { student: { select: { name: true, profilePhotoUrl: true } } }
       });
 
       const getTop = (logsArray: any[]) => {
@@ -92,7 +93,7 @@ export default async function StudentDashboardPage() {
           }));
       };
 
-      topScholars.month = getTop(allMonthLogs);
+      topScholars.month = getTop(allMonthLogs.filter(l => new Date(l.timestamp) >= monthStart));
       topScholars.week = getTop(allMonthLogs.filter(l => new Date(l.timestamp) >= weekStart));
       topScholars.today = getTop(allMonthLogs.filter(l => new Date(l.timestamp) >= todayStart));
     }

@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { Grid, Lock } from "lucide-react";
 import { toast } from "react-hot-toast";
@@ -13,6 +14,17 @@ export interface LiveSeat {
   hasLocker?: boolean;
 }
 
+export type LiveSeatOccupant = {
+  studentId?: string;
+  name: string;
+  phone?: string | null;
+  profilePhotoUrl: string | null;
+  isLiveInside?: boolean;
+  isReserved?: boolean;
+  planName?: string | null;
+  endTime?: string;
+};
+
 interface LiveSeatMapProps {
   library: {
     seats?: LiveSeat[] | null;
@@ -24,14 +36,15 @@ interface LiveSeatMapProps {
   adminMode?: boolean; // If true, all seats are clickable to view details
   selectedSeat?: Pick<LiveSeat, "id"> | null;
   selectedPlan?: unknown;
-  onSeatSelect?: (seat: LiveSeat) => void;
+  onSeatSelect?: (seat: LiveSeat, occupant?: LiveSeatOccupant | null) => void;
   compactMode?: boolean;
-  occupantData?: Record<string, { name: string; profilePhotoUrl: string | null }>;
+  occupantData?: Record<string, LiveSeatOccupant>;
+  unreservedLiveStudents?: LiveSeatOccupant[];
 }
 
 export default function LiveSeatMap({ 
   library, 
-  occupiedSeatIds, 
+  occupiedSeatIds = [], 
   targetSeatId,
   isFlexible,
   interactive = false,
@@ -39,16 +52,54 @@ export default function LiveSeatMap({
   selectedSeat,
   onSeatSelect,
   compactMode = false,
-  occupantData
+  occupantData,
+  unreservedLiveStudents = []
 }: LiveSeatMapProps) {
   
   const maxX = Math.max(...(library.seats?.map((seat) => seat.gridX) || [0]), 0);
   const maxY = Math.max(...(library.seats?.map((seat) => seat.gridY) || [0]), 0);
 
+  // Dynamically map unreserved live students to available unreserved seats
+  // Sequence: top row (Row A / lowest gridY) from left to right (lowest gridX), then next rows
+  const dynamicUnreservedMap = useMemo(() => {
+    if (!unreservedLiveStudents || unreservedLiveStudents.length === 0 || !library.seats) {
+      return new Map<string, LiveSeatOccupant>();
+    }
+
+    // Filter available unreserved seats:
+    // - Not EMPTY or NON_RESERVABLE
+    // - Not occupied by a reserved booking (neither in occupiedSeatIds nor occupantData)
+    const availableSeats = library.seats
+      .filter((seat) => {
+        if (!seat || seat.type === "EMPTY" || seat.type === "NON_RESERVABLE") return false;
+        if (occupiedSeatIds.includes(seat.id)) return false;
+        if (occupantData && (occupantData[seat.id] || occupantData[seat.name])) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        if (a.gridY !== b.gridY) return a.gridY - b.gridY;
+        return a.gridX - b.gridX;
+      });
+
+    const mapping = new Map<string, LiveSeatOccupant>();
+    unreservedLiveStudents.forEach((student, index) => {
+      if (index < availableSeats.length) {
+        mapping.set(availableSeats[index].id, student);
+      }
+    });
+
+    return mapping;
+  }, [library.seats, occupiedSeatIds, occupantData, unreservedLiveStudents]);
+
   const renderSeat = (seat: LiveSeat | null | undefined, emptyKey?: string | number) => {
     if (!seat || seat.type === 'EMPTY') return <div key={emptyKey || seat?.id} className="w-12 h-12 shrink-0"></div>;
 
-    const isOccupied = occupiedSeatIds.includes(seat.id);
+    const reservedOccupant = occupantData ? (occupantData[seat.id] || occupantData[seat.name]) : undefined;
+    const dynamicOccupant = dynamicUnreservedMap.get(seat.id);
+    const occupant = reservedOccupant || dynamicOccupant;
+
+    const isOccupied = Boolean(occupant) || occupiedSeatIds.includes(seat.id);
+    const isDynamicUnreserved = !reservedOccupant && Boolean(dynamicOccupant);
     const isSelected = selectedSeat?.id === seat.id;
     const isTarget = targetSeatId === seat.id;
     
@@ -66,17 +117,23 @@ export default function LiveSeatMap({
         seatClass = "bg-background border-border text-foreground opacity-50 cursor-pointer";
       }
     } else {
-      // Interactive mode (booking flow)
+      // Interactive mode (booking flow / admin view)
       const isDisabled = !adminMode && (isOccupied || seat.type === 'NON_RESERVABLE');
       
       if (isDisabled) {
         seatClass = "bg-muted border-border/50 text-muted-foreground opacity-50 cursor-not-allowed shadow-none";
       } else if (isSelected) {
-        seatClass = "bg-primary border-primary text-primary-foreground shadow-[2px_8px_0px_0px_rgba(0,0,0,0.2)] -translate-y-2";
+        seatClass = "bg-primary border-primary text-primary-foreground shadow-[2px_8px_0px_0px_rgba(0,0,0,0.2)] -translate-y-1";
+      } else if (occupant) {
+        if (occupant.isLiveInside) {
+          seatClass = "bg-card border-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.25)] hover:border-emerald-400 cursor-pointer";
+        } else {
+          seatClass = "bg-muted/40 border-border/60 hover:border-border cursor-pointer";
+        }
       } else if (seat.type === 'PREMIUM') {
-        seatClass = "bg-amber-50 border-amber-400 border-2 hover:border-amber-500 cursor-pointer text-amber-700 shadow-[2px_4px_0px_0px_rgba(251,191,36,0.2)] hover:shadow-[4px_8px_0px_0px_rgba(251,191,36,0.3)] hover:-translate-y-2";
+        seatClass = "bg-amber-50/70 border-amber-400 border-2 hover:border-amber-500 cursor-pointer text-amber-700 shadow-[2px_4px_0px_0px_rgba(251,191,36,0.2)] hover:shadow-[4px_8px_0px_0px_rgba(251,191,36,0.3)] hover:-translate-y-1";
       } else {
-        seatClass = "bg-background border-border hover:border-primary cursor-pointer text-foreground shadow-[2px_4px_0px_0px_rgba(0,0,0,0.1)] hover:shadow-[4px_8px_0px_0px_rgba(0,0,0,0.1)] hover:-translate-y-2";
+        seatClass = "bg-background border-border hover:border-primary cursor-pointer text-foreground shadow-[2px_4px_0px_0px_rgba(0,0,0,0.06)] hover:shadow-[3px_6px_0px_0px_rgba(0,0,0,0.1)] hover:-translate-y-1";
       }
     }
 
@@ -85,12 +142,16 @@ export default function LiveSeatMap({
         key={seat.id} 
         onClick={() => {
           if (adminMode && onSeatSelect) {
-            onSeatSelect(seat);
+            onSeatSelect(seat, occupant);
           } else if (interactive && !isOccupied && seat.type !== 'NON_RESERVABLE') {
-            if (onSeatSelect) onSeatSelect(seat);
+            if (onSeatSelect) onSeatSelect(seat, occupant);
           } else {
             if (isTarget) {
               toast(`This is your reserved seat (${seat.name})`, { icon: '🎯' });
+            } else if (occupant) {
+              toast(`${seat.name}: ${occupant.name} (${occupant.isLiveInside ? 'Live in library' : 'Away'})`, { 
+                icon: occupant.isLiveInside ? '🟢' : '⚪' 
+              });
             } else if (isOccupied) {
               toast(`Seat ${seat.name} is currently occupied by a student`, { icon: '👤' });
             } else if (seat.type === 'NON_RESERVABLE') {
@@ -104,27 +165,59 @@ export default function LiveSeatMap({
             }
           }
         }}
-        className={`relative w-12 h-12 rounded-lg border-2 flex items-center justify-center font-bold text-xs transition-all duration-300 shrink-0 ${seatClass}`}
+        className={`relative w-12 h-12 rounded-xl border-2 flex items-center justify-center font-bold text-xs transition-all duration-300 shrink-0 select-none ${seatClass}`}
+        title={occupant ? `${occupant.name} (${occupant.isLiveInside ? 'Live inside' : 'Away'})` : seat.name}
       >
-        {isOccupied && occupantData && occupantData[seat.id] ? (
-          <div className="w-full h-full rounded-[inherit] overflow-hidden">
-            {occupantData[seat.id].profilePhotoUrl ? (
+        {occupant ? (
+          <div className="relative w-full h-full rounded-[inherit] overflow-hidden">
+            {occupant.profilePhotoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={occupantData[seat.id].profilePhotoUrl!} alt="avatar" className="w-full h-full object-cover" />
+              <img 
+                src={occupant.profilePhotoUrl} 
+                alt={occupant.name} 
+                className={`w-full h-full object-cover select-none transition-all duration-300 ${
+                  occupant.isLiveInside ? 'opacity-100' : 'opacity-40 grayscale contrast-125'
+                }`}
+              />
             ) : (
-              <div className="w-full h-full bg-primary/20 flex items-center justify-center text-primary font-bold text-lg">
-                {occupantData[seat.id].name.charAt(0)}
+              <div className={`w-full h-full flex items-center justify-center font-bold text-base select-none transition-all duration-300 ${
+                occupant.isLiveInside 
+                  ? 'bg-primary/20 text-primary' 
+                  : 'bg-muted text-muted-foreground opacity-40'
+              }`}>
+                {occupant.name.charAt(0).toUpperCase()}
+              </div>
+            )}
+
+            {/* Live indicator dot */}
+            {occupant.isLiveInside ? (
+              <span 
+                className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-background shadow-[0_0_8px_rgba(16,185,129,0.9)] animate-pulse z-20 pointer-events-none" 
+                title={`${occupant.name} is currently live in the library`}
+              />
+            ) : (
+              <span 
+                className="absolute top-1 right-1 w-2 h-2 rounded-full bg-zinc-400 ring-1 ring-background opacity-60 z-20 pointer-events-none" 
+                title={`${occupant.name} is currently outside`}
+              />
+            )}
+
+            {/* Seat Number Rule: Show seat no. ONLY for reserved seats; HIDE for dynamically assigned unreserved seats */}
+            {!isDynamicUnreserved && (
+              <div className="absolute bottom-0.5 inset-x-0.5 py-0.5 bg-black/75 backdrop-blur-xs text-[8px] leading-tight font-black text-white rounded text-center tracking-tight truncate z-20 shadow-xs pointer-events-none">
+                {seat.name}
               </div>
             )}
           </div>
         ) : (
-          <div className="absolute inset-0 flex items-center justify-center">
+          /* Empty / vacant seat: display seat number normally */
+          <div className="absolute inset-0 flex items-center justify-center font-bold text-xs select-none">
             {seat.name}
           </div>
         )}
         
         {seat.hasLocker && (
-          <div className="absolute -top-3 -right-2 bg-foreground text-background p-0.5 rounded-full shadow-lg z-10">
+          <div className="absolute -top-1.5 -left-1.5 bg-foreground text-background p-0.5 rounded-full shadow-md z-30 pointer-events-none">
             <Lock className="w-2.5 h-2.5" />
           </div>
         )}
@@ -134,7 +227,7 @@ export default function LiveSeatMap({
 
   return (
     <div className="bg-muted/30 border border-border rounded-2xl p-0 overflow-hidden relative">
-      <div className="absolute top-2 right-2 z-10 bg-background/80 backdrop-blur-sm text-[10px] text-muted-foreground px-2 py-1 rounded-full border border-border font-bold flex items-center gap-1">
+      <div className="absolute top-2 right-2 z-10 bg-background/80 backdrop-blur-sm text-[10px] text-muted-foreground px-2 py-1 rounded-full border border-border font-bold flex items-center gap-1 shadow-xs">
         <Grid className="w-3 h-3" /> Pinch to Zoom
       </div>
       <TransformWrapper

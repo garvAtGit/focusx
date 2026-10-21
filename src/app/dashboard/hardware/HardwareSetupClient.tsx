@@ -124,10 +124,33 @@ export default function HardwareSetupClient({ libraryId, initialHardware }: { li
                   </div>
                   <div>
                     <h4 className="font-semibold text-slate-800">FocusX ESP32 Reader</h4>
-                    <div className="flex items-center gap-3 mt-1 text-sm text-slate-500 font-mono">
+                    <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-slate-500 font-mono">
                       <span>MAC: {hw.macAddress}</span>
                       <span className="w-1 h-1 rounded-full bg-slate-300"></span>
                       <span>BLE ID: {hw.bleReaderId || 'N/A'}</span>
+                      {hw.currentAuthRevision && (
+                        <>
+                          <span className="w-1 h-1 rounded-full bg-slate-300"></span>
+                          <span className="text-teal-700 font-medium">Snapshot: Rev {hw.currentAuthRevision}</span>
+                        </>
+                      )}
+                      {hw.freeFlashBytes && (
+                        <>
+                          <span className="w-1 h-1 rounded-full bg-slate-300"></span>
+                          <span>Storage: {Math.round(hw.freeFlashBytes / 1024)} KB free</span>
+                        </>
+                      )}
+                    </div>
+                    {/* Subsystem Health Indicators */}
+                    <div className="flex items-center gap-2 mt-2">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium ${
+                        hw.clockState === '1' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
+                      }`}>
+                        {hw.clockState === '1' ? '✓ NTP Clock Synced' : '⚠ Clock Sync Pending'}
+                      </span>
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
+                        {hw.pendingEventsCount === 0 ? '✓ Outbox Clean (0 queued)' : `⟳ ${hw.pendingEventsCount} queued`}
+                      </span>
                     </div>
                   </div>
                 </div>

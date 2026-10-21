@@ -12,7 +12,7 @@ Production behavior has not been verified. Static checks do not prove live datab
 | JavaScript syntax | PASSED | node --check parsed 23 retained JS/MJS files; no module was executed; dependencies are not required by this parser check. |
 | Python syntax | PASSED | AST parsing of 7 retained Python utilities; no script executed. |
 | Ignore rules | PASSED | Secret/generated rules match; no NUL bytes; git check-ignore --no-index found none of 504 retained source/test/schema/asset/document paths ignored. |
-| Git diff | PASSED | Expected deletions and four known modifications only; git diff --check passes; branch/HEAD unchanged; no staged changes. |
+| Git diff at second-pass completion | PASSED | Expected deletions and four known modifications only; git diff --check passed; branch/HEAD unchanged at that point; no staged changes at that point. |
 | TypeScript | NOT RUN - unavailable | No locally installed TypeScript/node_modules. No npx installation attempted. |
 | ESLint | NOT RUN - unavailable | No installed ESLint/node_modules; no auto-fix attempted. |
 | Next build | NOT RUN - unavailable | No installed Next/Prisma/dependencies. Build lifecycle includes prisma generate then next build; neither ran. |
@@ -69,6 +69,6 @@ Retained JS/Python files are unchanged from baseline, so parser results also app
 - Firmware: mandatory four directories unchanged; retired hardware interfaces preserve security/journaling counterparts; RFID offline prototype retained.
 - Database: schema, migrations, seed and recovery/repair utilities preserved; no migration or DB call.
 - Security: no new secret values displayed or archived; private export removed and tracked remaining access material explicitly reported.
-- DevOps: exact-path Git recovery, package/compiler/cron preservation, verified ignore hygiene and no commit/push.
+- DevOps: exact-path Git recovery, package/compiler/cron preservation and verified ignore hygiene. No commit or push was made during second-pass assessment; a local commit and merge followed user authorization on 2026-10-21.
 
 These are five review perspectives applied by this agent, not a claim that five independent agents were run.

@@ -50,7 +50,6 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
-import { AssignRFIDModal } from "@/components/AssignRFIDModal"
 import { StudentProfileModal } from "@/components/StudentProfileModal"
 import { AttendanceCalendar } from "@/components/AttendanceCalendar"
 import { ManualNotifyModal } from "@/components/ManualNotifyModal"
@@ -134,6 +133,20 @@ function isSortMethod(value: unknown): value is SortMethod {
   return value === 'LATEST' || value === 'EXPIRY' || value === 'DURATION' || value === 'ALPHABETICAL'
 }
 
+type ClientTabCacheEntry = {
+  bookings: BookingWithDetails[];
+  tabCounts: StudentsClientProps['tabCounts'];
+  totalCount: number;
+  timestamp: number;
+};
+
+// Client-side cache across tab switches stored in browser RAM
+const clientStudentCache = new Map<string, ClientTabCacheEntry>();
+
+export function clearStudentClientCache() {
+  clientStudentCache.clear();
+}
+
 export function StudentsClient({ bookings, plans, logs = [], relays = [], seats = [], standaloneLockers = [], occupiedStandaloneLockerIds = [], occupiedSeatIds = [], totalCount = 0, tabCounts = { active: 0, paused: 0, dues: 0, expiring: 0, inactive: 0, expired: 0, revoked: 0 }, currentPage = 1, searchQuery = "" }: StudentsClientProps) {
   const router = useRouter()
   const searchParamsHook = useSearchParams()
@@ -188,6 +201,38 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
   const [sortMethod, setSortMethod] = useState<SortMethod>('LATEST')
   const [filterPlanId, setFilterPlanId] = useState<string | null>(null)
 
+  // Client-side in-memory cache state for instant tab switching
+  const cacheKey = `${activeTab}:${currentPage}:${searchQuery}`;
+  const [localData, setLocalData] = useState<{
+    bookings: BookingWithDetails[];
+    tabCounts: StudentsClientProps['tabCounts'];
+    totalCount: number;
+  }>({
+    bookings,
+    tabCounts,
+    totalCount,
+  });
+
+  // When server props arrive, update browser RAM cache and local data
+  useEffect(() => {
+    clientStudentCache.set(cacheKey, {
+      bookings,
+      tabCounts,
+      totalCount,
+      timestamp: Date.now()
+    });
+    setLocalData({
+      bookings,
+      tabCounts,
+      totalCount,
+    });
+  }, [cacheKey, bookings, tabCounts, totalCount]);
+
+  const refreshData = () => {
+    clientStudentCache.clear();
+    router.refresh();
+  };
+
   // RFID Modal States
   const [addFormHasLocker, setAddFormHasLocker] = useState<boolean>(true);
   const [rfidModalOpen, setRfidModalOpen] = useState(false);
@@ -195,18 +240,28 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
   const [rfidTagInput, setRfidTagInput] = useState("");
   const [rfidQrPayload, setRfidQrPayload] = useState<string | null>(null);
   const [rfidLoading, setRfidLoading] = useState(false);
-  const [rfidTagToAssign, setRfidTagToAssign] = useState<string | null>(null);
 
   // OTP Verification States
   const [step, setStep] = useState<1 | 2>(1)
   const [phone, setPhone] = useState("+91 ")
 
-  
   // Pagination
   const PAGE_SIZE = 20
-  const totalPages = Math.ceil(totalCount / PAGE_SIZE) || 1;
+  const currentTabCounts = localData.tabCounts || tabCounts;
+  const currentTotalCount = localData.totalCount ?? totalCount;
+  const totalPages = Math.ceil(currentTotalCount / PAGE_SIZE) || 1;
 
   const handlePageChange = (newPage: number) => {
+    const targetKey = `${activeTab}:${newPage}:${searchQuery}`;
+    const cached = clientStudentCache.get(targetKey);
+    if (cached) {
+      setLocalData({
+        bookings: cached.bookings,
+        tabCounts: cached.tabCounts,
+        totalCount: cached.totalCount,
+      });
+    }
+
     const params = new URLSearchParams(window.location.search);
     params.set('page', newPage.toString());
     router.replace(`?${params.toString()}`, { scroll: false });
@@ -353,7 +408,7 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
       setIsOpen(false);
       setPhone("+91 "); setOtp(""); setStep(1); setVerifiedAuthId(null); setSelectedPlanId(null); setAddFormStandaloneLockerId(null);
       setStudentFormData({ name: "", email: "", dob: "", gender: "", address: "", isKycVerified: false });
-      router.refresh();
+      refreshData();
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, "Failed to add student."));
     } finally {
@@ -368,7 +423,7 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
       await updateBookingSeat(seatChangeBookingId, selectedNewSeatId === "NONE" ? null : selectedNewSeatId);
       toast.success("Seat updated successfully");
       setSeatChangeBookingId(null);
-      router.refresh();
+      refreshData();
     } catch(error: unknown) {
       toast.error(getErrorMessage(error, "Failed to update seat"));
     } finally {
@@ -379,8 +434,19 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
   const now = new Date();
   now.setHours(0,0,0,0);
 
-  // Handle URL updates for tabs
+  // Handle URL updates for tabs with instant client-side cache
   const handleTabChange = (tab: typeof activeTab) => {
+    const targetKey = `${tab}:1:${searchQuery}`;
+    const cached = clientStudentCache.get(targetKey);
+    if (cached) {
+      // Instant switch in 0ms from browser RAM!
+      setLocalData({
+        bookings: cached.bookings,
+        tabCounts: cached.tabCounts,
+        totalCount: cached.totalCount,
+      });
+    }
+
     startTransition(() => {
       const params = new URLSearchParams(window.location.search);
       params.set('page', '1');
@@ -389,7 +455,9 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
     });
   };
 
-  const searchedBookings = bookings.filter(b => 
+  const currentBookings = localData.bookings || bookings;
+
+  const searchedBookings = currentBookings.filter(b => 
     (b.student.name || '').toLowerCase().includes(search.toLowerCase()) ||
     (b.student.uniqueId && b.student.uniqueId.toLowerCase().includes(search.toLowerCase())) ||
     (b.student.phone && b.student.phone.includes(search))
@@ -951,43 +1019,43 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
               className={`flex-1 px-5 py-2.5 whitespace-nowrap text-sm font-semibold rounded-full transition-all ${activeTab === 'ACTIVE' ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-slate-200/50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
               onClick={() => handleTabChange('ACTIVE')}
             >
-              Active ({tabCounts.active})
+              Active ({currentTabCounts.active})
             </button>
             <button
               className={`flex-1 px-5 py-2.5 whitespace-nowrap text-sm font-semibold rounded-full transition-all ${activeTab === 'PAUSED' ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-slate-200/50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
               onClick={() => handleTabChange('PAUSED')}
             >
-              Paused ({tabCounts.paused})
+              Paused ({currentTabCounts.paused})
             </button>
             <button
               className={`flex-1 px-5 py-2.5 whitespace-nowrap text-sm font-semibold rounded-full transition-all ${activeTab === 'DUES' ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-slate-200/50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
               onClick={() => handleTabChange('DUES')}
             >
-              Dues ({tabCounts.dues})
+              Dues ({currentTabCounts.dues})
             </button>
             <button
               className={`flex-1 px-5 py-2.5 whitespace-nowrap text-sm font-semibold rounded-full transition-all ${activeTab === 'EXPIRING' ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-slate-200/50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
               onClick={() => handleTabChange('EXPIRING')}
             >
-              Expiring Soon ({tabCounts.expiring})
+              Expiring Soon ({currentTabCounts.expiring})
             </button>
             <button
               className={`flex-1 px-5 py-2.5 whitespace-nowrap text-sm font-semibold rounded-full transition-all ${activeTab === 'INACTIVE' ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-slate-200/50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
               onClick={() => handleTabChange('INACTIVE')}
             >
-              Expired ({tabCounts.inactive})
+              Expired ({currentTabCounts.inactive})
             </button>
             <button
               className={`flex-1 px-5 py-2.5 whitespace-nowrap text-sm font-semibold rounded-full transition-all ${activeTab === 'EXPIRED' ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-slate-200/50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
               onClick={() => handleTabChange('EXPIRED')}
             >
-              Inactive ({tabCounts.expired})
+              Inactive ({currentTabCounts.expired})
             </button>
             <button
               className={`flex-1 px-5 py-2.5 whitespace-nowrap text-sm font-semibold rounded-full transition-all ${activeTab === 'REVOKED' ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-slate-200/50' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'}`}
               onClick={() => handleTabChange('REVOKED')}
             >
-              Revoked ({tabCounts.revoked})
+              Revoked ({currentTabCounts.revoked})
             </button>
             {isPending && (
               <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center justify-center">
@@ -1732,94 +1800,6 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
         }}
       />
 
-      {/* Hardware Status & Live Logs */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
-        {/* Hardware Status */}
-        <div className="bg-card rounded-2xl border border-border shadow-sm p-6 lg:col-span-1 flex flex-col">
-          <h2 className="text-xl font-bold text-foreground mb-4">Hardware Relays</h2>
-          <div className="space-y-4 flex-1">
-            {relays.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No relays configured for this library yet.</p>
-            ) : (
-              relays.map(relay => {
-                const isOffline = new Date().getTime() - new Date(relay.lastSync).getTime() > 10 * 60 * 1000; // 10 mins
-                return (
-                  <div key={relay.id} className="p-4 border border-border rounded-xl flex items-center justify-between">
-                    <div>
-                      <p className="font-bold text-sm text-foreground">Relay {relay.id.substring(0,6)}</p>
-                      <p className="text-xs text-muted-foreground mt-1">Tag: <span className="font-mono">{relay.nfcTagId}</span></p>
-                      <p className="text-[10px] text-muted-foreground mt-1">Last Sync: {new Date(relay.lastSync).toLocaleTimeString()}</p>
-                    </div>
-                    <div className="flex flex-col items-end">
-                      <span className="flex items-center gap-1.5 text-xs font-bold uppercase">
-                        <span className={`w-2 h-2 rounded-full ${isOffline ? 'bg-destructive' : 'bg-success'}`} />
-                        <span className={isOffline ? 'text-destructive' : 'text-success'}>{isOffline ? 'OFFLINE' : 'ONLINE'}</span>
-                      </span>
-                    </div>
-                  </div>
-                )
-              })
-            )}
-          </div>
-        </div>
-
-        {/* Live Logs */}
-        <div className="bg-card rounded-2xl border border-border shadow-sm lg:col-span-2 overflow-hidden flex flex-col h-[400px]">
-          <div className="p-4 md:p-6 border-b border-border bg-muted/20">
-            <h2 className="text-xl font-bold text-foreground">Live Activity Log</h2>
-          </div>
-          <div className="flex-1 overflow-y-auto">
-            {logs.length === 0 ? (
-              <div className="p-6 text-center text-muted-foreground text-sm">No recent activity</div>
-            ) : (
-              <table className="w-full text-left border-collapse">
-                <thead className="sticky top-0 bg-card border-b border-border z-10">
-                  <tr>
-                    <th className="p-4 text-xs uppercase tracking-wider font-bold text-muted-foreground">Time</th>
-                    <th className="p-4 text-xs uppercase tracking-wider font-bold text-muted-foreground">Student</th>
-                    <th className="p-4 text-xs uppercase tracking-wider font-bold text-muted-foreground">Event</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {logs.map(log => (
-                    <tr key={log.id} className="hover:bg-muted/30 transition-colors">
-                      <td className="p-4 text-sm text-muted-foreground">
-                        {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        {log.isOfflineSync && <span className="block text-[10px] text-warning mt-0.5">Synced Offline</span>}
-                      </td>
-                      <td className="p-4 cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => log.studentId && setProfileStudentId(log.studentId)}>
-                        <p className="font-medium text-sm text-foreground hover:underline">{log.student?.name || 'Unknown'}</p>
-                        {log.student?.uniqueId && <p className="text-xs font-mono text-muted-foreground">{log.student.uniqueId}</p>}
-                      </td>
-                      <td className="p-4">
-                        <span className={`text-xs font-bold px-2 py-1 rounded uppercase tracking-wider ${
-                          log.status === 'CHECK_IN' ? 'bg-success/10 text-success' : 'bg-destructive/10 text-destructive'
-                        }`}>
-                          {log.status.replace('_', ' ')}
-                        </span>
-                        {log.reason && (log.status === 'DENIED') && (
-                          <span className="block mt-1 text-[10px] text-muted-foreground">
-                            {log.reason}
-                          </span>
-                        )}
-                        {log.reason?.startsWith("Unregistered RFID") && (
-                          <button 
-                            onClick={() => setRfidTagToAssign(log.reason?.replace("Unregistered RFID:", "").trim() ?? null)}
-                            className="mt-1 block text-xs bg-primary text-primary-foreground font-bold px-2 py-1 rounded-md hover:opacity-90"
-                          >
-                            Assign RFID
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
-      </div>
-
       {/* Revoke Access Dialog */}
       <Dialog open={revokeModalOpen} onOpenChange={setRevokeModalOpen}>
         <DialogContent className="sm:max-w-[425px]">
@@ -2291,13 +2271,6 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
           )}
         </DialogContent>
       </Dialog>
-      <AssignRFIDModal 
-        rfidTag={rfidTagToAssign || ""}
-        open={!!rfidTagToAssign}
-        onOpenChange={(open) => {
-          if (!open) setRfidTagToAssign(null);
-        }}
-      />
     </>
   )
 }

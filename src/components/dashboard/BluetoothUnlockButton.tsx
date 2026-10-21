@@ -8,9 +8,11 @@ interface BluetoothUnlockButtonProps {
   libraryId: string;
   className?: string;
   children?: React.ReactNode;
+  isCheckedIn?: boolean;
+  studentId?: string;
 }
 
-export function BluetoothUnlockButton({ libraryId, className, children }: BluetoothUnlockButtonProps) {
+export function BluetoothUnlockButton({ libraryId, className, children, isCheckedIn, studentId }: BluetoothUnlockButtonProps) {
   const [isConnecting, setIsConnecting] = useState(false);
 
   const handleBluetoothUnlock = async () => {
@@ -40,16 +42,34 @@ export function BluetoothUnlockButton({ libraryId, className, children }: Blueto
       // Get the characteristic
       const characteristic = await service.getCharacteristic('87b99b2c-90fd-11e9-bc42-526af7764f65');
 
-      // Write the unlock command to the ESP32
+      const action = isCheckedIn ? 'OUT' : 'IN';
+      // Fetch cryptographically signed BLE token from backend
+      let tokenString = isCheckedIn 
+        ? (studentId ? `UNLOCK_OUT:${studentId}` : "UNLOCK_OUT") 
+        : (studentId ? `UNLOCK_IN:${studentId}` : "UNLOCK_IN");
+
+      try {
+        const tokenRes = await fetch('/api/student/ble-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deviceId: '87b99b2c-90fd-11e9-bc42-526af7764f64:1:1', action })
+        });
+        if (tokenRes.ok) {
+          const tokenData = await tokenRes.json();
+          if (tokenData.success && tokenData.token) {
+            tokenString = tokenData.token;
+          }
+        }
+      } catch (e) {
+        console.warn("Using fallback unlock token", e);
+      }
+
+      // Write the token/command to the ESP32
       const encoder = new TextEncoder();
-      const tokenBuffer = encoder.encode("UNLOCK_IN");
+      const tokenBuffer = encoder.encode(tokenString);
       await characteristic.writeValue(tokenBuffer);
 
-      // Also trigger a normal check-in to update the database
-      fetch('/api/mobile/attendance/ble?readerId=87b99b2c-90fd-11e9-bc42-526af7764f64:1:1')
-        .catch(console.error);
-
-      toast.success('Door Unlocked!', { id: 'ble' });
+      toast.success(isCheckedIn ? 'Checked Out!' : 'Door Unlocked!', { id: 'ble' });
       
       // Disconnect cleanly
       device.gatt?.disconnect();
@@ -71,7 +91,7 @@ export function BluetoothUnlockButton({ libraryId, className, children }: Blueto
       {children ? children : (
         <>
           <Bluetooth className={`w-4 h-4 ${isConnecting ? 'animate-pulse' : ''}`} />
-          {isConnecting ? 'Connecting...' : 'Unlock via Bluetooth'}
+          {isConnecting ? 'Connecting...' : (isCheckedIn ? 'Check Out via Bluetooth' : 'Unlock via Bluetooth')}
         </>
       )}
     </button>
