@@ -5,7 +5,7 @@ import type { Plan, Prisma, Relay, Seat } from "@prisma/client"
 import { useState, useEffect, useTransition, Fragment } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { motion, AnimatePresence } from "framer-motion"
-import { Search, UserPlus, UserMinus, ChevronDown, CheckCircle2, Filter, PlusCircle, MinusCircle, History, Grid, List, User, Lock, Tag, Pause, Ban, RefreshCw, MoreHorizontal } from "lucide-react"
+import { Search, UserPlus, UserMinus, ChevronDown, CheckCircle2, Filter, PlusCircle, MinusCircle, History, Grid, List, User, Lock, Tag, Pause, PlayCircle, Ban, RefreshCw, MoreHorizontal } from "lucide-react"
 import { addStudentWithBooking, approveReceptionPayment, revokeBooking, assignUniqueIdToStudent, renewPlan, updateCrmNote } from "@/app/actions/student-actions"
 import { pauseBooking, resumeBooking, updateBookingSeat } from "@/app/actions/booking-actions"
 import { generateRFIDCommandQR } from "@/app/actions/hardware-actions"
@@ -1186,6 +1186,22 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                                 Paused on {new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(booking.pausedAt))}
                               </span>
                             )}
+                            {!booking.isPaused && (booking.resumedAt || (booking.totalPausedDays ?? 0) > 0) && (
+                              <div className="flex flex-col gap-0.5 mt-0.5">
+                                <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1">
+                                  <PlayCircle className="w-3 h-3" />
+                                  Resumed on {new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(booking.resumedAt || booking.updatedAt))}
+                                  {(booking.totalPausedDays ?? 0) > 0 && (
+                                    <span className="text-[10px] text-slate-500 font-normal">({booking.totalPausedDays}d paused)</span>
+                                  )}
+                                </span>
+                                {booking.pausedAt && (
+                                  <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                                    (Paused: {new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(booking.pausedAt))})
+                                  </span>
+                                )}
+                              </div>
+                            )}
                             {(booking.amountDuePaise ?? 0) > 0 && (
                               <span className="text-[11px] font-bold text-rose-600 bg-rose-50 border border-rose-100 px-1.5 py-0.5 rounded-sm w-fit mt-0.5">
                                 Pending Dues: ₹{(booking.amountDuePaise ?? 0) / 100}
@@ -1604,6 +1620,22 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                                   <Pause className="w-3 h-3" /> 
                                   Paused on {new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(booking.pausedAt))}
                                 </p>
+                              )}
+                              {!booking.isPaused && (booking.resumedAt || (booking.totalPausedDays ?? 0) > 0) && (
+                                <div className="flex flex-col gap-0.5 mt-1.5">
+                                  <p className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1">
+                                    <PlayCircle className="w-3 h-3" />
+                                    Resumed on {new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(booking.resumedAt || booking.updatedAt))}
+                                    {(booking.totalPausedDays ?? 0) > 0 && (
+                                      <span className="text-[10px] text-slate-500 font-normal">({booking.totalPausedDays}d paused)</span>
+                                    )}
+                                  </p>
+                                  {booking.pausedAt && (
+                                    <p className="text-[10px] text-slate-400 flex items-center gap-1">
+                                      (Paused: {new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(booking.pausedAt))})
+                                    </p>
+                                  )}
+                                </div>
                               )}
                               {(booking.amountDuePaise ?? 0) > 0 && (
                                 <p className="text-[11px] font-bold text-rose-600 bg-rose-50 border border-rose-100 px-1.5 py-0.5 rounded-sm w-fit mt-1.5">

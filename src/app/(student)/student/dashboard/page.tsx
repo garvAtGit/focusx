@@ -1,4 +1,4 @@
-import { Calendar, Clock, MapPin, User as UserIcon, BookOpen, Key, Flame } from "lucide-react";
+import { Calendar, Clock, MapPin, User as UserIcon, BookOpen, Key, Flame, PauseCircle, PlayCircle } from "lucide-react";
 import { FocusActivityCalendar } from "@/components/dashboard/FocusActivityCalendar";
 import { Suspense } from "react";
 import prisma from "@/lib/prisma";
@@ -379,8 +379,8 @@ export default async function StudentDashboardPage() {
                   <div key={booking.id} className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm flex flex-col">
                     {/* Header: Status & Date */}
                     <div className="bg-muted/30 px-6 py-3 border-b border-border flex justify-between items-center">
-                      <span className={`text-xs font-bold px-2.5 py-0.5 rounded uppercase tracking-wider ${booking.status === 'CONFIRMED' ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'}`}>
-                        {booking.status}
+                      <span className={`text-xs font-bold px-2.5 py-0.5 rounded uppercase tracking-wider ${booking.isPaused ? 'bg-amber-500/10 text-amber-600 border border-amber-500/20' : booking.status === 'CONFIRMED' ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'}`}>
+                        {booking.isPaused ? 'PAUSED' : booking.status}
                       </span>
                       <span className="text-xs text-muted-foreground font-medium flex items-center gap-1.5">
                         <Clock className="w-3.5 h-3.5" /> Booked: {formatDateTime(booking.createdAt)}
@@ -418,6 +418,28 @@ export default async function StudentDashboardPage() {
                               <Key className="w-4 h-4 text-muted-foreground" />
                               <span>Access Code: <strong className="text-foreground font-mono bg-muted px-1.5 py-0.5 rounded">{booking.id.split('-')[0].toUpperCase()}</strong></span>
                             </div>
+                            {booking.isPaused && booking.pausedAt && (
+                              <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-lg text-xs font-medium w-fit mt-1">
+                                <PauseCircle className="w-4 h-4 shrink-0" />
+                                <span>Plan Paused on: <strong className="font-semibold">{formatDateTime(booking.pausedAt)}</strong></span>
+                              </div>
+                            )}
+                            {!booking.isPaused && (booking.resumedAt || (booking.totalPausedDays ?? 0) > 0) && (
+                              <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg text-xs font-medium w-fit mt-1">
+                                <div className="flex items-center gap-1.5">
+                                  <PlayCircle className="w-4 h-4 shrink-0" />
+                                  <span>Resumed on: <strong className="font-semibold">{formatDateTime(booking.resumedAt || booking.updatedAt)}</strong></span>
+                                </div>
+                                {booking.pausedAt && (
+                                  <span className="text-muted-foreground font-normal">(Paused on {formatDateTime(booking.pausedAt)})</span>
+                                )}
+                                {(booking.totalPausedDays ?? 0) > 0 && (
+                                  <span className="text-emerald-700 dark:text-emerald-300 font-bold bg-emerald-500/20 px-1.5 py-0.5 rounded text-[11px]">
+                                    +{booking.totalPausedDays} days extended
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -480,6 +502,11 @@ export default async function StudentDashboardPage() {
                         <span className="text-muted-foreground flex items-center gap-1">
                           {booking.seat ? `Seat ${booking.seat.name}` : "Flexible Plan"} • ₹{calculateTotalAmount(booking)}
                         </span>
+                        {booking.totalPausedDays > 0 && (
+                          <span className="text-amber-600 dark:text-amber-400 text-xs flex items-center gap-1 font-medium">
+                            <PauseCircle className="w-3.5 h-3.5" /> Paused {booking.totalPausedDays} days total
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className="shrink-0">

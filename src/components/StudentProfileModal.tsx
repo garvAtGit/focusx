@@ -5,7 +5,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Button } from "@/components/ui/button"
 import { getStudentProfile, collectDues } from "@/app/actions/student-actions"
 import toast from "react-hot-toast"
-import { Loader2, ShieldCheck, CalendarDays, Lock, LayoutGrid, RefreshCw, History, User } from "lucide-react"
+import { Loader2, ShieldCheck, CalendarDays, Lock, LayoutGrid, RefreshCw, History, User, Pause, PlayCircle } from "lucide-react"
 import { AttendanceCalendar } from "./AttendanceCalendar"
 import type { Prisma } from "@prisma/client"
 
@@ -99,6 +99,19 @@ export function StudentProfileModal({ studentId, open, onOpenChange, onChangeSea
   function formatStandardDate(isoString: string | Date | undefined | null) {
     if (!isoString) return "N/A";
     return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }).format(new Date(isoString));
+  }
+
+  function formatStandardDateTime(isoString: string | Date | undefined | null) {
+    if (!isoString) return "N/A";
+    return new Intl.DateTimeFormat('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: true,
+    }).format(new Date(isoString));
   }
 
   const currentBooking = profileStudent?.bookings?.[0]; // Assuming bookings are ordered by desc
@@ -212,6 +225,28 @@ export function StudentProfileModal({ studentId, open, onOpenChange, onChangeSea
                             <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Current Plan</div>
                             <div className="font-black text-2xl text-slate-900 tracking-tight line-clamp-1">{currentBooking.plan?.name}</div>
                             <div className="text-[13px] font-medium text-slate-500 mt-1">{formatStandardDate(currentBooking.startTime)} → {formatStandardDate(currentBooking.endTime)}</div>
+                            {currentBooking.isPaused && currentBooking.pausedAt && (
+                              <div className="text-[12px] font-semibold text-amber-600 mt-1.5 flex items-center gap-1.5 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200/60 w-fit">
+                                <Pause className="w-3.5 h-3.5 shrink-0" />
+                                <span>Paused on {formatStandardDateTime(currentBooking.pausedAt)}</span>
+                              </div>
+                            )}
+                            {!currentBooking.isPaused && (currentBooking.resumedAt || (currentBooking.totalPausedDays ?? 0) > 0) && (
+                              <div className="mt-1.5 flex flex-col gap-1">
+                                <div className="text-[12px] font-semibold text-emerald-600 flex items-center gap-1.5 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200/60 w-fit">
+                                  <PlayCircle className="w-3.5 h-3.5 shrink-0" />
+                                  <span>Resumed on {formatStandardDateTime(currentBooking.resumedAt || currentBooking.updatedAt)}</span>
+                                  {(currentBooking.totalPausedDays ?? 0) > 0 && (
+                                    <span className="text-[11px] text-emerald-700 font-bold ml-1">({currentBooking.totalPausedDays}d paused)</span>
+                                  )}
+                                </div>
+                                {currentBooking.pausedAt && (
+                                  <div className="text-[11px] font-medium text-slate-400 ml-1">
+                                    Previously paused on: {formatStandardDateTime(currentBooking.pausedAt)}
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                           {(currentBooking.status === 'CONFIRMED' || currentBooking.status === 'PENDING_PAYMENT') && daysLeft > 0 && !currentBooking.isPaused ? (
                             <div className={`flex flex-col items-center justify-center w-16 h-16 rounded-2xl shadow-sm border ${daysLeft <= 7 ? 'bg-amber-50 border-amber-100 text-amber-700' : 'bg-emerald-50 border-emerald-100 text-emerald-700'}`}>

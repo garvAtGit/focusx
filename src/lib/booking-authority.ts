@@ -1813,6 +1813,7 @@ export async function pauseConfirmedBooking(bookingId: string): Promise<Booking>
       data: {
         isPaused: true,
         pausedAt: new Date(),
+        resumedAt: null,
       },
     })
   })
@@ -1861,7 +1862,7 @@ export async function resumePausedBooking(
       where: { id: booking.id },
       data: {
         isPaused: false,
-        pausedAt: null,
+        resumedAt: now,
         totalPausedDays: booking.totalPausedDays + extendedDays,
         endTime: newEndTime,
       },

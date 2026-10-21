@@ -184,6 +184,7 @@ model Booking {
   standaloneLockerId    String?
   isPaused              Boolean           @default(false)
   pausedAt              DateTime?
+  resumedAt             DateTime?
   totalPausedDays       Int               @default(0)
   revokedReason         String?
   amountDuePaise        Int?

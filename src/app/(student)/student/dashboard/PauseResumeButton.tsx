@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from "react"
+import { useRouter } from "next/navigation"
 import { pauseBooking, resumeBooking } from "@/app/actions/booking-actions"
 import { Button } from "@/components/ui/button"
 import { PauseCircle, PlayCircle, Loader2 } from "lucide-react"
@@ -13,6 +14,7 @@ export default function PauseResumeButton({
   bookingId: string, 
   isPaused: boolean
 }) {
+  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [currentState, setCurrentState] = useState(isPaused);
 
@@ -30,11 +32,13 @@ export default function PauseResumeButton({
           } else {
             toast.success(`Plan resumed! Since you paused for less than 7 days, your plan end date was not extended.`, { duration: 5000 })
           }
+          router.refresh();
         }
       } else {
         await pauseBooking(bookingId)
         setCurrentState(true);
         toast.success("Plan paused successfully.")
+        router.refresh();
       }
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Something went wrong")
