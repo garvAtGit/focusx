@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { NavItem } from "./NavItem"
-import { Menu, LayoutDashboard, Grid, List, Users, MessageSquare, HelpCircle, Wallet, UserCheck, AppWindow, Settings, LogOut, ScanLine } from "lucide-react"
+import { Menu, LayoutDashboard, Grid, List, Users, MessageSquare, HelpCircle, Wallet, UserCheck, AppWindow, Settings, LogOut, ScanLine, Bell } from "lucide-react"
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet"
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden"
 import { logout } from "@/app/actions/auth-actions"
@@ -44,6 +44,9 @@ export function MobileNav({ role, adminLibraries, activeLibraryId }: { role: str
           )}
           <NavItem onClick={() => setOpen(false)} href="/dashboard/students" icon={<Users />}>
             Students
+          </NavItem>
+          <NavItem onClick={() => setOpen(false)} href="/dashboard/notifications" icon={<Bell />}>
+            Notifications
           </NavItem>
           <NavItem onClick={() => setOpen(false)} href="/dashboard/queries" icon={<MessageSquare />}>
             Queries

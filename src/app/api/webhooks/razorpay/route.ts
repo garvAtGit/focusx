@@ -287,6 +287,30 @@ export async function POST(req: Request) {
       return NextResponse.json({ status: "ok" })
     }
 
+    if (eventType === "payment.failed") {
+      const payment = event.payload?.payment?.entity as any;
+      const paymentId = payment?.id;
+      const notes = payment?.notes;
+      const studentId = notes?.student_id || notes?.studentId;
+      const reason = payment?.error_description || payment?.error_reason;
+
+      if (paymentId && studentId) {
+        try {
+          const { notifyPaymentFailed } = await import("@/lib/notification-triggers");
+          await notifyPaymentFailed({
+            paymentId,
+            studentId,
+            amountPaise: Number(payment?.amount),
+            reason,
+          });
+        } catch (notifErr) {
+          console.warn("[RazorpayWebhook] Payment failed notification warning:", notifErr);
+        }
+      }
+      await recordProcessedEvent(eventId, eventType, payloadHash);
+      return NextResponse.json({ status: "handled_failure" });
+    }
+
     await recordProcessedEvent(eventId, eventType, payloadHash)
     return NextResponse.json({ status: "ignored" })
   } catch (error) {

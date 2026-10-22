@@ -1074,6 +1074,29 @@ export async function confirmOnlinePayment(
         },
       })
       await tx.resourceLease.deleteMany({ where: { intentId: intent.id } })
+
+      // Atomically trigger student notifications for payment and booking confirmation
+      try {
+        const { notifyBookingConfirmed, notifyPaymentConfirmed } = await import("@/lib/notification-triggers")
+        await notifyPaymentConfirmed({
+          paymentId: input.paymentId,
+          studentId: booking.studentId,
+          amountPaise: input.paidAmountPaise,
+          currency: input.currency,
+        }, tx)
+        await notifyBookingConfirmed({
+          bookingId: booking.id,
+          studentId: booking.studentId,
+          libraryId: booking.libraryId,
+          planName: "library membership",
+          seatNumber: booking.seatId || null,
+          startDate: booking.startTime,
+          endDate: booking.endTime,
+        }, tx)
+      } catch (notifErr) {
+        console.warn("[confirmOnlinePayment] Notification trigger warning:", notifErr)
+      }
+
       return { status: "CONFIRMED", booking }
     } catch (error) {
       if (
@@ -1451,6 +1474,19 @@ export async function cancelPendingReceptionBooking(
         where: { intentId: booking.bookingIntent.id },
       })
     }
+
+    try {
+      const { notifyBookingCancelled } = await import("@/lib/notification-triggers")
+      await notifyBookingCancelled({
+        bookingId: updated.id,
+        studentId: updated.studentId,
+        libraryId: updated.libraryId,
+        reason: reason,
+      }, tx)
+    } catch (notifErr) {
+      console.warn("[cancelPendingReceptionBooking] Notification trigger warning:", notifErr)
+    }
+
     return updated
   })
 }

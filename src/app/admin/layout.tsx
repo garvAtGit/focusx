@@ -6,6 +6,8 @@ import Image from "next/image";
 import { LogOut } from "lucide-react";
 import { logout } from "@/app/actions/auth-actions";
 import { Suspense } from "react";
+import { NotificationBell } from "@/components/NotificationBell";
+import { NotificationProvider } from "@/components/notifications/NotificationProvider";
 
 async function AdminAuthWrapper({ children }: { children: React.ReactNode }) {
   const session = await getSession();
@@ -33,34 +35,53 @@ async function AdminAuthWrapper({ children }: { children: React.ReactNode }) {
     }
   }
 
-  return (
-    <div className="min-h-screen bg-background flex flex-col">
-      {/* Admin Navbar */}
-      <header className="h-16 border-b border-border bg-card flex items-center justify-between px-6 sticky top-0 z-50">
-        <div className="flex items-center gap-4">
-          <Link href="/admin" className="flex items-center gap-2 group">
-            <Image src="/final-logo.svg" alt="FocusX Logo" width={48} height={48} className="object-contain" />
-            <span className="text-xl font-heading font-bold text-primary">Admin Control</span>
-          </Link>
-          <span className="text-xs px-2 py-1 bg-destructive/10 text-destructive rounded-full font-bold uppercase tracking-wide">
-            Superuser
-          </span>
-        </div>
-        
-        <div className="flex items-center gap-4">
-          <span className="text-sm text-muted-foreground">{session.email}</span>
-          <form action={logout}>
-            <button type="submit" className="p-2 hover:bg-muted rounded-full transition-colors text-muted-foreground hover:text-foreground">
-              <LogOut className="w-5 h-5" />
-            </button>
-          </form>
-        </div>
-      </header>
+  const adminNotifications = await prisma.notification.findMany({
+    where: {
+      OR: [{ userId: session.userId }, { studentId: session.userId }],
+    },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+  });
 
-      <main className="flex-1 p-6 md:p-8">
-        {children}
-      </main>
-    </div>
+  return (
+    <NotificationProvider userId={session.userId} initialNotifications={adminNotifications}>
+      <div className="min-h-screen bg-background flex flex-col">
+        {/* Admin Navbar */}
+        <header className="h-16 border-b border-border bg-card flex items-center justify-between px-6 sticky top-0 z-50">
+          <div className="flex items-center gap-4">
+            <Link href="/admin" className="flex items-center gap-2 group">
+              <Image src="/final-logo.svg" alt="FocusX Logo" width={48} height={48} className="object-contain" />
+              <span className="text-xl font-heading font-bold text-primary">Admin Control</span>
+            </Link>
+            <span className="text-xs px-2 py-1 bg-destructive/10 text-destructive rounded-full font-bold uppercase tracking-wide">
+              Superuser
+            </span>
+            <nav className="hidden md:flex items-center gap-4 text-sm font-medium ml-4">
+              <Link href="/admin" className="hover:text-primary transition-colors text-muted-foreground">
+                Libraries
+              </Link>
+              <Link href="/admin/notifications" className="hover:text-primary transition-colors text-muted-foreground">
+                Notifications
+              </Link>
+            </nav>
+          </div>
+          
+          <div className="flex items-center gap-3">
+            <NotificationBell />
+            <span className="text-sm text-muted-foreground hidden sm:inline">{session.email}</span>
+            <form action={logout}>
+              <button type="submit" className="p-2 hover:bg-muted rounded-full transition-colors text-muted-foreground hover:text-foreground">
+                <LogOut className="w-5 h-5" />
+              </button>
+            </form>
+          </div>
+        </header>
+
+        <main className="flex-1 p-6 md:p-8">
+          {children}
+        </main>
+      </div>
+    </NotificationProvider>
   );
 }
 
