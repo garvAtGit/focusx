@@ -41,7 +41,8 @@ export async function GET(req: Request) {
       orderBy: { createdAt: 'desc' }
     });
 
-    const activeBookings = allBookings.filter(b => b.endTime > now && b.status !== 'CANCELLED');
+    const pendingBooking = allBookings.find(b => b.status === 'PENDING_PAYMENT');
+    const activeBookings = allBookings.filter(b => b.endTime > now && b.status === 'CONFIRMED');
 
     const recentLogs = await prisma.checkinLog.findMany({
       where: { 
@@ -157,6 +158,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ 
       activeBookings, 
+      pendingBooking: pendingBooking || null,
       leaderboards, 
       heatmap,
       recentLogs,

@@ -1,15 +1,21 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getSession } from '@/app/actions/auth-actions';
+import { authenticateMobileRequest } from '@/lib/mobile-auth';
 import { LeaseResourceType } from '@prisma/client';
+import { cancelStudentPendingBooking } from '@/lib/booking-authority';
+import { invalidateLibraryRuntimeCache } from '@/lib/library-cache';
 
 export async function GET(req: Request) {
   const session = await getSession();
+  const mobileAuth = !session ? await authenticateMobileRequest(req) : null;
+  const userId = session?.userId || mobileAuth?.userId;
+
   const { searchParams } = new URL(req.url);
   const libraryId = searchParams.get('libraryId');
 
   try {
-    if (!session) {
+    if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -32,13 +38,23 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Library not found' }, { status: 404 });
     }
 
+    // If the student returned to the seat map (backed out or cancelled mid-transaction),
+    // immediately free any uncompleted hold or lease they held so their seat is freed instantly!
+    if (userId) {
+      await cancelStudentPendingBooking({
+        studentId: userId,
+        libraryId,
+      }).catch((err) => console.warn("Failed to auto-free student hold:", err));
+      await invalidateLibraryRuntimeCache(libraryId);
+    }
+
     // Get currently occupied seats
     const now = new Date();
     const [activeBookings, activeLeases] = await Promise.all([
       prisma.booking.findMany({
         where: {
           libraryId,
-          status: { in: ['CONFIRMED', 'PENDING_PAYMENT'] },
+          status: 'CONFIRMED',
           endTime: { gt: now }
         },
         select: { seatId: true },

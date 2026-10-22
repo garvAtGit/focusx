@@ -259,11 +259,24 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
       () => void loadDynamicData(false),
       15_000,
     );
+    const handlePageShow = () => {
+      // If student navigated back mid-transaction or returned to page,
+      // cancel hold and free seat instantly!
+      fetch('/api/checkout/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ libraryId: library.id, reason: 'USER_CANCELLED' })
+      }).finally(() => {
+        void loadDynamicData(false);
+      });
+    };
+    window.addEventListener("pageshow", handlePageShow);
     return () => {
       window.clearTimeout(initialLoad);
       window.clearInterval(interval);
+      window.removeEventListener("pageshow", handlePageShow);
     };
-  }, [loadDynamicData]);
+  }, [loadDynamicData, library.id]);
 
   const handleFeedbackSubmit = async () => {
     if (!dynamicState.studentId) {
