@@ -127,6 +127,8 @@ export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: ini
 
   // PRIMARY NOTIFICATION: Supabase Realtime Broadcast (Zero Latency)
   const channelInstanceId = useRef(0);
+  const isRealtimeSubscribed = useRef(false);
+
   useEffect(() => {
     if (!open || !studentId || !supabaseToken) return;
 
@@ -155,8 +157,10 @@ export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: ini
       )
       .subscribe((status, err) => {
         if (status === 'SUBSCRIBED') {
+          isRealtimeSubscribed.current = true;
           console.log(`[Diagnostic][${cid}][+${(performance.now() - t0Ref.current).toFixed(0)}ms] SUBSCRIBED`);
         } else {
+          isRealtimeSubscribed.current = false;
           // Log exact error payload if available
           let errStr = '';
           try {
@@ -171,6 +175,7 @@ export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: ini
     console.log(`[Diagnostic][${cid}][+${(performance.now() - t0Ref.current).toFixed(0)}ms] subscribe called`);
 
     return () => {
+      isRealtimeSubscribed.current = false;
       console.log(`[Diagnostic][${cid}][+${(performance.now() - t0Ref.current).toFixed(0)}ms] CLEANUP / unsubscribe`);
       supabase.removeChannel(channel);
     };
@@ -217,6 +222,9 @@ export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: ini
 
     const pollStatus = async () => {
       if (showSuccess || !active || !qrDataRef.current || isPolling) return;
+      // If Realtime WebSocket is connected, skip polling to protect database
+      if (isRealtimeSubscribed.current) return;
+
       isPolling = true;
       try {
         const res = await getCheckinStatus(libraryId);
@@ -233,8 +241,8 @@ export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: ini
     };
 
     initQR();
-    // Ultra-fast polling for 100% reliability if Realtime is completely broken
-    const pollInterval = setInterval(pollStatus, 1500);
+    // Safety fallback polling (only active when Realtime is disconnected)
+    const pollInterval = setInterval(pollStatus, 3000);
     // Regenerate QR every 4.5 mins for security
     const qrInterval = setInterval(initQR, 270000); 
 

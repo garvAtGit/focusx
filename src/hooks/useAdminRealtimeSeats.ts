@@ -80,10 +80,21 @@ export function useAdminRealtimeSeats(
 
     void refresh()
     const interval = window.setInterval(refresh, 15_000)
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void refresh()
+    }
+    const onPageShow = () => {
+      void refresh()
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange)
+    window.addEventListener("pageshow", onPageShow)
+
     return () => {
       disposed = true
       controller?.abort()
       window.clearInterval(interval)
+      document.removeEventListener("visibilitychange", onVisibilityChange)
+      window.removeEventListener("pageshow", onPageShow)
     }
   }, [libraryId])
 

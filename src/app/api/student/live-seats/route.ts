@@ -41,11 +41,16 @@ export async function GET(req: Request) {
     // If the student returned to the seat map (backed out or cancelled mid-transaction),
     // immediately free any uncompleted hold or lease they held so their seat is freed instantly!
     if (userId) {
-      await cancelStudentPendingBooking({
+      const cancelRes = await cancelStudentPendingBooking({
         studentId: userId,
         libraryId,
-      }).catch((err) => console.warn("Failed to auto-free student hold:", err));
-      await invalidateLibraryRuntimeCache(libraryId);
+      }).catch((err) => {
+        console.warn("Failed to auto-free student hold:", err);
+        return null;
+      });
+      if (cancelRes?.success) {
+        await invalidateLibraryRuntimeCache(libraryId);
+      }
     }
 
     // Get currently occupied seats

@@ -41,11 +41,16 @@ export async function GET(req: Request) {
     let studentActiveBookingId = null;
 
     if (userId) {
-      await cancelStudentPendingBooking({
+      const cancelRes = await cancelStudentPendingBooking({
         studentId: userId,
         libraryId,
-      }).catch((e) => console.warn("Failed to auto-free student hold:", e));
-      await invalidateLibraryRuntimeCache(libraryId);
+      }).catch((e) => {
+        console.warn("Failed to auto-free student hold:", e);
+        return null;
+      });
+      if (cancelRes?.success) {
+        await invalidateLibraryRuntimeCache(libraryId);
+      }
 
       const studentActiveBooking = await prisma.booking.findFirst({
         where: {

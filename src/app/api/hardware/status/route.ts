@@ -26,19 +26,24 @@ export async function POST(req: Request) {
 
     const relay = await prisma.relay.findFirst({
       where: { OR: [{ bleReaderId: readerId }, { macAddress: readerId }] },
+      select: { id: true, lastSync: true, status: true },
     });
 
     if (!relay) {
       return NextResponse.json({ status: 'ERROR', message: 'Relay not found' }, { status: 404 });
     }
 
-    await prisma.relay.update({
-      where: { id: relay.id },
-      data: {
-        lastSync: new Date(),
-        status: 'ONLINE',
-      },
-    });
+    const now = Date.now();
+    const lastSyncTime = relay.lastSync ? relay.lastSync.getTime() : 0;
+    if (relay.status !== 'ONLINE' || now - lastSyncTime > 30_000) {
+      await prisma.relay.update({
+        where: { id: relay.id },
+        data: {
+          lastSync: new Date(now),
+          status: 'ONLINE',
+        },
+      });
+    }
 
     return NextResponse.json({ status: 'OK', message: 'Status updated successfully' });
   } catch (error) {
