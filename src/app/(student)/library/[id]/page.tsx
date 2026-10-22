@@ -1,25 +1,14 @@
-import prisma from "@/lib/prisma"
 import { notFound } from "next/navigation"
 import type { Metadata } from "next"
+import { cache } from "react"
 import { LibraryClient } from "./LibraryClient"
-import { cacheLife, cacheTag } from "next/cache";
+import { getCachedLibraryDetails } from "@/lib/library-cache"
 
-// Cached library data. Tagged with `library:${id}` so edits to plans, seats, or
-// library details can bust it on demand via revalidateTag (cacheLife is only the
-// fallback TTL). generateMetadata and the page share this single cache entry.
-async function getCachedLibrary(id: string) {
-
-
-
-  return await prisma.library.findUnique({
-    where: { id },
-    include: {
-      plans: { where: { isActive: true } },
-      seats: true,
-      standaloneLockers: true
-    }
-  });
-}
+// Cached library data. Shared across generateMetadata and page render in a single request (React cache),
+// and shared across all students in Redis for 1 hour. Automatically busted by invalidateLibraryRuntimeCache.
+const getCachedLibrary = cache(async (id: string) => {
+  return await getCachedLibraryDetails(id)
+})
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.focusx.in';
 

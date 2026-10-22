@@ -4,7 +4,8 @@ import { getSession } from '@/app/actions/auth-actions';
 import { authenticateMobileRequest } from '@/lib/mobile-auth';
 import { LeaseResourceType } from '@prisma/client';
 import { cancelStudentPendingBooking } from '@/lib/booking-authority';
-import { invalidateLibraryRuntimeCache } from '@/lib/library-cache';
+import { activeBookingsCacheKey, invalidateLibraryRuntimeCache, librarySeatLayoutCacheKey } from '@/lib/library-cache';
+import { redis } from '@/lib/redis';
 
 export async function GET(req: Request) {
   const session = await getSession();
@@ -23,16 +24,35 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Missing libraryId' }, { status: 400 });
     }
 
-    // Return only what the seat map needs. Do NOT spread the whole library row —
-    // it contains sensitive fields (paymentAccountId, passbookPhoto, librarianId).
-    const library = await prisma.library.findUnique({
-      where: { id: libraryId },
-      select: {
-        id: true,
-        name: true,
-        seats: true,
+    // Read cached seat layout (cached for 10 minutes, invalidated on layout edits)
+    const layoutKey = librarySeatLayoutCacheKey(libraryId);
+    let library: { id: string; name: string; seats: unknown } | null = null;
+    try {
+      const cachedLayout = await redis.get(layoutKey);
+      if (cachedLayout) {
+        library = typeof cachedLayout === "string" ? JSON.parse(cachedLayout) : (cachedLayout as any);
       }
-    });
+    } catch (e) {
+      // Redis fallback
+    }
+
+    if (!library) {
+      library = await prisma.library.findUnique({
+        where: { id: libraryId },
+        select: {
+          id: true,
+          name: true,
+          seats: true,
+        }
+      });
+      if (library) {
+        try {
+          await redis.set(layoutKey, library, { ex: 600 });
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
 
     if (!library) {
       return NextResponse.json({ error: 'Library not found' }, { status: 404 });
@@ -53,17 +73,33 @@ export async function GET(req: Request) {
       }
     }
 
-    // Get currently occupied seats
+    // Get currently occupied seats: check 15-second activeBookings cache first
     const now = new Date();
+    const bookingsKey = activeBookingsCacheKey(libraryId);
+    let activeSeatIds: string[] | null = null;
+    try {
+      const cachedBookings = await redis.get(bookingsKey);
+      if (cachedBookings) {
+        const parsed = typeof cachedBookings === "string" ? JSON.parse(cachedBookings) : cachedBookings;
+        if (Array.isArray(parsed)) {
+          activeSeatIds = parsed.map((b: any) => b.seatId).filter(Boolean);
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+
     const [activeBookings, activeLeases] = await Promise.all([
-      prisma.booking.findMany({
-        where: {
-          libraryId,
-          status: 'CONFIRMED',
-          endTime: { gt: now }
-        },
-        select: { seatId: true },
-      }),
+      activeSeatIds !== null
+        ? Promise.resolve([])
+        : prisma.booking.findMany({
+            where: {
+              libraryId,
+              status: 'CONFIRMED',
+              endTime: { gt: now }
+            },
+            select: { seatId: true },
+          }),
       prisma.resourceLease.findMany({
         where: {
           libraryId,
@@ -74,8 +110,17 @@ export async function GET(req: Request) {
       }),
     ]);
 
+    const activeFromDb = activeBookings.map(({ seatId }) => seatId).filter(Boolean) as string[];
+    if (activeSeatIds === null && activeFromDb.length > 0) {
+      try {
+        await redis.set(bookingsKey, activeBookings.map((b) => ({ seatId: b.seatId, id: '', standaloneLockerId: null })), { ex: 15 });
+      } catch (e) {}
+    }
+
+    const resolvedActiveSeatIds = activeSeatIds !== null ? activeSeatIds : activeFromDb;
+
     const occupiedSeatIds = Array.from(new Set([
-      ...activeBookings.map(({ seatId }) => seatId).filter(Boolean),
+      ...resolvedActiveSeatIds,
       ...activeLeases.map(({ resourceId }) => resourceId),
     ])) as string[];
 
