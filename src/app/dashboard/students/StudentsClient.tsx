@@ -5,7 +5,7 @@ import type { Plan, Prisma, Relay, Seat } from "@prisma/client"
 import { useState, useEffect, useTransition, Fragment } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { motion, AnimatePresence } from "framer-motion"
-import { Search, UserPlus, UserMinus, ChevronDown, CheckCircle2, Filter, PlusCircle, MinusCircle, History, Grid, List, User, Lock, Tag, Pause, Ban, RefreshCw, MoreHorizontal } from "lucide-react"
+import { Search, UserPlus, UserMinus, ChevronDown, CheckCircle2, Filter, PlusCircle, MinusCircle, History, Grid, List, User, Lock, Tag, Pause, PlayCircle, Ban, RefreshCw, MoreHorizontal } from "lucide-react"
 import { addStudentWithBooking, approveReceptionPayment, revokeBooking, assignUniqueIdToStudent, renewPlan, updateCrmNote } from "@/app/actions/student-actions"
 import { pauseBooking, resumeBooking, updateBookingSeat } from "@/app/actions/booking-actions"
 import { generateRFIDCommandQR } from "@/app/actions/hardware-actions"
@@ -1114,17 +1114,22 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                       statusBadge = <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-destructive/10 text-destructive">INACTIVE</span>;
                     } else if (booking.status === 'CANCELLED') {
                       statusBadge = (
-                        <div className="flex flex-col gap-1 items-start">
-                          <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-muted text-muted-foreground">REVOKED</span>
+                        <div className="inline-flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-rose-50 text-rose-600 border border-rose-200/60">
+                            REVOKED
+                          </span>
                           {booking.revokedReason && (
                             <span 
-                              className="text-[10px] text-muted-foreground max-w-[120px] truncate cursor-pointer hover:underline" 
-                              onClick={() => {
+                              className="text-[11px] font-medium text-slate-700 bg-slate-100 hover:bg-slate-200/80 border border-slate-200 px-2 py-0.5 rounded-md cursor-pointer transition-colors inline-flex items-center gap-1 shadow-sm" 
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 setViewReason(booking.revokedReason ?? "");
                                 setReasonModalOpen(true);
                               }}
+                              title="Click to view full reason"
                             >
-                              Reason: {booking.revokedReason}
+                              <span className="font-semibold text-slate-500">Reason:</span>
+                              <span className="italic text-slate-800 max-w-[200px] truncate">&ldquo;{booking.revokedReason}&rdquo;</span>
                             </span>
                           )}
                         </div>
@@ -1181,6 +1186,22 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                                 Paused on {new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(booking.pausedAt))}
                               </span>
                             )}
+                            {!booking.isPaused && (booking.resumedAt || (booking.totalPausedDays ?? 0) > 0) && (
+                              <div className="flex flex-col gap-0.5 mt-0.5">
+                                <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1">
+                                  <PlayCircle className="w-3 h-3" />
+                                  Resumed on {new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(booking.resumedAt || booking.updatedAt))}
+                                  {(booking.totalPausedDays ?? 0) > 0 && (
+                                    <span className="text-[10px] text-slate-500 font-normal">({booking.totalPausedDays}d paused)</span>
+                                  )}
+                                </span>
+                                {booking.pausedAt && (
+                                  <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                                    (Paused: {new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(booking.pausedAt))})
+                                  </span>
+                                )}
+                              </div>
+                            )}
                             {(booking.amountDuePaise ?? 0) > 0 && (
                               <span className="text-[11px] font-bold text-rose-600 bg-rose-50 border border-rose-100 px-1.5 py-0.5 rounded-sm w-fit mt-0.5">
                                 Pending Dues: ₹{(booking.amountDuePaise ?? 0) / 100}
@@ -1188,8 +1209,9 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                             )}
                           </div>
 
-                          <div className="flex flex-col gap-1">
-                            <div className="flex items-center gap-2">
+                          <div className="flex flex-col gap-1.5">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {statusBadge}
                               {assignedSeat ? (
                                 <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50/80 px-2.5 py-1 rounded-md border border-emerald-100/50">Seat {assignedSeat.name}{booking.hasLocker ? " + Locker" : ""}</span>
                               ) : (
@@ -1407,7 +1429,26 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                     if (isExpired) {
                       statusBadge = <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-destructive/10 text-destructive border border-destructive/20">INACTIVE</span>;
                     } else if (booking.status === 'CANCELLED') {
-                      statusBadge = <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200">REVOKED</span>;
+                      statusBadge = (
+                        <div className="inline-flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-600 border border-rose-200">
+                            REVOKED
+                          </span>
+                          {booking.revokedReason && (
+                            <span 
+                              className="text-[10px] font-medium text-slate-700 bg-slate-100 hover:bg-slate-200/80 px-1.5 py-0.5 rounded cursor-pointer transition-colors max-w-[130px] truncate"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setViewReason(booking.revokedReason ?? "");
+                                setReasonModalOpen(true);
+                              }}
+                              title="Click to view full reason"
+                            >
+                              <span className="font-semibold text-slate-500">Reason:</span> &ldquo;{booking.revokedReason}&rdquo;
+                            </span>
+                          )}
+                        </div>
+                      );
                     } else if (booking.status === 'CONFIRMED') {
                       if (booking.isPaused) {
                         statusBadge = <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200">PAUSED</span>;
@@ -1579,6 +1620,22 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                                   <Pause className="w-3 h-3" /> 
                                   Paused on {new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(booking.pausedAt))}
                                 </p>
+                              )}
+                              {!booking.isPaused && (booking.resumedAt || (booking.totalPausedDays ?? 0) > 0) && (
+                                <div className="flex flex-col gap-0.5 mt-1.5">
+                                  <p className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1">
+                                    <PlayCircle className="w-3 h-3" />
+                                    Resumed on {new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(booking.resumedAt || booking.updatedAt))}
+                                    {(booking.totalPausedDays ?? 0) > 0 && (
+                                      <span className="text-[10px] text-slate-500 font-normal">({booking.totalPausedDays}d paused)</span>
+                                    )}
+                                  </p>
+                                  {booking.pausedAt && (
+                                    <p className="text-[10px] text-slate-400 flex items-center gap-1">
+                                      (Paused: {new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(booking.pausedAt))})
+                                    </p>
+                                  )}
+                                </div>
                               )}
                               {(booking.amountDuePaise ?? 0) > 0 && (
                                 <p className="text-[11px] font-bold text-rose-600 bg-rose-50 border border-rose-100 px-1.5 py-0.5 rounded-sm w-fit mt-1.5">

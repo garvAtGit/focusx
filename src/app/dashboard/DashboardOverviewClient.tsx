@@ -53,26 +53,42 @@ export function DashboardOverviewClient({
 
   useEffect(() => {
     if (!supabaseUrl || !supabaseKey) return;
+
+    let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
+    const debouncedRefresh = () => {
+      if (refreshTimeout) clearTimeout(refreshTimeout);
+      refreshTimeout = setTimeout(() => {
+        if (document.visibilityState !== "hidden") {
+          router.refresh();
+        }
+      }, 300);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        router.refresh();
+      }
+    };
+
     const channel = supabase
       .channel('dashboard-realtime')
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'EntryLog', filter: `libraryId=eq.${library.id}` },
-        () => {
-          // Trigger a seamless Next.js server component re-render
-          router.refresh();
-        }
+        debouncedRefresh
       )
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'CheckinLog', filter: `libraryId=eq.${library.id}` },
-        () => {
-          router.refresh();
-        }
+        debouncedRefresh
       )
       .subscribe();
       
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
     return () => {
+      if (refreshTimeout) clearTimeout(refreshTimeout);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       supabase.removeChannel(channel);
     };
   }, [library.id, router]);

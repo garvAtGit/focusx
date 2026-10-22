@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { CreditCard, Wallet, Loader2 } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
@@ -66,6 +66,18 @@ export function BookingClient({
   const selectedSeat = seats.find(s => s.id === selectedSeatId);
 
   const realtimeOccupiedSeatIds = useRealtimeSeats(library.id, occupiedSeatIds);
+
+  useEffect(() => {
+    const handlePageShow = () => {
+      fetch('/api/checkout/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ libraryId: library.id, reason: 'USER_CANCELLED' })
+      });
+    };
+    window.addEventListener("pageshow", handlePageShow);
+    return () => window.removeEventListener("pageshow", handlePageShow);
+  }, [library.id]);
 
   const totalAmount = selectedPlan ? selectedPlan.price : 0;
 

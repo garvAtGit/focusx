@@ -24,6 +24,9 @@ const NON_BLOCKING_CANCELLATION_REASONS = new Set([
   "PAYMENT_LINK_EXPIRED",
   "PAYMENT_LINK_CANCELLED",
   "RECEPTION_PAYMENT_REJECTED",
+  "USER_CANCELLED",
+  "ABANDONED_CHECKOUT",
+  "SUPERSEDED_BY_NEW_BOOKING",
 ])
 
 type AuthorityTx = Prisma.TransactionClient
@@ -675,6 +678,80 @@ async function createIntentRecord(
   })
 }
 
+async function releaseStudentPendingHolds(
+  tx: AuthorityTx,
+  studentId: string,
+  libraryId: string,
+  excludeIntentId?: string,
+): Promise<void> {
+  const staleIntents = await tx.bookingIntent.findMany({
+    where: {
+      studentId,
+      libraryId,
+      status: {
+        in: [
+          BookingIntentStatus.HOLDING,
+          BookingIntentStatus.AWAITING_PAYMENT,
+          BookingIntentStatus.AWAITING_MANUAL_PAYMENT,
+        ],
+      },
+      id: excludeIntentId ? { not: excludeIntentId } : undefined,
+    },
+    select: { id: true, bookingId: true },
+  })
+
+  if (staleIntents.length > 0) {
+    const intentIds = staleIntents.map((i) => i.id)
+    const bookingIds = staleIntents
+      .map((i) => i.bookingId)
+      .filter((id): id is string => Boolean(id))
+
+    await tx.resourceLease.deleteMany({
+      where: { intentId: { in: intentIds } },
+    })
+
+    await tx.bookingIntent.updateMany({
+      where: { id: { in: intentIds } },
+      data: {
+        status: BookingIntentStatus.CANCELLED,
+        failureReason: "SUPERSEDED_BY_NEW_BOOKING",
+      },
+    })
+
+    if (bookingIds.length > 0) {
+      await tx.booking.updateMany({
+        where: {
+          id: { in: bookingIds },
+          status: BookingStatus.PENDING_PAYMENT,
+        },
+        data: {
+          status: BookingStatus.CANCELLED,
+          revokedReason: "SUPERSEDED_BY_NEW_BOOKING",
+        },
+      })
+    }
+  }
+
+  await tx.resourceLease.deleteMany({
+    where: {
+      studentId,
+      ...(libraryId ? { libraryId } : {}),
+    },
+  })
+
+  await tx.booking.updateMany({
+    where: {
+      studentId,
+      libraryId,
+      status: BookingStatus.PENDING_PAYMENT,
+    },
+    data: {
+      status: BookingStatus.CANCELLED,
+      revokedReason: "SUPERSEDED_BY_NEW_BOOKING",
+    },
+  })
+}
+
 export async function createOnlineBookingIntent(
   input: CreateOnlineIntentInput,
 ): Promise<BookingIntent> {
@@ -704,6 +781,7 @@ export async function createOnlineBookingIntent(
         }
       }
 
+      await releaseStudentPendingHolds(tx, input.studentId, input.libraryId)
       const prepared = await prepareSelection(tx, input)
       const holdExpiresAt = new Date(Date.now() + ONLINE_HOLD_MINUTES * 60_000)
       const intent = await createIntentRecord(tx, {
@@ -1228,6 +1306,7 @@ export async function createPendingReceptionBooking(
         if (existing) return existing
       }
 
+      await releaseStudentPendingHolds(tx, input.studentId, input.libraryId)
       const prepared = await prepareSelection(tx, input)
       const holdExpiresAt = new Date(Date.now() + MANUAL_HOLD_MINUTES * 60_000)
       const intent = await createIntentRecord(tx, {
@@ -1452,6 +1531,122 @@ export async function cancelPendingReceptionBooking(
       })
     }
     return updated
+  })
+}
+
+export async function cancelStudentPendingBooking(input: {
+  studentId: string
+  libraryId?: string
+  bookingId?: string
+  referenceId?: string
+}): Promise<{ success: boolean; cancelledBookingId?: string }> {
+  return serializable(async (tx) => {
+    let booking = null
+
+    if (input.bookingId) {
+      booking = await tx.booking.findFirst({
+        where: {
+          id: input.bookingId,
+          studentId: input.studentId,
+          status: BookingStatus.PENDING_PAYMENT,
+        },
+        include: { bookingIntent: true },
+      })
+    } else if (input.referenceId) {
+      const intent = await tx.bookingIntent.findFirst({
+        where: {
+          referenceId: input.referenceId,
+          studentId: input.studentId,
+        },
+        include: { booking: true },
+      })
+      if (intent?.booking && intent.booking.status === BookingStatus.PENDING_PAYMENT) {
+        booking = { ...intent.booking, bookingIntent: intent }
+      } else if (intent) {
+        await tx.bookingIntent.update({
+          where: { id: intent.id },
+          data: {
+            status: BookingIntentStatus.CANCELLED,
+            failureReason: "USER_CANCELLED",
+          },
+        })
+        await tx.resourceLease.deleteMany({
+          where: { intentId: intent.id },
+        })
+        return { success: true }
+      }
+    } else if (input.libraryId) {
+      booking = await tx.booking.findFirst({
+        where: {
+          studentId: input.studentId,
+          libraryId: input.libraryId,
+          status: BookingStatus.PENDING_PAYMENT,
+        },
+        include: { bookingIntent: true },
+        orderBy: { createdAt: "desc" },
+      })
+    }
+
+    if (!booking) {
+      const intent = await tx.bookingIntent.findFirst({
+        where: {
+          studentId: input.studentId,
+          ...(input.libraryId ? { libraryId: input.libraryId } : {}),
+          status: {
+            in: [
+              BookingIntentStatus.HOLDING,
+              BookingIntentStatus.AWAITING_PAYMENT,
+              BookingIntentStatus.AWAITING_MANUAL_PAYMENT,
+            ],
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      })
+      if (intent) {
+        await tx.bookingIntent.update({
+          where: { id: intent.id },
+          data: {
+            status: BookingIntentStatus.CANCELLED,
+            failureReason: "USER_CANCELLED",
+          },
+        })
+        await tx.resourceLease.deleteMany({
+          where: { intentId: intent.id },
+        })
+        return { success: true }
+      }
+      return { success: false }
+    }
+
+    const updated = await tx.booking.update({
+      where: { id: booking.id },
+      data: {
+        status: BookingStatus.CANCELLED,
+        revokedReason: "USER_CANCELLED",
+      },
+    })
+
+    if (booking.bookingIntent) {
+      await tx.bookingIntent.update({
+        where: { id: booking.bookingIntent.id },
+        data: {
+          status: BookingIntentStatus.CANCELLED,
+          failureReason: "USER_CANCELLED",
+        },
+      })
+      await tx.resourceLease.deleteMany({
+        where: { intentId: booking.bookingIntent.id },
+      })
+    }
+
+    await tx.resourceLease.deleteMany({
+      where: {
+        studentId: input.studentId,
+        ...(input.libraryId ? { libraryId: input.libraryId } : {}),
+      },
+    })
+
+    return { success: true, cancelledBookingId: updated.id }
   })
 }
 
@@ -1813,6 +2008,7 @@ export async function pauseConfirmedBooking(bookingId: string): Promise<Booking>
       data: {
         isPaused: true,
         pausedAt: new Date(),
+        resumedAt: null,
       },
     })
   })
@@ -1861,7 +2057,7 @@ export async function resumePausedBooking(
       where: { id: booking.id },
       data: {
         isPaused: false,
-        pausedAt: null,
+        resumedAt: now,
         totalPausedDays: booking.totalPausedDays + extendedDays,
         endTime: newEndTime,
       },

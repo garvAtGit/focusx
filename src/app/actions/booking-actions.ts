@@ -49,6 +49,8 @@ export async function pauseBooking(bookingId: string) {
   await pauseConfirmedBooking(bookingId)
   await invalidateLibraryRuntimeCache(booking.libraryId)
   revalidatePath("/")
+  revalidatePath("/dashboard/students")
+  revalidatePath("/student/dashboard")
   return { success: true }
 }
 
@@ -58,6 +60,8 @@ export async function resumeBooking(bookingId: string) {
     const result = await resumePausedBooking(bookingId)
     await invalidateLibraryRuntimeCache(booking.libraryId)
     revalidatePath("/")
+    revalidatePath("/dashboard/students")
+    revalidatePath("/student/dashboard")
     return { success: true, extendedDays: result.extendedDays }
   } catch (error) {
     if (

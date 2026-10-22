@@ -1,10 +1,12 @@
 import crypto from "node:crypto";
 import { getSession } from "@/app/actions/auth-actions";
+import { authenticateMobileRequest } from "@/lib/mobile-auth";
 import prisma from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { LeaseResourceType } from "@prisma/client";
-import { activeBookingsCacheKey } from "@/lib/library-cache";
+import { activeBookingsCacheKey, invalidateLibraryRuntimeCache } from "@/lib/library-cache";
+import { cancelStudentPendingBooking } from "@/lib/booking-authority";
 import {
   getPrismaErrorCode,
   isPrismaSchemaUnavailable,
@@ -32,14 +34,27 @@ export async function GET(req: Request) {
     }
 
     const session = await getSession();
+    const mobileAuth = !session ? await authenticateMobileRequest(req) : null;
+    const userId = session?.userId || mobileAuth?.userId;
 
     let currentPlanEndDate = null;
     let studentActiveBookingId = null;
 
-    if (session?.userId) {
+    if (userId) {
+      const cancelRes = await cancelStudentPendingBooking({
+        studentId: userId,
+        libraryId,
+      }).catch((e) => {
+        console.warn("Failed to auto-free student hold:", e);
+        return null;
+      });
+      if (cancelRes?.success) {
+        await invalidateLibraryRuntimeCache(libraryId);
+      }
+
       const studentActiveBooking = await prisma.booking.findFirst({
         where: {
-          studentId: session.userId,
+          studentId: userId,
           libraryId: libraryId,
           status: "CONFIRMED",
           endTime: { gt: new Date() }
