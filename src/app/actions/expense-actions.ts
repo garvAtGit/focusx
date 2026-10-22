@@ -3,6 +3,7 @@
 import prisma from "@/lib/prisma"
 import { getSession } from "./auth-actions"
 import { revalidatePath } from "next/cache"
+import { requirePermission } from "@/lib/permissions"
 
 type ExpenseActionResult =
   | { success: true; error?: never }
@@ -11,7 +12,7 @@ type ExpenseActionResult =
 export async function addExpense(formData: FormData): Promise<ExpenseActionResult> {
   try {
     const session = await getSession();
-    if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN')) {
+    if (!session) {
       return { success: false, error: "Unauthorized" };
     }
 
@@ -35,12 +36,10 @@ export async function addExpense(formData: FormData): Promise<ExpenseActionResul
       return { success: false, error: "Invalid amount" };
     }
 
-    // Verify librarian owns this library (if not admin)
-    if (session.role === 'LIBRARIAN') {
-      const lib = await prisma.library.findFirst({
-        where: { id: libraryId, librarianId: session.userId }
-      });
-      if (!lib) return { success: false, error: "Unauthorized for this library" };
+    // Granular permission check: require 'financials.manage' for this library
+    const authCheck = await requirePermission(session, libraryId, 'financials.manage');
+    if (!authCheck.authorized) {
+      return { success: false, error: authCheck.error };
     }
 
     await prisma.expense.create({
@@ -67,15 +66,14 @@ export async function addExpense(formData: FormData): Promise<ExpenseActionResul
 export async function deleteExpense(expenseId: string, libraryId: string): Promise<ExpenseActionResult> {
   try {
     const session = await getSession();
-    if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN')) {
+    if (!session) {
       return { success: false, error: "Unauthorized" };
     }
 
-    if (session.role === 'LIBRARIAN') {
-      const lib = await prisma.library.findFirst({
-        where: { id: libraryId, librarianId: session.userId }
-      });
-      if (!lib) return { success: false, error: "Unauthorized for this library" };
+    // Granular permission check: require 'financials.manage' for this library
+    const authCheck = await requirePermission(session, libraryId, 'financials.manage');
+    if (!authCheck.authorized) {
+      return { success: false, error: authCheck.error };
     }
 
     await prisma.expense.delete({
@@ -83,6 +81,7 @@ export async function deleteExpense(expenseId: string, libraryId: string): Promi
     });
 
     revalidatePath("/dashboard/financials");
+    revalidatePath("/dashboard");
     
     return { success: true };
   } catch (error: unknown) {

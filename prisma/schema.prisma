@@ -65,6 +65,9 @@ model User {
   pushSubscriptions           PushSubscription[]
   browserPushEnabled          Boolean            @default(true)
   pushDeliveries              PushDeliveryQueue[]
+  staffMemberships            LibraryStaff[]     @relation("UserStaffMemberships")
+  grantedStaff                LibraryStaff[]     @relation("StaffGrants")
+  staffAuditLogs              StaffAuditLog[]    @relation("StaffAuditActor")
 
   @@index([name])
   @@index([phone])
@@ -115,6 +118,7 @@ model Library {
   seats             Seat[]
   standaloneLockers StandaloneLocker[]
   staff             User[]             @relation("LibraryStaff")
+  staffMemberships  LibraryStaff[]     @relation("LibraryStaffMemberships")
 
   @@index([librarianId])
   @@index([kycStatus])
@@ -765,5 +769,64 @@ model PushDeliveryQueue {
   @@index([userId])
   @@index([notificationId])
   @@index([endpoint])
+}
+
+enum StaffRole {
+  MANAGER
+  RECEPTIONIST
+  CUSTOM
+}
+
+enum StaffStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  REVOKED
+}
+
+model LibraryStaff {
+  id             String         @id @default(uuid())
+  userId         String
+  libraryId      String
+  role           StaffRole      @default(RECEPTIONIST)
+  customRoleName String?
+  status         StaffStatus    @default(ACTIVE)
+  permissions    String[]
+  grantedById    String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  user           User           @relation("UserStaffMemberships", fields: [userId], references: [id], onDelete: Cascade)
+  library        Library        @relation("LibraryStaffMemberships", fields: [libraryId], references: [id], onDelete: Cascade)
+  grantedBy      User?          @relation("StaffGrants", fields: [grantedById], references: [id], onDelete: SetNull)
+  auditLogs      StaffAuditLog[]
+
+  @@unique([userId, libraryId])
+  @@index([userId])
+  @@index([libraryId])
+  @@index([status])
+}
+
+model StaffAuditLog {
+  id             String       @id @default(uuid())
+  libraryStaffId String
+  actorId        String?
+  action         String       // "CREATED", "PERMISSIONS_UPDATED", "ROLE_UPDATED", "STATUS_UPDATED", "REVOKED"
+  previousRole   StaffRole?
+  newRole        StaffRole?
+  previousStatus StaffStatus?
+  newStatus      StaffStatus?
+  previousPerms  String[]
+  newPerms       String[]
+  reason         String?
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+
+  libraryStaff   LibraryStaff @relation(fields: [libraryStaffId], references: [id], onDelete: Cascade)
+  actor          User?        @relation("StaffAuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([libraryStaffId])
+  @@index([actorId])
+  @@index([createdAt])
 }
 

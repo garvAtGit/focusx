@@ -41,6 +41,7 @@ async function getStaffAuthorizedLibraryIds(userId: string, employerLibraryId: s
       OR: [
         { librarianId: userId },
         ...(employerLibraryId ? [{ id: employerLibraryId }] : []),
+        { staffMemberships: { some: { userId, status: 'ACTIVE' } } },
       ],
     },
     select: { id: true },

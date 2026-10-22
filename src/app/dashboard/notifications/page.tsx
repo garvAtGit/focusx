@@ -28,6 +28,7 @@ export default async function LibrarianNotificationsPage() {
         OR: [
           { librarianId: session.userId },
           ...(session.employerLibraryId ? [{ id: session.employerLibraryId }] : []),
+          { staffMemberships: { some: { userId: session.userId, status: 'ACTIVE' } } },
         ],
       },
       select: { id: true, name: true, city: true, address: true },

@@ -9,6 +9,7 @@ import FinancialCharts from "./FinancialCharts";
 import { ExpenseForm, DeleteExpenseButton } from "./ExpenseForm";
 import DateRangeFilter from "@/components/DateRangeFilter";
 import { getActiveLibrary } from "@/lib/dashboard-utils";
+import { hasPermission } from "@/lib/permissions";
 import { MathReveal } from "./MathReveal";
 
 export default async function FinancialsPage({
@@ -17,12 +18,19 @@ export default async function FinancialsPage({
   searchParams: Promise<{ from?: string, to?: string, page?: string }>
 }) {
   const session = await getSession();
-  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN')) {
+  if (!session) {
     redirect("/login");
   }
 
   const library = await getActiveLibrary(session);
   if (!library) redirect("/onboarding");
+
+  const canViewFinancials = await hasPermission(session, library.id, 'financials.view');
+  if (!canViewFinancials) {
+    redirect("/dashboard");
+  }
+
+  const canManageFinancials = await hasPermission(session, library.id, 'financials.manage');
 
   const sp = await searchParams;
   const fromDate = sp?.from ? new Date(sp.from) : undefined;

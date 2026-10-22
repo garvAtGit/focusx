@@ -1,5 +1,6 @@
 import { SessionData } from "@/app/actions/auth-actions";
 import prisma from "@/lib/prisma";
+import { hasPermission } from "@/lib/permissions";
 
 export async function processWebScanCore(
   qrDataString: string, 
@@ -13,6 +14,11 @@ export async function processWebScanCore(
 
   if (!session || (session.role !== "LIBRARIAN" && session.role !== "ADMIN" && session.role !== "RECEPTIONIST")) {
     return { error: "Unauthorized" };
+  }
+
+  const canScan = await hasPermission(session, libraryId, "attendance.manage");
+  if (!canScan) {
+    return { error: "Forbidden: attendance.manage permission required" };
   }
 
   // Verify librarian manages this library

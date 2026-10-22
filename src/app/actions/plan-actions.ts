@@ -5,6 +5,8 @@ import { revalidatePath, updateTag } from "next/cache"
 import { PlanType } from "@prisma/client"
 import { getSession } from "./auth-actions"
 import { invalidateLibraryRuntimeCache } from "@/lib/library-cache"
+import { getActiveLibrary } from "@/lib/dashboard-utils"
+import { requirePermission } from "@/lib/permissions"
 import {
   parseMoney,
   parseDiscount,
@@ -34,10 +36,13 @@ const MAX_BATCH_PLANS = 100;
 
 export async function addPlan(formData: FormData): Promise<void> {
   const session = await getSession();
-  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN')) throw new Error("Unauthorized");
+  if (!session) throw new Error("Unauthorized");
 
-  const library = await prisma.library.findFirst({ where: session.role === 'ADMIN' ? {} : { librarianId: session.userId } });
+  const library = await getActiveLibrary(session);
   if (!library) throw new Error("No library found to attach the plan to.");
+
+  const authCheck = await requirePermission(session, library.id, 'plans.manage');
+  if (!authCheck.authorized) throw new Error(authCheck.error);
 
   const name = requireString(formData.get("name"), "Plan name", 120);
   const type = parsePlanType(formData.get("type"));
@@ -59,10 +64,13 @@ export async function addPlan(formData: FormData): Promise<void> {
 
 export async function batchAddPlans(plansData: string): Promise<void> {
   const session = await getSession();
-  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN')) throw new Error("Unauthorized");
+  if (!session) throw new Error("Unauthorized");
 
-  const library = await prisma.library.findFirst({ where: session.role === 'ADMIN' ? {} : { librarianId: session.userId } });
+  const library = await getActiveLibrary(session);
   if (!library) throw new Error("No library found to attach the plan to.");
+
+  const authCheck = await requirePermission(session, library.id, 'plans.manage');
+  if (!authCheck.authorized) throw new Error(authCheck.error);
 
   let parsedPlans: unknown;
   try {
@@ -100,10 +108,13 @@ export async function batchAddPlans(plansData: string): Promise<void> {
 
 export async function deletePlan(planId: string): Promise<void> {
   const session = await getSession();
-  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN')) throw new Error("Unauthorized");
+  if (!session) throw new Error("Unauthorized");
 
-  const library = await prisma.library.findFirst({ where: session.role === 'ADMIN' ? {} : { librarianId: session.userId } });
+  const library = await getActiveLibrary(session);
   if (!library) throw new Error("No library found");
+
+  const authCheck = await requirePermission(session, library.id, 'plans.manage');
+  if (!authCheck.authorized) throw new Error(authCheck.error);
 
   // Only operate on a plan that belongs to this library.
   const plan = await prisma.plan.findFirst({ where: { id: planId, libraryId: library.id } });
@@ -128,10 +139,13 @@ export async function deletePlan(planId: string): Promise<void> {
 
 export async function editPlan(formData: FormData): Promise<void> {
   const session = await getSession();
-  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN')) throw new Error("Unauthorized");
+  if (!session) throw new Error("Unauthorized");
 
-  const library = await prisma.library.findFirst({ where: session.role === 'ADMIN' ? {} : { librarianId: session.userId } });
+  const library = await getActiveLibrary(session);
   if (!library) throw new Error("No library found");
+
+  const authCheck = await requirePermission(session, library.id, 'plans.manage');
+  if (!authCheck.authorized) throw new Error(authCheck.error);
 
   const id = requireString(formData.get("id"), "Plan id", 64);
   const name = requireString(formData.get("name"), "Plan name", 120);

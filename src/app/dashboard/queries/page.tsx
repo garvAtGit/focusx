@@ -7,10 +7,14 @@ import { getActiveLibrary } from "@/lib/dashboard-utils";
 
 export default async function QueriesPage() {
   const session = await getSession();
-  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN' && session.role !== 'RECEPTIONIST')) redirect("/login");
+  if (!session) redirect("/login");
 
   const library = await getActiveLibrary(session);
   if (!library) redirect("/onboarding");
+
+  const { hasPermission } = await import("@/lib/permissions");
+  const canView = await hasPermission(session, library.id, 'queries.view');
+  if (!canView) redirect("/dashboard");
 
   const queries = await prisma.query.findMany({
     where: { libraryId: library.id },

@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { getActiveLibrary } from "@/lib/dashboard-utils";
 import { calculateBookingTotal } from "@/lib/pricing-utils";
 import { Prisma } from "@prisma/client";
+import { hasPermission } from "@/lib/permissions";
 import { DashboardOverviewClient } from "./DashboardOverviewClient";
 
 export default async function LibrarianDashboardPage() {
@@ -443,8 +444,9 @@ export default async function LibrarianDashboardPage() {
     time: new Date(b.createdAt).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', timeZone: 'Asia/Kolkata' })
   }));
 
-  // Formatting Transactions
-  const todaysTransactionsData = todaysBookings.map(b => {
+  // Formatting Transactions (gated by financials.view)
+  const canViewFinancials = await hasPermission(session, library.id, 'financials.view');
+  const todaysTransactionsData = canViewFinancials ? todaysBookings.map(b => {
     const price = calculateBookingTotal(b);
     return {
       id: b.id,
@@ -457,7 +459,7 @@ export default async function LibrarianDashboardPage() {
               'Razorpay',
       time: new Date(b.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })
     };
-  });
+  }) : [];
 
   // Formatting Live Activity Logs
   const activityLogs = [

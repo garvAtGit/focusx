@@ -16,10 +16,14 @@ export default async function StudentsPage(props: { searchParams: Promise<{ [key
   const PAGE_SIZE = 20;
 
   const session = await getSession();
-  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN' && session.role !== 'RECEPTIONIST')) redirect("/login");
+  if (!session) redirect("/login");
 
   const library = await getActiveLibrary(session);
   if (!library) redirect("/onboarding");
+
+  const { hasPermission } = await import("@/lib/permissions");
+  const canView = await hasPermission(session, library.id, 'students.view');
+  if (!canView) redirect("/dashboard");
 
   const now = new Date();
   now.setHours(0,0,0,0);
