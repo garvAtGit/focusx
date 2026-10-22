@@ -32,7 +32,7 @@ export default async function LibrarianDashboardPage() {
   const [
     studentCount,
     totalSeatsCount,
-    occupiedSeatRows,
+    bookedSeats,
     pendingQueries,
     recentBookings,
     checkinLogsRaw,
@@ -43,8 +43,6 @@ export default async function LibrarianDashboardPage() {
     latestEntryStates,
     thirtyDayBookings,
     relays,
-    checkinLogsForActivity,
-    entryLogsForActivity
   ] = await Promise.all([
     prisma.user.count({
       where: {
@@ -58,17 +56,15 @@ export default async function LibrarianDashboardPage() {
       },
     }),
     prisma.seat.count({ where: { libraryId: library.id } }),
-    prisma.booking.findMany({
+    prisma.booking.count({
       where: {
         libraryId: library.id,
         status: 'CONFIRMED',
         isPaused: false,
         seatId: { not: null },
         startTime: { lte: now },
-        endTime: { gte: now }
+        endTime: { gte: now },
       },
-      select: { seatId: true },
-      distinct: ['seatId']
     }),
     prisma.query.count({ where: { libraryId: library.id, createdAt: { gte: sevenDaysAgo } } }),
     prisma.booking.findMany({
@@ -79,9 +75,9 @@ export default async function LibrarianDashboardPage() {
     }),
     prisma.checkinLog.findMany({
       where: { libraryId: library.id, timestamp: { gte: sevenDaysAgo } },
-      include: { student: { select: { name: true, phone: true } } },
+      include: { student: { select: { id: true, name: true, phone: true, uniqueId: true } }, relay: true },
       orderBy: { timestamp: 'desc' },
-      take: 500,
+      take: 50,
     }),
     prisma.booking.count({
       where: {
@@ -97,10 +93,10 @@ export default async function LibrarianDashboardPage() {
       take: 20,
     }),
     prisma.entryLog.findMany({
-      where: { libraryId: library.id, timestamp: { gte: sevenDaysAgo }, status: { in: ["SUCCESS", "IN", "OUT"] } },
-      include: { user: { select: { id: true, name: true, phone: true } } },
+      where: { libraryId: library.id, timestamp: { gte: sevenDaysAgo }, status: { in: ["SUCCESS", "DENIED", "IN", "OUT"] } },
+      include: { user: { select: { id: true, name: true, phone: true, uniqueId: true } } },
       orderBy: { timestamp: 'desc' },
-      take: 500,
+      take: 50,
     }),
     prisma.booking.findMany({
       where: {
@@ -132,30 +128,22 @@ export default async function LibrarianDashboardPage() {
       where: { libraryId: library.id },
       orderBy: { createdAt: 'desc' }
     }),
-    prisma.checkinLog.findMany({
-      where: { libraryId: library.id },
-      include: { student: { select: { id: true, name: true, uniqueId: true } }, relay: true },
-      orderBy: { timestamp: 'desc' },
-      take: 50
-    }),
-    prisma.entryLog.findMany({
-      where: { libraryId: library.id, status: { in: ['SUCCESS', 'DENIED', 'IN', 'OUT'] } },
-      include: { user: { select: { id: true, name: true, uniqueId: true } } },
-      orderBy: { timestamp: 'desc' },
-      take: 50
-    })
   ]);
 
   const totalSeats = totalSeatsCount || library.seatsAvailable || 1;
-  const bookedSeats = occupiedSeatRows.length;
   const occupancyPercentage = Math.min(100, Math.round((bookedSeats / totalSeats) * 100));
 
   const insideUserIds = latestEntryStates
     .filter(({ status }) => status !== "OUT")
     .map(({ userId }) => userId);
-  const studentsInside = await prisma.user.findMany({
+  const studentsInside = insideUserIds.length > 0 ? await prisma.user.findMany({
     where: { id: { in: insideUserIds } },
-  });
+    select: {
+      id: true,
+      name: true,
+      phone: true,
+    },
+  }) : [];
 
   // Formatting Live Access
   const combinedLogsUnfiltered = [
@@ -461,7 +449,7 @@ export default async function LibrarianDashboardPage() {
 
   // Formatting Live Activity Logs
   const activityLogs = [
-    ...checkinLogsForActivity.map(log => ({
+    ...checkinLogsRaw.map(log => ({
       id: log.id,
       studentId: log.studentId,
       status: log.status,
@@ -470,7 +458,7 @@ export default async function LibrarianDashboardPage() {
       isOfflineSync: log.isOfflineSync,
       student: log.student
     })),
-    ...entryLogsForActivity.map(log => ({
+    ...entryLogs.map(log => ({
       id: log.id,
       studentId: log.userId || '',
       status: (log.status === 'DENIED' ? 'DENIED' : log.status === 'OUT' ? 'CHECK_OUT' : 'CHECK_IN') as
