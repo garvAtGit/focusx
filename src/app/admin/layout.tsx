@@ -37,14 +37,31 @@ async function AdminAuthWrapper({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-background flex flex-col">
       {/* Admin Navbar */}
       <header className="h-16 border-b border-border bg-card flex items-center justify-between px-6 sticky top-0 z-50">
-        <div className="flex items-center gap-4">
-          <Link href="/admin" className="flex items-center gap-2 group">
-            <Image src="/final-logo.svg" alt="FocusX Logo" width={48} height={48} className="object-contain" />
-            <span className="text-xl font-heading font-bold text-primary">Admin Control</span>
-          </Link>
-          <span className="text-xs px-2 py-1 bg-destructive/10 text-destructive rounded-full font-bold uppercase tracking-wide">
-            Superuser
-          </span>
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-4">
+            <Link href="/admin" className="flex items-center gap-2 group">
+              <Image src="/final-logo.svg" alt="FocusX Logo" width={48} height={48} className="object-contain" />
+              <span className="text-xl font-heading font-bold text-primary">Admin Control</span>
+            </Link>
+            <span className="text-xs px-2 py-1 bg-destructive/10 text-destructive rounded-full font-bold uppercase tracking-wide">
+              Superuser
+            </span>
+          </div>
+
+          <nav className="hidden sm:flex items-center gap-2">
+            <Link
+              href="/admin"
+              className="px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-colors hover:bg-muted text-foreground"
+            >
+              Approvals
+            </Link>
+            <Link
+              href="/admin/machines"
+              className="px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-colors hover:bg-muted text-foreground"
+            >
+              Libraries & Machines
+            </Link>
+          </nav>
         </div>
         
         <div className="flex items-center gap-4">

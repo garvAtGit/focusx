@@ -45,6 +45,18 @@ export async function POST(req: Request) {
       });
     }
 
+    if (modules && typeof modules === 'object') {
+      try {
+        const { redis } = await import('@/lib/redis');
+        await redis.set(`relay:modules:${relay.id}`, JSON.stringify({
+          ...modules,
+          updatedAt: now
+        }), { ex: 300 }); // 5 min TTL
+      } catch (err) {
+        console.warn("Failed to cache relay modules in Redis:", err);
+      }
+    }
+
     return NextResponse.json({ status: 'OK', message: 'Status updated successfully' });
   } catch (error) {
     console.error('Error in hardware status route:', error);
