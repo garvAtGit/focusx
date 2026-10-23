@@ -30,3 +30,6 @@ nodemcu_qr_access/
 
 # Never ship key material
 *.pem
+ 
+.env*
+.vercel

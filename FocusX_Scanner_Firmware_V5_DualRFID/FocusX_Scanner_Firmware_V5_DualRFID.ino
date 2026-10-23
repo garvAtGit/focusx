@@ -1858,7 +1858,40 @@ void doAuth(String uid, String scanType, bool isExit) {
   }
 
   if (isAllowed) {
-    // Near-zero latency instant actuation
+    // 1. Durability First: Construct event and commit to journal BEFORE physical unlock
+    ScanEvent e;
+    currentSeqNo++;
+    e.seqNo = currentSeqNo;
+    e.eventId = String(READER_ID) + "-" + String(bootCount) + "-" + String(currentSeqNo);
+    e.scanType = scanType;
+    e.payload = uid;
+    e.timestampMs = millis();
+    e.timestampUnix = nowUnix;
+    e.isExit = isExit;
+    e.authRevision = currentAuthRevision;
+    e.offlineDecision = true;
+
+    if (!appendToJournal(e)) {
+      Serial.println("[FAIL CLOSED] Journal append failed. Denying gate unlock.");
+      setLEDsColor(255, 0, 0);
+      if (isExit) setRFID2StripColor(255, 0, 0);
+      lcd.clear(); lcd.setCursor(0,0); lcd.print("JOURNAL FAIL");
+      lcd.setCursor(0,1); lcd.print("FAIL CLOSED");
+      playDeniedChime();
+      delay(2000);
+      resetToIdle();
+      return;
+    }
+
+    portENTER_CRITICAL(&queueMutex);
+    if (pendingEvents.size() < 500 && !hasMoreOnFlash) {
+      pendingEvents.push_back(e);
+    } else {
+      hasMoreOnFlash = true;
+    }
+    portEXIT_CRITICAL(&queueMutex);
+
+    // 2. Physical Actuation & Feedback (only after journal persistence is confirmed)
     isGateOpen = true;
     gateOpenStartTime = millis();
     hasDoorOpenedDuringGrace = false;
@@ -1894,29 +1927,6 @@ void doAuth(String uid, String scanType, bool isExit) {
 
     if (highestTrustedTime > 0) {
        preferences.putUInt("highTime", highestTrustedTime);
-    }
-
-    // Journal event creation and append
-    ScanEvent e;
-    currentSeqNo++;
-    e.seqNo = currentSeqNo;
-    e.eventId = String(READER_ID) + "-" + String(bootCount) + "-" + String(currentSeqNo);
-    e.scanType = scanType;
-    e.payload = uid;
-    e.timestampMs = millis();
-    e.timestampUnix = nowUnix;
-    e.isExit = isExit;
-    e.authRevision = currentAuthRevision;
-    e.offlineDecision = true;
-
-    if (appendToJournal(e)) {
-      portENTER_CRITICAL(&queueMutex);
-      if (pendingEvents.size() < 500 && !hasMoreOnFlash) {
-        pendingEvents.push_back(e);
-      } else {
-        hasMoreOnFlash = true;
-      }
-      portEXIT_CRITICAL(&queueMutex);
     }
   } else {
     setLEDsColor(255, 0, 0);
@@ -1970,11 +1980,6 @@ void triggerAlarm() {
   }
   safeNoTone();
   resetToIdle();
-
-  // Initialize Task Watchdog Timer (TWDT) for 30-second timeout
-  esp_task_wdt_init(TWDT_TIMEOUT_S, true);
-  esp_task_wdt_add(NULL); // Register Core 1 loopTask
-  Serial.println("[WDT] Task Watchdog Timer initialized (30s timeout) and registered to Core 1 loopTask");
 }
 
 void triggerDoorLeftOpenAlarm() {
@@ -2215,6 +2220,12 @@ void setup() {
   // Cloud Queues
   authRequestQueue = xQueueCreate(10, sizeof(AuthRequest));
   authResponseQueue = xQueueCreate(10, sizeof(AuthResponse));
+
+  // Initialize Task Watchdog Timer (TWDT) with 30-second timeout BEFORE spawning worker tasks
+  esp_task_wdt_init(TWDT_TIMEOUT_S, true);
+  esp_task_wdt_add(NULL); // Register Core 1 loopTask
+  Serial.println("[WDT] Task Watchdog Timer initialized (30s timeout) and registered to Core 1 loopTask");
+
   xTaskCreatePinnedToCore(httpWorkerTask, "HTTP", 32768, NULL, 1, NULL, 0);
 
   // (PN532 SPI readers were initialized at Stage 6b before Wi-Fi provisioning)

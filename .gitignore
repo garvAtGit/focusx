@@ -87,3 +87,8 @@ test_safe_i2c/
 0001.wav
 0002.mp3
 0002.wav
+
+.vercel
+.env*
+
+FocusX_Scanner_Firmware_V5_DualRFID/build_8mb/
