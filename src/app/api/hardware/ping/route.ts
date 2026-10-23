@@ -12,16 +12,21 @@ export async function POST(req: Request) {
 
     const relay = await prisma.relay.findUnique({
       where: { bleReaderId: readerId },
+      select: { id: true, lastSeenAt: true },
     });
 
     if (!relay) {
       return NextResponse.json({ success: false, error: "Relay not found" }, { status: 404 });
     }
 
-    await prisma.relay.update({
-      where: { id: relay.id },
-      data: { lastSeenAt: new Date() },
-    });
+    const now = Date.now();
+    const lastSeenTime = relay.lastSeenAt ? relay.lastSeenAt.getTime() : 0;
+    if (now - lastSeenTime > 30_000) {
+      await prisma.relay.update({
+        where: { id: relay.id },
+        data: { lastSeenAt: new Date(now) },
+      });
+    }
 
     return NextResponse.json({ success: true, timestamp: Date.now() });
   } catch (error: any) {

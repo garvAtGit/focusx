@@ -255,15 +255,39 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => void loadDynamicData(), 0);
-    const interval = window.setInterval(
-      () => void loadDynamicData(false),
-      15_000,
-    );
+    const interval = window.setInterval(() => {
+      if (document.visibilityState !== "hidden") {
+        void loadDynamicData(false);
+      }
+    }, 15_000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void loadDynamicData(false);
+      }
+    };
+
+    const handlePageShow = () => {
+      // If student navigated back mid-transaction or returned to page,
+      // cancel hold and free seat instantly!
+      fetch('/api/checkout/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ libraryId: library.id, reason: 'USER_CANCELLED' })
+      }).finally(() => {
+        void loadDynamicData(false);
+      });
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pageshow", handlePageShow);
     return () => {
       window.clearTimeout(initialLoad);
       window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pageshow", handlePageShow);
     };
-  }, [loadDynamicData]);
+  }, [loadDynamicData, library.id]);
 
   const handleFeedbackSubmit = async () => {
     if (!dynamicState.studentId) {

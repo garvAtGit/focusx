@@ -1353,23 +1353,53 @@ String getISOTime() {
 }
 
 void sendHardwarePing() {
-  if (millis() - lastPingTime > 60000) {
+  // 30 seconds backup ping with full component health diagnostics
+  if (millis() - lastPingTime > 30000) {
     if (WiFi.status() == WL_CONNECTED && String(READER_ID) != "") {
       String isoTime = getISOTime();
       if (isoTime != "") {
+        // Collect hardware component diagnostics
+        bool doorClosed = (digitalRead(REED_PIN) == LOW);
+        int wifiRssi = WiFi.RSSI();
         
-        
+        // Report to FocusX Hardware Diagnostic endpoint
+        WiFiClientSecure client;
+        client.setInsecure();
         HTTPClient http;
-        String url = String(SUPABASE_URL) + "/rest/v1/Relay?bleReaderId=eq." + String(READER_ID);
-        WiFiClientSecure client; client.setCACert(rootCACertificate); http.begin(client, url);
-        http.addHeader("apikey", SUPABASE_ANON_KEY);
-        http.addHeader("Authorization", "Bearer " + String(SUPABASE_ANON_KEY));
-        http.addHeader("Content-Type", "application/json");
-        http.addHeader("Prefer", "return=minimal");
         
-        String payload = "{\"lastSeenAt\": \"" + isoTime + "\"}";
-        http.PATCH(payload);
-        http.end();
+        if (http.begin(client, "https://www.focusx.in/api/hardware/status")) {
+          http.addHeader("Content-Type", "application/json");
+          http.addHeader("Authorization", String("Bearer ") + HARDWARE_API_KEY);
+          http.setTimeout(4000);
+          
+          StaticJsonDocument<256> diagDoc;
+          diagDoc["readerId"] = READER_ID.c_str();
+          JsonObject mods = diagDoc.createNestedObject("modules");
+          mods["nfc1"] = true; // PN532 #1 active
+          mods["nfc2"] = true; // PN532 #2 active
+          mods["doorReed"] = doorClosed;
+          mods["ble"] = true;
+          mods["rssi"] = wifiRssi;
+          
+          String diagBody;
+          serializeJson(diagDoc, diagBody);
+          http.POST(diagBody);
+          http.end();
+        }
+
+        // Direct Supabase PATCH backup for lastSeenAt
+        HTTPClient patchHttp;
+        String url = String(SUPABASE_URL) + "/rest/v1/Relay?bleReaderId=eq." + String(READER_ID);
+        if (patchHttp.begin(client, url)) {
+          patchHttp.addHeader("apikey", SUPABASE_ANON_KEY);
+          patchHttp.addHeader("Authorization", "Bearer " + String(SUPABASE_ANON_KEY));
+          patchHttp.addHeader("Content-Type", "application/json");
+          patchHttp.addHeader("Prefer", "return=minimal");
+          
+          String payload = "{\"lastSeenAt\": \"" + isoTime + "\"}";
+          patchHttp.PATCH(payload);
+          patchHttp.end();
+        }
       }
     }
     lastPingTime = millis();

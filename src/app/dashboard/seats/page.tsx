@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useRef } from "react";
-import { Plus, Trash2, Save, Undo2, Loader2, Lock, X, Layers } from "lucide-react";
+import { Plus, Trash2, Save, Undo2, Loader2, Lock, X, Layers, RefreshCw } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -68,7 +68,13 @@ export default function SeatsManagerPage() {
   const [isPopupLoading, setIsPopupLoading] = useState(false);
   const [libraryId, setLibraryId] = useState<string>("");
   const [initialOccupied, setInitialOccupied] = useState<string[]>([]);
-  const { occupiedSeatIds: realtimeOccupiedSeatIds, occupantData, unreservedLiveStudents } = useAdminRealtimeSeats(libraryId, initialOccupied);
+  const {
+    occupiedSeatIds: realtimeOccupiedSeatIds,
+    occupantData,
+    unreservedLiveStudents,
+    refresh: refreshSeats,
+    isRefreshing: isRefreshingSeats,
+  } = useAdminRealtimeSeats(libraryId, initialOccupied, { enabled: viewMode === 'LIVE' });
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
@@ -397,7 +403,7 @@ export default function SeatsManagerPage() {
           <h1 className="text-3xl font-heading font-bold text-foreground">Seat Plan & Lockers</h1>
           <p className="text-muted-foreground mt-1">Design your library layout and manage locker pricing.</p>
         </div>
-        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+        <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
           <div className="flex p-1 bg-muted/50 rounded-xl border border-border shadow-inner">
             <button 
               onClick={() => setViewMode('LIVE')}
@@ -412,6 +418,18 @@ export default function SeatsManagerPage() {
               Edit Layout
             </button>
           </div>
+          {viewMode === 'LIVE' && (
+            <button
+              type="button"
+              onClick={() => void refreshSeats()}
+              disabled={isRefreshingSeats}
+              className="px-3.5 py-2 rounded-xl text-sm font-semibold border border-border bg-card text-foreground hover:bg-muted transition-all flex items-center gap-2 shadow-sm disabled:opacity-50"
+              title="Sync live seats availability"
+            >
+              <RefreshCw className={`w-4 h-4 ${isRefreshingSeats ? 'animate-spin text-primary' : 'text-muted-foreground'}`} />
+              <span>{isRefreshingSeats ? "Syncing..." : "Sync Seats"}</span>
+            </button>
+          )}
         </div>
         
         {viewMode === 'EDIT' && (

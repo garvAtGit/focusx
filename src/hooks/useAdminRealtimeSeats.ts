@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 
 export type AdminOccupantData = {
   studentId?: string;
@@ -20,15 +20,20 @@ type AdminAvailabilityResponse = {
 export function useAdminRealtimeSeats(
   libraryId: string,
   initialOccupiedSeatIds: string[],
+  options?: { enabled?: boolean },
 ) {
+  const enabled = options?.enabled ?? true
   const [occupiedSeatIds, setOccupiedSeatIds] = useState<string[]>(
     initialOccupiedSeatIds,
   )
   const [occupantData, setOccupantData] = useState<Record<string, AdminOccupantData>>({})
   const [unreservedLiveStudents, setUnreservedLiveStudents] = useState<AdminOccupantData[]>([])
+  const [isRefreshing, setIsRefreshing] = useState(false)
+
+  const refreshRef = useRef<() => Promise<void>>(() => Promise.resolve())
 
   useEffect(() => {
-    if (!libraryId) return
+    if (!libraryId || !enabled) return
 
     let disposed = false
     let controller: AbortController | null = null
@@ -40,6 +45,7 @@ export function useAdminRealtimeSeats(
       ) return
       controller?.abort()
       controller = new AbortController()
+      setIsRefreshing(true)
       try {
         const response = await fetch(
           `/api/library/admin-live-seats?libraryId=${encodeURIComponent(libraryId)}`,
@@ -75,17 +81,41 @@ export function useAdminRealtimeSeats(
         if (!(error instanceof DOMException && error.name === "AbortError")) {
           console.warn("Admin seat availability refresh failed:", error)
         }
+      } finally {
+        if (!disposed) {
+          setIsRefreshing(false)
+        }
       }
     }
 
+    refreshRef.current = refresh
+
     void refresh()
-    const interval = window.setInterval(refresh, 15_000)
+    // Poll every 60s instead of 15s to save 75% database load; users have manual sync button
+    const interval = window.setInterval(refresh, 60_000)
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void refresh()
+    }
+    const onPageShow = () => {
+      void refresh()
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange)
+    window.addEventListener("pageshow", onPageShow)
+
     return () => {
       disposed = true
       controller?.abort()
       window.clearInterval(interval)
+      document.removeEventListener("visibilitychange", onVisibilityChange)
+      window.removeEventListener("pageshow", onPageShow)
     }
-  }, [libraryId])
+  }, [libraryId, enabled])
 
-  return { occupiedSeatIds, occupantData, unreservedLiveStudents }
+  return {
+    occupiedSeatIds,
+    occupantData,
+    unreservedLiveStudents,
+    refresh: () => refreshRef.current(),
+    isRefreshing,
+  }
 }
