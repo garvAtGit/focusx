@@ -3,7 +3,7 @@ import prisma from "@/lib/prisma";
 import { UserNav } from "@/components/user-nav";
 import Link from "next/link";
 import { NotificationBell } from "./NotificationBell";
-import { NotificationListener } from "./NotificationListener";
+import { NotificationProvider } from "./notifications/NotificationProvider";
 import { AccessQRModal } from "./AccessQRModal";
 import type { Notification } from "@prisma/client";
 import { Button } from "@/components/ui/button";
@@ -19,9 +19,11 @@ export async function NavbarAuth() {
   if (session?.userId) {
     user = await prisma.user.findUnique({ where: { id: session.userId } });
     notifications = await prisma.notification.findMany({
-      where: { studentId: session.userId },
+      where: {
+        OR: [{ userId: session.userId }, { studentId: session.userId }],
+      },
       orderBy: { createdAt: 'desc' },
-      take: 20
+      take: 20,
     });
     
     // Find the user's most recent active booking to provide library context for the QR Code icon
@@ -44,17 +46,18 @@ export async function NavbarAuth() {
 
   if (session && user) {
     return (
-      <div className="flex items-center gap-1 sm:gap-2">
-        <NotificationListener notifications={notifications} />
-        <AccessQRModal 
-          libraryId={activeBooking?.libraryId || ""} 
-          studentId={session.userId} 
-          initialQrPayload={initialQrPayload}
-          iconOnly 
-        />
-        <NotificationBell notifications={notifications} />
-        <UserNav user={user} />
-      </div>
+      <NotificationProvider userId={session.userId} initialNotifications={notifications}>
+        <div className="flex items-center gap-1 sm:gap-2">
+          <AccessQRModal 
+            libraryId={activeBooking?.libraryId || ""} 
+            studentId={session.userId} 
+            initialQrPayload={initialQrPayload}
+            iconOnly 
+          />
+          <NotificationBell />
+          <UserNav user={user} />
+        </div>
+      </NotificationProvider>
     );
   }
 

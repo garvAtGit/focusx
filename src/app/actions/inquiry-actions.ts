@@ -3,6 +3,7 @@
 import prisma from "@/lib/prisma"
 import { revalidatePath } from "next/cache"
 import { getSession } from "./auth-actions"
+import { requirePermission } from "@/lib/permissions"
 
 type InquiryActionResult =
   | { success: true; error?: never }
@@ -50,29 +51,22 @@ export async function updateInquiryStatus(
 ): Promise<InquiryActionResult> {
   try {
     const session = await getSession();
-    if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN')) return { success: false };
-    // Retained for compatibility with existing callers; authorization uses the
-    // inquiry's database-owned library id below.
+    if (!session) return { success: false, error: "Unauthorized" };
     void libraryId;
 
     const validStatuses = ['NEW', 'CONTACTED', 'CONVERTED', 'CLOSED'];
-    if (!validStatuses.includes(status)) return { success: false };
+    if (!validStatuses.includes(status)) return { success: false, error: "Invalid status" };
 
-    // Authorize against the inquiry's ACTUAL library, not the client-supplied
-    // libraryId. Without this, a librarian could pass their own libraryId while
-    // targeting an inquiryId that belongs to a different library (IDOR).
+    // Authorize against the inquiry's ACTUAL library (prevents IDOR)
     const inquiry = await prisma.inquiry.findUnique({
       where: { id: inquiryId },
       select: { libraryId: true },
     });
-    if (!inquiry) return { success: false };
+    if (!inquiry) return { success: false, error: "Inquiry not found" };
 
-    if (session.role === 'LIBRARIAN') {
-      const lib = await prisma.library.findFirst({
-        where: { id: inquiry.libraryId, librarianId: session.userId },
-        select: { id: true },
-      });
-      if (!lib) return { success: false };
+    const authCheck = await requirePermission(session, inquiry.libraryId, 'inquiries.manage');
+    if (!authCheck.authorized) {
+      return { success: false, error: authCheck.error };
     }
 
     await prisma.inquiry.update({
@@ -83,7 +77,7 @@ export async function updateInquiryStatus(
     revalidatePath("/dashboard/inquiries");
     return { success: true };
   } catch (error: unknown) {
-    console.error("Update inquiry error:", error);
-    return { success: false };
+    console.error("Inquiry update error:", error);
+    return { success: false, error: "Failed to update inquiry status" };
   }
 }

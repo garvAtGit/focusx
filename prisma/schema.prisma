@@ -56,11 +56,18 @@ model User {
   entryLogs                   EntryLog[]
   libraries                   Library[]          @relation("LibrarianLibraries")
   notifications               Notification[]
+  sentBroadcasts              NotificationBroadcast[] @relation("SentBroadcasts")
   platformFeedbacks           PlatformFeedback[] @relation("SubmitterPlatformFeedback")
   queries                     Query[]
   employerLibrary             Library?           @relation("LibraryStaff", fields: [employerLibraryId], references: [id])
   referredBy                  User?              @relation("UserReferrals", fields: [referredById], references: [id])
   referredUsers               User[]             @relation("UserReferrals")
+  pushSubscriptions           PushSubscription[]
+  browserPushEnabled          Boolean            @default(true)
+  pushDeliveries              PushDeliveryQueue[]
+  staffMemberships            LibraryStaff[]     @relation("UserStaffMemberships")
+  grantedStaff                LibraryStaff[]     @relation("StaffGrants")
+  staffAuditLogs              StaffAuditLog[]    @relation("StaffAuditActor")
 
   @@index([name])
   @@index([phone])
@@ -111,6 +118,7 @@ model Library {
   seats             Seat[]
   standaloneLockers StandaloneLocker[]
   staff             User[]             @relation("LibraryStaff")
+  staffMemberships  LibraryStaff[]     @relation("LibraryStaffMemberships")
 
   @@index([librarianId])
   @@index([kycStatus])
@@ -418,18 +426,64 @@ model EntryLog {
 }
 
 model Notification {
-  id          String   @id @default(uuid())
+  id          String                 @id @default(uuid())
   studentId   String
+  userId      String?
+  broadcastId String?
+  eventId     String?                @unique
   title       String
   message     String
-  isRead      Boolean  @default(false)
-  createdAt   DateTime @default(now())
+  isRead      Boolean                @default(false)
+  readAt      DateTime?
+  createdAt   DateTime               @default(now())
   actionLabel String?
   actionUrl   String?
-  type        String?
-  student     User     @relation(fields: [studentId], references: [id])
+  type        String?                @default("INFO")
+  student     User                   @relation(fields: [studentId], references: [id])
+  broadcast   NotificationBroadcast? @relation(fields: [broadcastId], references: [id], onDelete: SetNull)
+  pushDeliveries PushDeliveryQueue[]
 
   @@index([studentId])
+  @@index([studentId, isRead])
+  @@index([studentId, createdAt])
+  @@index([userId])
+  @@index([broadcastId])
+}
+
+model NotificationBroadcast {
+  id                   String          @id @default(uuid())
+  senderId             String
+  title                String
+  message              String
+  type                 String          @default("INFO")
+  actionLabel          String?
+  actionUrl            String?
+  audienceType         String
+  targetLibraryIds     String[]        @default([])
+  idempotencyKey       String?         @unique
+  payloadHash          String?
+  totalTargets         Int             @default(0)
+  sentCount            Int             @default(0)
+  failedCount          Int             @default(0)
+  status               String          @default("PENDING")
+  errorMessage         String?
+  scheduledFor         DateTime?
+  manifestRecipientIds String[]        @default([])
+  isCancelled          Boolean         @default(false)
+  claimedAt            DateTime?
+  claimedBy            String?
+  leaseToken           String?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  sender               User            @relation("SentBroadcasts", fields: [senderId], references: [id])
+  notifications        Notification[]
+
+  @@index([senderId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([status, scheduledFor])
+  @@index([status, isCancelled, scheduledFor])
 }
 
 model CanvasState {
@@ -666,5 +720,114 @@ model WinterArcEnrollment {
   targetHours   Int
   discount      Int
   createdAt     DateTime @default(now())
+}
+
+model PushSubscription {
+  id            String    @id @default(uuid())
+  userId        String
+  endpoint      String    @unique
+  p256dh        String
+  auth          String
+  userAgent     String?
+  isActive      Boolean   @default(true)
+  failureCount  Int       @default(0)
+  lastSuccessAt DateTime?
+  lastFailureAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, isActive])
+  @@index([endpoint])
+}
+
+model PushDeliveryQueue {
+  id             String        @id @default(uuid())
+  notificationId String
+  userId         String
+  subscriptionId String?
+  endpoint       String
+  p256dh         String
+  auth           String
+  payload        Json
+  status         String        @default("PENDING") // PENDING, PROCESSING, SENT, FAILED, PERMANENT_FAILURE
+  attempts       Int           @default(0)
+  maxAttempts    Int           @default(5)
+  nextAttemptAt  DateTime?
+  lastError      String?
+  claimedAt      DateTime?
+  claimedBy      String?
+  leaseToken     String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  notification   Notification  @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt, claimedAt])
+  @@index([userId])
+  @@index([notificationId])
+  @@index([endpoint])
+}
+
+enum StaffRole {
+  MANAGER
+  RECEPTIONIST
+  CUSTOM
+}
+
+enum StaffStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  REVOKED
+}
+
+model LibraryStaff {
+  id             String         @id @default(uuid())
+  userId         String
+  libraryId      String
+  role           StaffRole      @default(RECEPTIONIST)
+  customRoleName String?
+  status         StaffStatus    @default(ACTIVE)
+  permissions    String[]
+  grantedById    String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  user           User           @relation("UserStaffMemberships", fields: [userId], references: [id], onDelete: Cascade)
+  library        Library        @relation("LibraryStaffMemberships", fields: [libraryId], references: [id], onDelete: Cascade)
+  grantedBy      User?          @relation("StaffGrants", fields: [grantedById], references: [id], onDelete: SetNull)
+  auditLogs      StaffAuditLog[]
+
+  @@unique([userId, libraryId])
+  @@index([userId])
+  @@index([libraryId])
+  @@index([status])
+}
+
+model StaffAuditLog {
+  id             String       @id @default(uuid())
+  libraryStaffId String
+  actorId        String?
+  action         String       // "CREATED", "PERMISSIONS_UPDATED", "ROLE_UPDATED", "STATUS_UPDATED", "REVOKED"
+  previousRole   StaffRole?
+  newRole        StaffRole?
+  previousStatus StaffStatus?
+  newStatus      StaffStatus?
+  previousPerms  String[]
+  newPerms       String[]
+  reason         String?
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+
+  libraryStaff   LibraryStaff @relation(fields: [libraryStaffId], references: [id], onDelete: Cascade)
+  actor          User?        @relation("StaffAuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([libraryStaffId])
+  @@index([actorId])
+  @@index([createdAt])
 }
 

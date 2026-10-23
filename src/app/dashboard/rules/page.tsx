@@ -1,17 +1,23 @@
 import { getSession } from "@/app/actions/auth-actions";
 import { redirect } from "next/navigation";
 import { getActiveLibrary } from "@/lib/dashboard-utils";
+import { hasPermission } from "@/lib/permissions";
 import prisma from "@/lib/prisma";
 import { RulesClient } from "./RulesClient";
 
 export default async function AutomationsPage() {
   const session = await getSession();
-  if (!session || (session.role !== "LIBRARIAN" && session.role !== "ADMIN")) {
+  if (!session) {
     redirect("/login");
   }
 
   const library = await getActiveLibrary(session);
   if (!library) redirect("/onboarding");
+
+  const canView = await hasPermission(session, library.id, 'rules.view');
+  if (!canView) {
+    redirect("/dashboard");
+  }
 
   const rules = await prisma.libraryRule.findMany({
     where: { libraryId: library.id },

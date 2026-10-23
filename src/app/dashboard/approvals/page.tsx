@@ -7,13 +7,17 @@ import { calculateBookingTotal } from "@/lib/pricing-utils";
 import { AlertTriangle, UserCheck, ShieldCheck, Phone, CheckCircle2, XCircle, Clock } from "lucide-react";
 import { getActiveLibrary } from "@/lib/dashboard-utils";
 import { formatStandardDate } from "@/lib/date-utils";
+import { hasPermission } from "@/lib/permissions";
 
 export default async function PendingApprovalsPage() {
   const session = await getSession();
-  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN' && session.role !== 'RECEPTIONIST')) redirect("/login");
+  if (!session) redirect("/login");
 
   const library = await getActiveLibrary(session);
   if (!library) redirect("/onboarding");
+
+  const canView = await hasPermission(session, library.id, 'approvals.view');
+  if (!canView) redirect("/dashboard");
 
   const pendingBookings = await prisma.booking.findMany({
     where: {

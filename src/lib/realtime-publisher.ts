@@ -110,8 +110,25 @@ export async function processOutboxItem(
         'Content-Type': 'application/json'
       };
 
-      // 2a. Student Broadcast (if studentId is attached)
-      if (outbox.studentId) {
+      // 2a. User Notification Broadcast
+      if (outbox.type === "NOTIFICATION" || (outbox.topic && outbox.topic.startsWith("user_notifications:"))) {
+        const notifTopic = encodeURIComponent(outbox.topic || `user_notifications:${outbox.studentId}`);
+        const notifEvent = encodeURIComponent((outbox.payload as any)?.event || 'new_notification');
+        const notifUrl = `${supabaseUrl}/realtime/v1/api/broadcast/${notifTopic}/events/${notifEvent}`;
+
+        const notifRes = await fetch(notifUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(outbox.payload)
+        });
+
+        if (!notifRes.ok) {
+          const errBody = await notifRes.text().catch(() => "");
+          throw new Error(`Supabase REST Error (Notification status ${notifRes.status}): ${errBody}`);
+        }
+      }
+      // 2b. Student Attendance Scan Broadcast (if attendance scan)
+      else if (outbox.studentId) {
         const studentTopic = `scan:${encodeURIComponent(outbox.studentId)}`;
         const studentEvent = encodeURIComponent('scan_result');
         const studentUrl = `${supabaseUrl}/realtime/v1/api/broadcast/${studentTopic}/events/${studentEvent}`;
@@ -293,4 +310,40 @@ export async function replayDeadLetterItem(eventIdOrId: string): Promise<boolean
     }
   });
   return result.count > 0;
+}
+
+/**
+ * Direct best-effort helper to publish an event payload to a Supabase Realtime broadcast topic.
+ */
+export async function publishNotificationToRealtime(
+  topic: string,
+  event: string,
+  payload: any
+): Promise<boolean> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !supabaseKey) {
+    return false;
+  }
+
+  const encodedTopic = encodeURIComponent(topic);
+  const encodedEvent = encodeURIComponent(event);
+  const url = `${supabaseUrl}/realtime/v1/api/broadcast/${encodedTopic}/events/${encodedEvent}`;
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': 'Bearer ' + supabaseKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn(`[Realtime Publisher] Broadcast to ${topic} failed:`, sanitizeError(err));
+    return false;
+  }
 }

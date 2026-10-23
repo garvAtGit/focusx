@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server"
 import prisma from "@/lib/prisma"
 import { getSession } from "@/app/actions/auth-actions"
 import { getActiveLibrary } from "@/lib/dashboard-utils"
+import { hasPermission } from "@/lib/permissions"
 
 type DailyRow = {
   date: string
@@ -30,6 +31,15 @@ export async function GET(request: NextRequest) {
   const libraryId = activeLibrary?.id
   if (!libraryId) {
     return NextResponse.json({ error: "Library not found" }, { status: 404 })
+  }
+
+  const [canViewDashboard, canViewFinancials] = await Promise.all([
+    hasPermission(session, libraryId, "dashboard.view"),
+    hasPermission(session, libraryId, "financials.view"),
+  ])
+
+  if (!canViewDashboard && !canViewFinancials) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
 
   const start = parseDate(request.nextUrl.searchParams.get("start"))
@@ -99,7 +109,7 @@ export async function GET(request: NextRequest) {
         date: row.date,
         newCount: Number(row.newCount),
         renewalCount: Number(row.renewalCount),
-        totalRevenue: Number(row.totalRevenue),
+        totalRevenue: canViewFinancials ? Number(row.totalRevenue) : 0,
       })),
     },
     { headers: { "Cache-Control": "private, no-store" } },

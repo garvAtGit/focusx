@@ -184,8 +184,8 @@ export default function SeatsManagerPage() {
       
       // Calculate dimensions from existing seats if any
       if (data.seats && data.seats.length > 0) {
-        const maxR = Math.max(...data.seats.map(s => s.y)) + 1;
-        const maxC = Math.max(...data.seats.map(s => s.x)) + 1;
+        const maxR = Math.max(...data.seats.map((s: SeatLayoutItem) => s.y)) + 1;
+        const maxC = Math.max(...data.seats.map((s: SeatLayoutItem) => s.x)) + 1;
         finalRows = Math.max(5, maxR);
         finalCols = Math.max(8, maxC);
         setRows(finalRows);
@@ -204,7 +204,7 @@ export default function SeatsManagerPage() {
         const y = Math.floor(i / finalCols);
         const id = currentNaming === 'NUMERIC' ? ((y * finalCols) + x + 1).toString() : `${String.fromCharCode(65 + y)}${x + 1}`;
         
-        const existing = data.seats.find(s => s.x === x && s.y === y);
+        const existing = data.seats.find((s: SeatLayoutItem) => s.x === x && s.y === y);
         if (existing) {
           grid.push({ ...existing, id }); // ensure id matches coords
         } else {
