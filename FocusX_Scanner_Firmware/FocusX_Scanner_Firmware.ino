@@ -154,7 +154,7 @@ void setIdleLCD() {
     updateLCD("NETWORK ERROR", "TAP TO RETRY");
     return;
   }
-  updateLCD("\x01 SYSTEM ARMED", "TAP YOUR CARD");
+  updateLCD("OK SYSTEM ARMED", "TAP YOUR CARD");
 }
 
 void setArmedVisual() { digitalWrite(LED_TOGGLE_PIN, LOW); }
@@ -411,10 +411,10 @@ void processAuthResponse(AuthResponse res) {
     gracePeriodEnd = millis() + 5000;
 
     if (String(res.direction) == "OUT") {
-      updateLCD("\x02 GOODBYE!", String(res.message).length() > 0 ? String(res.message) : "PROCEED");
+      updateLCD("OK GOODBYE!", String(res.message).length() > 0 ? String(res.message) : "PROCEED");
       triggerBuzzer(2);
     } else {
-      updateLCD("\x02 WELCOME IN!", String(res.message).length() > 0 ? String(res.message) : "PROCEED");
+      updateLCD("OK WELCOME IN!", String(res.message).length() > 0 ? String(res.message) : "PROCEED");
       triggerBuzzer(1);
     }
   } else if (res.resultCode == 2) { // DENIED (Business rule applied)
@@ -624,14 +624,16 @@ void setup() {
   noTone(BUZZER_PIN);
 
   // 2. LCD
-  Wire.begin(SDA_PIN, SCL_PIN);
+  delay(100);
+    Wire.begin(SDA_PIN, SCL_PIN);
+    Wire.setClock(100000);
   lcd.init();
   lcd.backlight();
 
   byte lockChar[8] = {0b01110, 0b10001, 0b10001, 0b11111, 0b11011, 0b11011, 0b11111, 0b00000};
   byte checkChar[8] = {0b00000, 0b00001, 0b00011, 0b10110, 0b11100, 0b01000, 0b00000, 0b00000};
-  lcd.createChar(1, lockChar);
-  lcd.createChar(2, checkChar);
+  
+  
 
   updateLCD("ID: " + READER_ID, "STARTING...");
   
@@ -664,12 +666,7 @@ void setup() {
 
   
   // 7. WIFI (Captive Portal & Watchdog)
-    esp_task_wdt_config_t twdt_config = {
-      .timeout_ms = 15000,
-      .idle_core_mask = (1 << portNUM_PROCESSORS) - 1,
-      .trigger_panic = true,
-  };
-  esp_task_wdt_init(&twdt_config);
+  esp_task_wdt_init(15, true);
   esp_task_wdt_add(NULL);
   
   WiFiManager wm;
@@ -715,7 +712,7 @@ unsigned long lastPingTime = 0;
 void sendHardwarePing() {
   if (millis() - lastPingTime > 60000) {
     if (WiFi.status() == WL_CONNECTED) {
-      NetworkClientSecure client;
+      WiFiClientSecure client;
       client.setInsecure();
       HTTPClient http;
       String url = "https://www.focusx.in/api/hardware/ping";

@@ -12,83 +12,43 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await request.json() as { libraryId?: string };
-    let { libraryId } = body;
+    const body = await request.json();
+    const { deviceId, action } = body;
 
-    // If no libraryId is provided, try to find their active booking and use that library
-    if (!libraryId) {
-      const now = new Date();
-      const activeBooking = await prisma.booking.findFirst({
-        where: {
-          studentId: session.userId,
-          status: "CONFIRMED",
-          startTime: { lte: now },
-          endTime: { gte: now },
-          isPaused: false
-        },
-        orderBy: { createdAt: 'desc' }
-      });
-
-      if (!activeBooking) {
-        // Fallback: Check if they are the librarian or staff for testing purposes
-        const managedLibrary = await prisma.library.findFirst({
-          where: {
-            OR: [
-              { librarianId: session.userId },
-              { staff: { some: { id: session.userId } } }
-            ]
-          }
-        });
-        
-        if (!managedLibrary) {
-          return NextResponse.json({ error: "No active plan found to unlock doors." }, { status: 403 });
-        }
-        libraryId = managedLibrary.id;
-      } else {
-        libraryId = activeBooking.libraryId;
-      }
+    if (!deviceId || !action || (action !== "IN" && action !== "OUT")) {
+      return NextResponse.json({ error: "Missing or invalid deviceId/action" }, { status: 400 });
     }
 
-    // Generate the signed payload using ECDSA
-    const timestamp = Math.floor(Date.now() / 1000);
-    const qid = crypto.randomUUID();
+    const relay = await prisma.relay.findFirst({
+      where: { OR: [{ bleReaderId: deviceId }, { macAddress: deviceId }] }
+    });
+
+    if (!relay) {
+      return NextResponse.json({ error: "Device not found" }, { status: 404 });
+    }
+
+    const iat = Math.floor(Date.now() / 1000);
+    const exp = iat + 30; // 30-second short-lived token
+    const nonce = crypto.randomUUID().substring(0, 8);
     
-    // The ESP32 will verify the signature over: uid + iat + qid
-    const payloadToSign = `${session.userId}${timestamp}${qid}`;
-
-    const privateKeyBase64 = process.env.ECDSA_PRIVATE_KEY;
-    let signature = "DEV_MOCK_SIGNATURE";
-
-    if (!privateKeyBase64) {
-      console.warn("Missing ECDSA_PRIVATE_KEY. Using mock signature.");
-    } else {
-      let privateKey = privateKeyBase64;
-      if (!privateKeyBase64.includes('-----BEGIN PRIVATE KEY-----')) {
-        try {
-          privateKey = Buffer.from(privateKeyBase64, 'base64').toString('utf-8');
-        } catch {
-          console.error("Failed to decode ECDSA_PRIVATE_KEY");
-        }
-      }
-
-      const sign = crypto.createSign('SHA256');
-      sign.update(payloadToSign);
-      sign.end();
-      signature = sign.sign(privateKey, 'base64');
+    // Task 1: Use per-device provisioned secret to isolate blast radius
+    if (!relay.deviceSecret) {
+      return NextResponse.json({ error: "Device not provisioned with a secret" }, { status: 403 });
     }
+    const deviceSecret = relay.deviceSecret;
 
-    // This is the exact payload structure the ESP32 expects to receive over BLE
-    const blePayload = {
-      uid: session.userId,
-      iat: timestamp,
-      qid: qid,
-      door: "MAIN_GATE",
-      sig: signature
-    };
+    // Payload: uid:deviceId:libraryId:action:iat:exp:nonce
+    const payloadToSign = `${session.userId}:${deviceId}:${relay.libraryId}:${action}:${iat}:${exp}:${nonce}`;
+    
+    // Token HMAC
+    const signature = crypto.createHmac('sha256', deviceSecret).update(payloadToSign).digest('hex');
+    
+    // Final Token (appended with everything needed to reconstruct)
+    const bleToken = `BLE:${session.userId}:${relay.libraryId}:${action}:${iat}:${exp}:${nonce}:${signature}`;
 
     return NextResponse.json({
       success: true,
-      token: JSON.stringify(blePayload)
+      token: bleToken
     });
 
   } catch (error) {

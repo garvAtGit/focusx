@@ -67,6 +67,7 @@ model User {
 }
 
 model Library {
+  authRevision Int @default(0)
   id                String             @id @default(uuid())
   librarianId       String
   name              String
@@ -318,10 +319,15 @@ model Relay {
   macAddress  String?
   nfcTagId    String       @unique
   bleReaderId String?      @unique
+  deviceSecret String?     @unique @default(uuid())
   status      String       @default("ONLINE")
   lastSync    DateTime     @default(now())
   lastSeenAt  DateTime?
   pendingCommand String?
+  clockState  String?
+  freeFlashBytes Int?
+  pendingEventsCount Int?
+  currentAuthRevision Int?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   logs        CheckinLog[]
@@ -398,6 +404,7 @@ model EntryLog {
   libraryId String
   doorId    String?
   timestamp DateTime
+  eventId   String?  @unique
   createdAt DateTime @default(now())
   reason    String?
   status    String   @default("SUCCESS")
@@ -618,6 +625,7 @@ model RealtimeOutbox {
   id            String      @id @default(uuid())
   eventId       String      @unique
   topic         String?
+  type          String      @default("REALTIME")
   payload       Json
   status        String      @default("PENDING")
   createdAt     DateTime    @default(now())
@@ -627,8 +635,15 @@ model RealtimeOutbox {
   studentId     String?
   isPublished   Boolean     @default(false)
   attempts      Int         @default(0)
+  maxAttempts   Int         @default(5)
   nextAttemptAt DateTime?
+  lockedAt      DateTime?
+  lockedBy      String?
+  leaseToken    String?
   lastError     String?
+
+  @@index([status, isPublished, nextAttemptAt, lockedAt])
+  @@index([topic])
 }
 
 model HardwareClaim {
