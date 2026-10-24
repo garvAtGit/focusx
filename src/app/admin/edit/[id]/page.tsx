@@ -11,7 +11,7 @@ import { AdminNoteEditor } from "@/components/admin-note-editor";
 
 export default async function AdminEditLibraryPage(props: { params: Promise<{ id: string }> }) {
   const session = await getSession();
-  if (!session || session.role !== 'ADMIN') redirect("/");
+  if (!session || session.role !== 'ADMIN') redirect("/admin/login");
   const params = await props.params;
   const library = await prisma.library.findUnique({
     where: { id: params.id }
@@ -21,8 +21,8 @@ export default async function AdminEditLibraryPage(props: { params: Promise<{ id
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
-      <Link href="/admin" className="text-sm font-medium text-muted-foreground hover:text-foreground flex items-center gap-2 w-fit">
-        <ArrowLeft className="w-4 h-4" /> Back to Dashboard
+      <Link href="/admin/libraries" className="text-sm font-medium text-slate-400 hover:text-white flex items-center gap-2 w-fit transition-colors">
+        <ArrowLeft className="w-4 h-4" /> Back to Libraries
       </Link>
 
       <div className="flex items-center justify-between">

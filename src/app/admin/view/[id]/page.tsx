@@ -7,7 +7,7 @@ import { getSession } from "@/app/actions/auth-actions";
 
 export default async function AdminViewLibraryPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
-  if (!session || session.role !== 'ADMIN') redirect("/");
+  if (!session || session.role !== 'ADMIN') redirect("/admin/login");
   
   const { id } = await params;
   
@@ -21,8 +21,8 @@ export default async function AdminViewLibraryPage({ params }: { params: Promise
   return (
     <div className="max-w-5xl mx-auto space-y-8">
       <div className="flex items-center justify-between">
-        <Link href="/admin" className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors">
-          <ArrowLeft className="w-4 h-4" /> Back to Dashboard
+        <Link href="/admin/libraries" className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors text-sm font-medium">
+          <ArrowLeft className="w-4 h-4" /> Back to Libraries
         </Link>
         <div className="flex items-center gap-3">
           <Link href={`/admin/edit/${library.id}`} className="px-4 py-2 bg-secondary text-secondary-foreground rounded-lg font-medium hover:bg-secondary/80 transition-colors flex items-center gap-2">

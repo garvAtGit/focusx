@@ -47,10 +47,19 @@ async function DashboardAuthWrapper({ children }: { children: ReactNode }) {
             <kbd className="font-sans text-[10px] bg-muted px-1.5 py-0.5 rounded border border-border tracking-widest opacity-70">⌘K</kbd>
           </div>
           {session.role === 'ADMIN' && (
-            <AdminLibrarySwitcher 
-              libraries={adminLibraries} 
-              activeLibraryId={activeLibraryId} 
-            />
+            <div className="space-y-2 mt-2">
+              <AdminLibrarySwitcher 
+                libraries={adminLibraries} 
+                activeLibraryId={activeLibraryId} 
+              />
+              <Link
+                href="/admin"
+                className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/30 text-xs font-semibold transition-colors"
+              >
+                <span>Command Center HQ</span>
+                <span className="text-[10px] font-bold uppercase">Superuser</span>
+              </Link>
+            </div>
           )}
         </div>
         

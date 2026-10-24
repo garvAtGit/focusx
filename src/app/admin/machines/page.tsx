@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 export default async function AdminMachinesPage() {
   const session = await getSession();
-  if (!session || session.role !== "ADMIN") redirect("/");
+  if (!session || session.role !== "ADMIN") redirect("/admin/login");
 
   // Fetch all libraries with their relays
   const libraries = await prisma.library.findMany({
