@@ -228,6 +228,18 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
     });
   }, [cacheKey, bookings, tabCounts, totalCount]);
 
+  const [isSyncingSection, setIsSyncingSection] = useState(false);
+
+  const syncCurrentSection = () => {
+    setIsSyncingSection(true);
+    // Invalidate client RAM cache for this specific tab/page/query
+    clientStudentCache.delete(cacheKey);
+    startTransition(() => {
+      router.refresh();
+      setIsSyncingSection(false);
+    });
+  };
+
   const refreshData = () => {
     clientStudentCache.clear();
     router.refresh();
@@ -940,6 +952,16 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                   <Grid className="w-4 h-4" />
                 </button>
               </div>
+              <button
+                type="button"
+                onClick={syncCurrentSection}
+                disabled={isSyncingSection || isPending}
+                className="inline-flex items-center justify-center whitespace-nowrap rounded-xl text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-indigo-500/10 disabled:pointer-events-none disabled:opacity-50 border h-10 px-3.5 py-2 gap-2 bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 shadow-sm"
+                title={`Sync ${activeTab.toLowerCase()} students`}
+              >
+                <RefreshCw className={`w-4 h-4 ${isSyncingSection || isPending ? 'animate-spin text-indigo-600' : 'text-slate-500'}`} />
+                <span className="hidden sm:inline">Sync {activeTab.charAt(0) + activeTab.slice(1).toLowerCase()}</span>
+              </button>
               <Sheet>
                 <SheetTrigger className="inline-flex items-center justify-center whitespace-nowrap rounded-xl text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-indigo-500/10 disabled:pointer-events-none disabled:opacity-50 border h-10 px-4 py-2 gap-2 bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 shadow-sm relative">
                   <Filter className="w-4 h-4" /> Filter & Sort

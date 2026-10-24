@@ -49,6 +49,12 @@ export async function POST(request: NextRequest) {
 
     const libraryId = relay.libraryId;
 
+    // Touch relay active timestamps non-blockingly
+    prisma.relay.update({
+      where: { id: relay.id },
+      data: { lastSeenAt: new Date(), lastSync: new Date(), status: "ONLINE" },
+    }).catch(() => {});
+
     // 4. Resolve Student ID
     let studentId: string | null = null;
 

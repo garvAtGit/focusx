@@ -116,60 +116,85 @@ export default function HardwareSetupClient({ libraryId, initialHardware }: { li
               No hardware devices are currently linked to this library.
             </div>
           ) : (
-            initialHardware.map((hw) => (
-              <div key={hw.id} className="p-6 flex items-center justify-between hover:bg-slate-50 transition-colors">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
-                    <Cpu className="w-6 h-6 text-blue-600" />
-                  </div>
-                  <div>
-                    <h4 className="font-semibold text-slate-800">FocusX ESP32 Reader</h4>
-                    <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-slate-500 font-mono">
-                      <span>MAC: {hw.macAddress}</span>
-                      <span className="w-1 h-1 rounded-full bg-slate-300"></span>
-                      <span>BLE ID: {hw.bleReaderId || 'N/A'}</span>
-                      {hw.currentAuthRevision && (
-                        <>
-                          <span className="w-1 h-1 rounded-full bg-slate-300"></span>
-                          <span className="text-teal-700 font-medium">Snapshot: Rev {hw.currentAuthRevision}</span>
-                        </>
-                      )}
-                      {hw.freeFlashBytes && (
-                        <>
-                          <span className="w-1 h-1 rounded-full bg-slate-300"></span>
-                          <span>Storage: {Math.round(hw.freeFlashBytes / 1024)} KB free</span>
-                        </>
-                      )}
-                    </div>
-                    {/* Subsystem Health Indicators */}
-                    <div className="flex items-center gap-2 mt-2">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium ${
-                        hw.clockState === '1' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
-                      }`}>
-                        {hw.clockState === '1' ? '✓ NTP Clock Synced' : '⚠ Clock Sync Pending'}
-                      </span>
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
-                        {hw.pendingEventsCount === 0 ? '✓ Outbox Clean (0 queued)' : `⟳ ${hw.pendingEventsCount} queued`}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="flex flex-col items-end gap-2">
-                  <div className="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold" style={{
-                    backgroundColor: new Date((hw.lastSeenAt || hw.lastSync)).getTime() > Date.now() - 120000 ? '#dcfce7' : '#fee2e2',
-                    color: new Date((hw.lastSeenAt || hw.lastSync)).getTime() > Date.now() - 120000 ? '#15803d' : '#b91c1c'
-                  }}>
-                    <span className={`w-2 h-2 rounded-full ${new Date((hw.lastSeenAt || hw.lastSync)).getTime() > Date.now() - 120000 ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></span>
-                    {new Date((hw.lastSeenAt || hw.lastSync)).getTime() > Date.now() - 120000 ? "ONLINE" : "OFFLINE"}
-                  </div>
-                  <button onClick={() => handleSelfDestruct(hw.id)} className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-700 text-xs rounded-md transition-colors font-medium border border-red-200 shadow-sm">
-                    Factory Reset
-                  </button>
-                </div>
+            initialHardware.map((hw) => {
+              const isOnline = hw.status === "ONLINE";
+              const lastActive = Math.max(
+                hw.lastSeenAt ? new Date(hw.lastSeenAt).getTime() : 0,
+                hw.lastSync ? new Date(hw.lastSync).getTime() : 0
+              );
 
-              </div>
-            ))
+              return (
+                <div key={hw.id} className="p-6 hover:bg-slate-50 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className={`w-12 h-12 rounded-full flex items-center justify-center ${isOnline ? 'bg-teal-100 text-teal-700' : 'bg-red-100 text-red-700'}`}>
+                        <Cpu className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <h4 className="font-semibold text-slate-800">FocusX ESP32 Reader</h4>
+                        <div className="flex flex-wrap items-center gap-3 mt-1 text-sm text-slate-500 font-mono">
+                          <span>MAC: {hw.macAddress}</span>
+                          <span className="w-1 h-1 rounded-full bg-slate-300"></span>
+                          <span>BLE ID: {hw.bleReaderId || 'N/A'}</span>
+                          <span className="w-1 h-1 rounded-full bg-slate-300"></span>
+                          {isOnline ? (
+                            <span className="text-emerald-600 font-semibold flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span> Live
+                            </span>
+                          ) : (
+                            <span>Last Seen: {lastActive > 0 ? new Date(lastActive).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }) : "Never"}</span>
+                          )}
+                          {hw.currentAuthRevision && (
+                            <>
+                              <span className="w-1 h-1 rounded-full bg-slate-300"></span>
+                              <span className="text-teal-700 font-medium">Snapshot: Rev {hw.currentAuthRevision}</span>
+                            </>
+                          )}
+                          {hw.freeFlashBytes && (
+                            <>
+                              <span className="w-1 h-1 rounded-full bg-slate-300"></span>
+                              <span>Storage: {Math.round(hw.freeFlashBytes / 1024)} KB free</span>
+                            </>
+                          )}
+                        </div>
+                        {/* Subsystem Health Indicators */}
+                        <div className="flex items-center gap-2 mt-2">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium ${
+                            hw.clockState === '1' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
+                          }`}>
+                            {hw.clockState === '1' ? '✓ NTP Clock Synced' : '⚠ Clock Sync Pending'}
+                          </span>
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
+                            {hw.pendingEventsCount === 0 ? '✓ Outbox Clean (0 queued)' : `⟳ ${hw.pendingEventsCount} queued`}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="flex flex-col items-end gap-2">
+                      <div className="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold" style={{
+                        backgroundColor: isOnline ? '#dcfce7' : '#fee2e2',
+                        color: isOnline ? '#15803d' : '#b91c1c'
+                      }}>
+                        <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></span>
+                        {isOnline ? "ONLINE" : "OFFLINE"}
+                      </div>
+                      <button onClick={() => handleSelfDestruct(hw.id)} className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-700 text-xs rounded-md transition-colors font-medium border border-red-200 shadow-sm">
+                        Factory Reset
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Clean alert for librarian if machine is disconnected or malfunctioning */}
+                  {!isOnline && (
+                    <div className="mt-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs font-medium flex items-center gap-2.5">
+                      <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>There is an issue with the machine. Please reboot it.</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })
           )}
         </div>
       </div>

@@ -802,13 +802,25 @@ export function DashboardOverviewClient({
               <p className="text-sm text-muted-foreground">No relays configured for this library yet.</p>
             ) : (
               relays.map((relay: any) => {
-                const isOffline = new Date().getTime() - new Date(relay.lastSync).getTime() > 10 * 60 * 1000; // 10 mins
+                const isOffline = relay.status !== 'ONLINE';
+                const lastActive = Math.max(
+                  relay.lastSeenAt ? new Date(relay.lastSeenAt).getTime() : 0,
+                  relay.lastSync ? new Date(relay.lastSync).getTime() : 0
+                );
                 return (
                   <div key={relay.id} className="p-4 border border-border rounded-xl flex items-center justify-between">
                     <div>
                       <p className="font-bold text-sm text-foreground">Relay {relay.id.substring(0,6)}</p>
                       <p className="text-xs text-muted-foreground mt-1">Tag: <span className="font-mono">{relay.nfcTagId}</span></p>
-                      <p className="text-[10px] text-muted-foreground mt-1">Last Sync: {new Date(relay.lastSync).toLocaleTimeString()}</p>
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        {!isOffline ? (
+                          <span className="text-success font-semibold flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-success inline-block"></span> Live
+                          </span>
+                        ) : (
+                          `Last Seen: ${lastActive > 0 ? new Date(lastActive).toLocaleTimeString() : "Never"}`
+                        )}
+                      </p>
                     </div>
                     <div className="flex flex-col items-end">
                       <span className="flex items-center gap-1.5 text-xs font-bold uppercase">

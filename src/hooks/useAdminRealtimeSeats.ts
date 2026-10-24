@@ -1,4 +1,9 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
+import { createClient } from "@supabase/supabase-js"
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
+const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null
 
 export type AdminOccupantData = {
   studentId?: string;
@@ -20,19 +25,26 @@ type AdminAvailabilityResponse = {
 export function useAdminRealtimeSeats(
   libraryId: string,
   initialOccupiedSeatIds: string[],
+  options?: { enabled?: boolean },
 ) {
+  const enabled = options?.enabled ?? true
   const [occupiedSeatIds, setOccupiedSeatIds] = useState<string[]>(
     initialOccupiedSeatIds,
   )
   const [occupantData, setOccupantData] = useState<Record<string, AdminOccupantData>>({})
   const [unreservedLiveStudents, setUnreservedLiveStudents] = useState<AdminOccupantData[]>([])
+  const [isRefreshing, setIsRefreshing] = useState(false)
+
+  const refreshRef = useRef<() => Promise<void>>(() => Promise.resolve())
 
   useEffect(() => {
-    if (!libraryId) return
+    if (!libraryId || !enabled) return
 
     let disposed = false
     let controller: AbortController | null = null
     let retryAfterUntil = 0
+    let refreshTimeout: ReturnType<typeof setTimeout> | null = null
+
     const refresh = async () => {
       if (
         document.visibilityState === "hidden"
@@ -40,6 +52,7 @@ export function useAdminRealtimeSeats(
       ) return
       controller?.abort()
       controller = new AbortController()
+      setIsRefreshing(true)
       try {
         const response = await fetch(
           `/api/library/admin-live-seats?libraryId=${encodeURIComponent(libraryId)}`,
@@ -75,11 +88,70 @@ export function useAdminRealtimeSeats(
         if (!(error instanceof DOMException && error.name === "AbortError")) {
           console.warn("Admin seat availability refresh failed:", error)
         }
+      } finally {
+        if (!disposed) {
+          setIsRefreshing(false)
+        }
       }
     }
 
+    refreshRef.current = refresh
+
+    // Initial load
     void refresh()
-    const interval = window.setInterval(refresh, 15_000)
+
+    // Realtime debounced refresh to avoid burst re-renders when multiple events arrive
+    const debouncedRefresh = () => {
+      if (refreshTimeout) clearTimeout(refreshTimeout)
+      refreshTimeout = setTimeout(() => {
+        if (!disposed && document.visibilityState !== "hidden") {
+          void refresh()
+        }
+      }, 300)
+    }
+
+    // Subscribe to real-time events via Supabase Realtime WebSocket
+    const channel = supabase
+      ? supabase
+          .channel(`seats_realtime_${libraryId}`)
+          .on(
+            "postgres_changes",
+            {
+              event: "*",
+              schema: "public",
+              table: "CheckinLog",
+              filter: `libraryId=eq.${libraryId}`,
+            },
+            debouncedRefresh
+          )
+          .on(
+            "postgres_changes",
+            {
+              event: "INSERT",
+              schema: "public",
+              table: "EntryLog",
+              filter: `libraryId=eq.${libraryId}`,
+            },
+            debouncedRefresh
+          )
+          .on(
+            "postgres_changes",
+            {
+              event: "*",
+              schema: "public",
+              table: "Booking",
+              filter: `libraryId=eq.${libraryId}`,
+            },
+            debouncedRefresh
+          )
+          .on(
+            "broadcast",
+            { event: "scanner_update" },
+            debouncedRefresh
+          )
+          .subscribe()
+      : null
+
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") void refresh()
     }
@@ -92,11 +164,20 @@ export function useAdminRealtimeSeats(
     return () => {
       disposed = true
       controller?.abort()
-      window.clearInterval(interval)
+      if (refreshTimeout) clearTimeout(refreshTimeout)
       document.removeEventListener("visibilitychange", onVisibilityChange)
       window.removeEventListener("pageshow", onPageShow)
+      if (channel && supabase) {
+        supabase.removeChannel(channel)
+      }
     }
-  }, [libraryId])
+  }, [libraryId, enabled])
 
-  return { occupiedSeatIds, occupantData, unreservedLiveStudents }
+  return {
+    occupiedSeatIds,
+    occupantData,
+    unreservedLiveStudents,
+    refresh: () => refreshRef.current(),
+    isRefreshing,
+  }
 }
