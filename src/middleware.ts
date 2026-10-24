@@ -68,6 +68,7 @@ export async function middleware(request: NextRequest) {
       pathname.startsWith('/api/kyc') ||
       pathname.startsWith('/api/checkout') ||
       pathname.startsWith('/login') ||
+      pathname.startsWith('/admin/login') ||
       pathname.startsWith('/signup') ||
       pathname.startsWith('/sso');
 
@@ -147,14 +148,29 @@ export async function middleware(request: NextRequest) {
   // True verification happens in getSession() using firebase-admin in Node environments.
   const session = request.cookies.get('session')?.value;
 
-  // Protect dashboard and onboarding routes
-  if (request.nextUrl.pathname.startsWith('/dashboard') || request.nextUrl.pathname.startsWith('/student') || request.nextUrl.pathname.startsWith('/onboarding') || request.nextUrl.pathname.startsWith('/admin')) {
+  // Protect dashboard, student, onboarding, and admin routes
+  const isProtected = 
+    pathname.startsWith('/dashboard') || 
+    pathname.startsWith('/student') || 
+    pathname.startsWith('/onboarding') || 
+    (pathname.startsWith('/admin') && !pathname.startsWith('/admin/login'));
+
+  if (isProtected) {
     if (!session) {
+      if (pathname.startsWith('/admin')) {
+        return NextResponse.redirect(new URL('/admin/login', request.url));
+      }
       return NextResponse.rewrite(new URL('/auth/restore', request.url));
     }
   }
 
-  return NextResponse.next()
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set('x-pathname', pathname);
+  return NextResponse.next({
+    request: {
+      headers: requestHeaders,
+    },
+  });
 }
 
 export const config = {

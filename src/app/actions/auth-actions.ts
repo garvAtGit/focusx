@@ -125,10 +125,99 @@ export async function getSession(): Promise<SessionData | null> {
 
 export async function getPostLoginRedirect(): Promise<string> {
   const session = await getSession();
-  if (session && (session.role === 'LIBRARIAN' || session.role === 'ADMIN' || session.role === 'RECEPTIONIST')) {
+  if (!session) return '/';
+  if (session.role === 'ADMIN') {
+    return '/admin';
+  }
+  if (session.role === 'LIBRARIAN' || session.role === 'RECEPTIONIST') {
     return '/dashboard';
   }
   return '/';
+}
+
+export async function verifyAdminLogin(
+  idToken: string,
+  phone: string,
+  name?: string
+): Promise<{ success: true; isNewUser: boolean } | { error: string }> {
+  try {
+    const caller = await verifyFirebaseIdToken(idToken, phone);
+    if (!caller.ok) return { error: caller.error };
+    const authId = caller.uid;
+
+    const normalizedPhone = phone.startsWith('+91') ? phone.slice(3) : phone;
+    const phoneWithCode = phone.startsWith('+91') ? phone : `+91${phone}`;
+
+    const adminPhones = process.env.ADMIN_PHONES
+      ? process.env.ADMIN_PHONES.split(',').map((p) => p.trim())
+      : [];
+    const isEnvAdmin =
+      adminPhones.includes(phone) ||
+      adminPhones.includes(normalizedPhone) ||
+      adminPhones.includes(phoneWithCode);
+
+    // Look up existing user by authId or phone
+    let user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { authId },
+          { phone: phone },
+          { phone: normalizedPhone },
+          { phone: phoneWithCode },
+        ],
+      },
+    });
+
+    const isDbAdmin = user?.role === 'ADMIN';
+
+    if (!isDbAdmin && !isEnvAdmin) {
+      return { error: 'Access Denied: You do not have Super Admin privileges on FocusX.' };
+    }
+
+    if (user) {
+      // Elevate to ADMIN if whitelisted in env and not yet ADMIN
+      const shouldUpdateRole = user.role !== 'ADMIN';
+      const shouldUpdateAuthId = !user.authId || user.authId !== authId;
+      const shouldUpdateName = name && user.name !== name;
+
+      if (shouldUpdateRole || shouldUpdateAuthId || shouldUpdateName) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            authId,
+            role: 'ADMIN',
+            phone: phoneWithCode,
+            ...(shouldUpdateName ? { name } : {}),
+          },
+        });
+        // Invalidate cached session so fresh role is picked up immediately
+        try {
+          await redis.del(`usersess:${authId}`);
+        } catch {}
+      }
+      return { success: true, isNewUser: false };
+    }
+
+    // New admin user from ADMIN_PHONES
+    if (!name) {
+      return { success: true, isNewUser: true };
+    }
+
+    await prisma.user.create({
+      data: {
+        authId,
+        phone: phoneWithCode,
+        name,
+        role: 'ADMIN',
+        uniqueId: await generateFocusXId(),
+      },
+    });
+
+    return { success: true, isNewUser: false };
+  } catch (error) {
+    console.error('verifyAdminLogin error:', error);
+    return { error: 'Failed to verify admin authorization.' };
+  }
 }
 
 // NOTE: Firebase login happens client-side; these actions run AFTER the client
