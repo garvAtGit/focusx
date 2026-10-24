@@ -70,14 +70,31 @@ export function AdminMachinesClient({
     const channel = supabase
       .channel("admin-hardware-diagnostics")
       .on("broadcast", { event: "hardware_status" }, (payload: any) => {
-        if (payload?.payload?.relayId && payload?.payload?.modules) {
-          setModulesMap((prev) => ({
-            ...prev,
-            [payload.payload.relayId]: {
-              ...payload.payload.modules,
-              updatedAt: Date.now(),
-            },
-          }));
+        if (payload?.payload?.relayId) {
+          const relayId = payload.payload.relayId;
+          if (payload.payload.modules) {
+            setModulesMap((prev) => ({
+              ...prev,
+              [relayId]: {
+                ...payload.payload.modules,
+                updatedAt: Date.now(),
+              },
+            }));
+          }
+
+          setLiveRelays((prev) => {
+            const current = prev[relayId];
+            return {
+              ...prev,
+              [relayId]: {
+                ...(current || ({} as RelayData)),
+                id: relayId,
+                lastSync: payload.payload.lastSync || new Date().toISOString(),
+                lastSeenAt: payload.payload.lastSeenAt || new Date().toISOString(),
+                status: payload.payload.status || "ONLINE",
+              },
+            };
+          });
         }
       })
       .on(
@@ -207,8 +224,11 @@ export function AdminMachinesClient({
                   lib.relays.map((baseRelay) => {
                     const relay = liveRelays[baseRelay.id] || baseRelay;
                     const modules = modulesMap[relay.id] || {};
-                    const lastActiveTime = new Date(relay.lastSeenAt || relay.lastSync).getTime();
-                    const isOnline = Date.now() - lastActiveTime < 120_000;
+                    const isOnline = relay.status === "ONLINE";
+                    const lastActiveTime = Math.max(
+                      relay.lastSeenAt ? new Date(relay.lastSeenAt).getTime() : 0,
+                      relay.lastSync ? new Date(relay.lastSync).getTime() : 0
+                    );
 
                     // Component health checks
                     const nfc1Ok = modules.nfc1 !== false;
@@ -257,13 +277,19 @@ export function AdminMachinesClient({
                                     : "bg-red-500/15 text-red-700"
                                 }`}>
                                   <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`} />
-                                  {isOnline ? "ONLINE (WebSocket)" : "OFFLINE"}
+                                  {isOnline ? "ONLINE" : "OFFLINE"}
                                 </span>
                               </div>
                               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground font-mono mt-1">
                                 <span>MAC: {relay.macAddress || "N/A"}</span>
                                 <span>BLE ID: {relay.bleReaderId || "N/A"}</span>
-                                <span>Last Seen: {new Date(lastActiveTime).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}</span>
+                                {isOnline ? (
+                                  <span className="text-emerald-600 font-semibold flex items-center gap-1">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span> Live
+                                  </span>
+                                ) : (
+                                  <span>Last Seen: {lastActiveTime > 0 ? new Date(lastActiveTime).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }) : "Never"}</span>
+                                )}
                               </div>
                             </div>
                           </div>

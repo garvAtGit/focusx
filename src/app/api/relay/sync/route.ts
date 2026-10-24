@@ -97,7 +97,7 @@ export async function POST(request: Request) {
     // Update relay last sync
     await prisma.relay.update({
       where: { id: relay_id },
-      data: { lastSync: new Date(), status: "ONLINE" }
+      data: { lastSync: new Date(), lastSeenAt: new Date(), status: "ONLINE" }
     });
 
     return NextResponse.json({

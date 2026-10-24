@@ -117,8 +117,11 @@ export default function HardwareSetupClient({ libraryId, initialHardware }: { li
             </div>
           ) : (
             initialHardware.map((hw) => {
-              const lastActive = new Date((hw.lastSeenAt || hw.lastSync)).getTime();
-              const isOnline = Date.now() - lastActive < 120000;
+              const isOnline = hw.status === "ONLINE";
+              const lastActive = Math.max(
+                hw.lastSeenAt ? new Date(hw.lastSeenAt).getTime() : 0,
+                hw.lastSync ? new Date(hw.lastSync).getTime() : 0
+              );
 
               return (
                 <div key={hw.id} className="p-6 hover:bg-slate-50 transition-colors">
@@ -129,10 +132,18 @@ export default function HardwareSetupClient({ libraryId, initialHardware }: { li
                       </div>
                       <div>
                         <h4 className="font-semibold text-slate-800">FocusX ESP32 Reader</h4>
-                        <div className="flex items-center gap-3 mt-1 text-sm text-slate-500 font-mono">
+                        <div className="flex flex-wrap items-center gap-3 mt-1 text-sm text-slate-500 font-mono">
                           <span>MAC: {hw.macAddress}</span>
                           <span className="w-1 h-1 rounded-full bg-slate-300"></span>
                           <span>BLE ID: {hw.bleReaderId || 'N/A'}</span>
+                          <span className="w-1 h-1 rounded-full bg-slate-300"></span>
+                          {isOnline ? (
+                            <span className="text-emerald-600 font-semibold flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span> Live
+                            </span>
+                          ) : (
+                            <span>Last Seen: {lastActive > 0 ? new Date(lastActive).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }) : "Never"}</span>
+                          )}
                         </div>
                       </div>
                     </div>
