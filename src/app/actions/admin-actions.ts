@@ -3,9 +3,11 @@
 import prisma from "@/lib/prisma"
 import { getSession } from "./auth-actions"
 import { revalidatePath, updateTag } from "next/cache"
-import { deleteByPattern } from "@/lib/redis"
+import { deleteByPattern, redis } from "@/lib/redis"
 import { invalidateLibraryRuntimeCache } from "@/lib/library-cache"
+import { invalidateAdminCache } from "@/lib/admin-cache"
 import { parseSafeUrl } from "@/lib/validation"
+import type { Role } from "@prisma/client"
 
 async function requireAdmin() {
   const session = await getSession();
@@ -16,6 +18,9 @@ async function requireAdmin() {
 
 async function clearLibraryCache(libraryId?: string) {
   try {
+    // Invalidate Admin overview and fleet caches atomically
+    await invalidateAdminCache();
+
     // SCAN-based delete (non-blocking) instead of KEYS.
     await deleteByPattern('libraries:search:*');
     if (libraryId) {
@@ -145,5 +150,134 @@ export async function switchAdminLibrary(libraryId: string) {
   });
 
   revalidatePath('/dashboard');
+  return { success: true };
+}
+
+export async function createOrPromoteAdmin(formData: FormData) {
+  const currentSession = await getSession();
+  if (!currentSession || currentSession.role !== "ADMIN") {
+    throw new Error("Unauthorized: Super Admin access required");
+  }
+
+  const name = (formData.get("name") as string)?.trim();
+  const rawPhone = (formData.get("phone") as string)?.trim();
+  const email = (formData.get("email") as string)?.trim().toLowerCase() || null;
+
+  if (!name) throw new Error("Admin name is required");
+  if (!rawPhone || rawPhone.replace(/\D/g, "").length < 10) {
+    throw new Error("A valid 10-digit mobile number is required");
+  }
+
+  const cleanPhone = rawPhone.replace(/\D/g, "").slice(-10);
+  const phoneWithCode = `+91${cleanPhone}`;
+
+  // Check if user exists by phone or email
+  const existingUser = await prisma.user.findFirst({
+    where: {
+      OR: [
+        { phone: phoneWithCode },
+        { phone: cleanPhone },
+        ...(email ? [{ email }] : []),
+      ],
+    },
+  });
+
+  if (existingUser) {
+    await prisma.user.update({
+      where: { id: existingUser.id },
+      data: {
+        role: "ADMIN",
+        name,
+        ...(email && !existingUser.email ? { email } : {}),
+      },
+    });
+
+    if (existingUser.authId) {
+      try {
+        await redis.del(`usersess:${existingUser.authId}`);
+      } catch {}
+    }
+  } else {
+    // Generate FocusX ID
+    let uniqueId = "FD-" + new Date().getFullYear().toString().slice(2, 4) + Math.random().toString(36).substring(2, 6).toUpperCase();
+    await prisma.user.create({
+      data: {
+        name,
+        phone: phoneWithCode,
+        email,
+        role: "ADMIN",
+        uniqueId,
+      },
+    });
+  }
+
+  revalidatePath("/admin/team");
+  revalidatePath("/admin/users");
+  revalidatePath("/admin");
+  await invalidateAdminCache();
+  return { success: true };
+}
+
+export async function revokeAdminRole(targetUserId: string) {
+  const currentSession = await getSession();
+  if (!currentSession || currentSession.role !== "ADMIN") {
+    throw new Error("Unauthorized: Super Admin access required");
+  }
+
+  if (currentSession.userId === targetUserId) {
+    throw new Error("Security Alert: You cannot revoke your own Super Admin access.");
+  }
+
+  const adminCount = await prisma.user.count({
+    where: { role: "ADMIN" },
+  });
+
+  if (adminCount <= 1) {
+    throw new Error("Safety Block: Cannot revoke the last remaining Super Admin.");
+  }
+
+  const targetUser = await prisma.user.update({
+    where: { id: targetUserId },
+    data: { role: "STUDENT" },
+  });
+
+  if (targetUser.authId) {
+    try {
+      await redis.del(`usersess:${targetUser.authId}`);
+    } catch {}
+  }
+
+  revalidatePath("/admin/team");
+  revalidatePath("/admin/users");
+  revalidatePath("/admin");
+  await invalidateAdminCache();
+  return { success: true };
+}
+
+export async function updateUserRole(userId: string, newRole: Role) {
+  const currentSession = await getSession();
+  if (!currentSession || currentSession.role !== "ADMIN") {
+    throw new Error("Unauthorized: Super Admin access required");
+  }
+
+  if (currentSession.userId === userId && newRole !== "ADMIN") {
+    throw new Error("Security Alert: You cannot downgrade your own administrative privileges.");
+  }
+
+  const targetUser = await prisma.user.update({
+    where: { id: userId },
+    data: { role: newRole },
+  });
+
+  if (targetUser.authId) {
+    try {
+      await redis.del(`usersess:${targetUser.authId}`);
+    } catch {}
+  }
+
+  revalidatePath("/admin/users");
+  revalidatePath("/admin/team");
+  revalidatePath("/admin");
+  await invalidateAdminCache();
   return { success: true };
 }
