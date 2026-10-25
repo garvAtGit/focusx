@@ -1,10 +1,25 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { 
-  Cpu, Wifi, Signal, DoorClosed, DoorOpen, Radio, 
-  AlertTriangle, CheckCircle2, XCircle, Search, RefreshCw, 
-  Unlock, RotateCcw, AlertCircle, Building2, Phone, MapPin 
+import React, { useState, useEffect, useMemo } from "react";
+import {
+  Cpu,
+  Signal,
+  DoorClosed,
+  DoorOpen,
+  Radio,
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
+  Search,
+  Unlock,
+  RotateCcw,
+  Building2,
+  MapPin,
+  Copy,
+  ChevronDown,
+  ChevronUp,
+  Layers,
+  Zap,
 } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
 import toast from "react-hot-toast";
@@ -43,6 +58,8 @@ type ModuleHealth = {
   updatedAt?: number;
 };
 
+type FilterTab = "WITH_HARDWARE" | "ONLINE" | "WARNINGS" | "ALL" | "UNLINKED";
+
 export function AdminMachinesClient({
   libraries,
   initialModulesMap,
@@ -51,6 +68,7 @@ export function AdminMachinesClient({
   initialModulesMap: Record<string, ModuleHealth>;
 }) {
   const [searchTerm, setSearchTerm] = useState("");
+  const [activeFilter, setActiveFilter] = useState<FilterTab>("WITH_HARDWARE");
   const [modulesMap, setModulesMap] = useState<Record<string, ModuleHealth>>(initialModulesMap);
   const [liveRelays, setLiveRelays] = useState<Record<string, RelayData>>(() => {
     const map: Record<string, RelayData> = {};
@@ -62,11 +80,11 @@ export function AdminMachinesClient({
     return map;
   });
   const [isSendingCmd, setIsSendingCmd] = useState<string | null>(null);
+  const [expandedLibraries, setExpandedLibraries] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!supabaseUrl || !supabaseKey) return;
 
-    // Listen to real-time broadcast and DB updates for relays
     const channel = supabase
       .channel("admin-hardware-diagnostics")
       .on("broadcast", { event: "hardware_status" }, (payload: any) => {
@@ -132,258 +150,679 @@ export function AdminMachinesClient({
       } else {
         toast.error("Failed to send command.");
       }
-    } catch (err) {
+    } catch {
       toast.error("Network error while sending command.");
     } finally {
       setIsSendingCmd(null);
     }
   };
 
-  const filteredLibraries = libraries.filter((lib) => {
-    const q = searchTerm.toLowerCase();
-    const libMatches =
-      lib.name.toLowerCase().includes(q) || lib.address.toLowerCase().includes(q);
-    const relayMatches = lib.relays.some(
-      (r) =>
-        (r.macAddress && r.macAddress.toLowerCase().includes(q)) ||
-        (r.bleReaderId && r.bleReaderId.toLowerCase().includes(q))
-    );
-    return libMatches || relayMatches;
-  });
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    toast.success(`${label} copied to clipboard`);
+  };
 
-  const getRssiBadge = (rssi?: number) => {
-    if (typeof rssi !== "number") return null;
-    let colorClass = "bg-emerald-50 text-emerald-700 border-emerald-200";
+  const toggleExpand = (id: string) => {
+    setExpandedLibraries((prev) => ({
+      ...prev,
+      [id]: !prev[id],
+    }));
+  };
+
+  // Fleet Statistics Calculations
+  const stats = useMemo(() => {
+    let totalRelays = 0;
+    let onlineRelays = 0;
+    let equippedLibs = 0;
+    let faultCount = 0;
+
+    for (const lib of libraries) {
+      if (lib.relays.length > 0) {
+        equippedLibs++;
+      }
+      for (const baseRelay of lib.relays) {
+        totalRelays++;
+        const relay = liveRelays[baseRelay.id] || baseRelay;
+        const modules = modulesMap[relay.id] || {};
+        if (relay.status === "ONLINE") {
+          onlineRelays++;
+        }
+        const hasIssue =
+          modules.nfc1 === false ||
+          modules.nfc2 === false ||
+          modules.doorReed === false;
+        if (hasIssue) {
+          faultCount++;
+        }
+      }
+    }
+
+    return {
+      totalRelays,
+      onlineRelays,
+      equippedLibs,
+      faultCount,
+      unlinkedLibs: libraries.length - equippedLibs,
+    };
+  }, [libraries, liveRelays, modulesMap]);
+
+  // Filtering Logic
+  const filteredLibraries = useMemo(() => {
+    const q = searchTerm.toLowerCase().trim();
+
+    return libraries.filter((lib) => {
+      const matchesSearch =
+        !q ||
+        lib.name.toLowerCase().includes(q) ||
+        lib.address.toLowerCase().includes(q) ||
+        (lib.managerName && lib.managerName.toLowerCase().includes(q)) ||
+        lib.relays.some(
+          (r) =>
+            (r.macAddress && r.macAddress.toLowerCase().includes(q)) ||
+            (r.bleReaderId && r.bleReaderId.toLowerCase().includes(q))
+        );
+
+      if (!matchesSearch) return false;
+
+      const hasRelays = lib.relays.length > 0;
+      const anyOnline = lib.relays.some(
+        (r) => (liveRelays[r.id] || r).status === "ONLINE"
+      );
+      const anyWarning = lib.relays.some((r) => {
+        const m = modulesMap[r.id] || {};
+        return m.nfc1 === false || m.nfc2 === false || m.doorReed === false;
+      });
+
+      switch (activeFilter) {
+        case "WITH_HARDWARE":
+          return hasRelays;
+        case "ONLINE":
+          return anyOnline;
+        case "WARNINGS":
+          return anyWarning;
+        case "UNLINKED":
+          return !hasRelays;
+        case "ALL":
+        default:
+          return true;
+      }
+    });
+  }, [libraries, searchTerm, activeFilter, liveRelays, modulesMap]);
+
+  const renderRssi = (rssi?: number) => {
+    if (typeof rssi !== "number") {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-mono font-bold bg-white text-slate-500 border border-slate-200/80 shadow-sm">
+          <Signal className="w-3.5 h-3.5 text-slate-400" /> N/A
+        </span>
+      );
+    }
+
+    let color = "text-emerald-700";
+    let bg = "bg-emerald-50 border-emerald-200";
+    let bars = 4;
     let label = "Strong";
-    if (rssi < -80) {
-      colorClass = "bg-red-50 text-red-700 border-red-200";
-      label = "Weak";
-    } else if (rssi < -70) {
-      colorClass = "bg-amber-50 text-amber-700 border-amber-200";
+
+    if (rssi < -85) {
+      color = "text-rose-700";
+      bg = "bg-rose-50 border-rose-200";
+      bars = 1;
+      label = "Poor";
+    } else if (rssi < -75) {
+      color = "text-amber-700";
+      bg = "bg-amber-50 border-amber-200";
+      bars = 2;
       label = "Fair";
+    } else if (rssi < -65) {
+      color = "text-[#2781CA]";
+      bg = "bg-blue-50 border-blue-200";
+      bars = 3;
+      label = "Good";
     }
 
     return (
-      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold border ${colorClass}`}>
-        <Signal className="w-3.5 h-3.5" />
-        <span>{rssi} dBm ({label})</span>
+      <span
+        className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-mono font-bold border shadow-sm ${bg} ${color}`}
+        title={`Signal: ${rssi} dBm (${label})`}
+      >
+        <div className="flex items-end gap-0.5 h-3">
+          <span className={`w-0.5 h-1.5 rounded-full ${bars >= 1 ? "bg-current" : "bg-slate-300"}`} />
+          <span className={`w-0.5 h-2 rounded-full ${bars >= 2 ? "bg-current" : "bg-slate-300"}`} />
+          <span className={`w-0.5 h-2.5 rounded-full ${bars >= 3 ? "bg-current" : "bg-slate-300"}`} />
+          <span className={`w-0.5 h-3 rounded-full ${bars >= 4 ? "bg-current" : "bg-slate-300"}`} />
+        </div>
+        <span>{rssi} dBm</span>
       </span>
     );
   };
 
   return (
-    <div className="space-y-6">
-      {/* Search and Stats bar */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-xl border border-border shadow-sm">
-        <div className="relative w-full sm:w-96">
-          <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-3" />
-          <input
-            type="text"
-            placeholder="Search by library name, MAC, or Reader ID..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 rounded-lg border border-border bg-background text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-          />
+    <div className="space-y-8 font-sans">
+      {/* Top Metric Grid (Matching FocusX Librarian Theme & Color Grading) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 relative">
+        {/* 1. Obsidian Widget: Gate Controllers */}
+        <div className="bg-slate-900 p-7 rounded-[2.5rem] border border-slate-800 shadow-[0_8px_30px_rgba(0,0,0,0.12)] hover:border-slate-700 transition-all duration-300 group flex flex-col justify-between h-full relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-[#0085FF] opacity-20 blur-[50px] rounded-full pointer-events-none"></div>
+
+          <div className="flex justify-between items-start mb-6 relative z-10">
+            <span className="text-sm font-bold text-slate-300">Gate Controllers</span>
+            <div className="p-2.5 bg-slate-800 rounded-xl group-hover:bg-slate-700 transition-colors">
+              <Cpu className="w-5 h-5 text-[#0085FF]" />
+            </div>
+          </div>
+
+          <div className="relative z-10">
+            <h3 className="text-5xl font-black text-white tracking-tight">
+              {stats.onlineRelays}{" "}
+              <span className="text-2xl text-slate-400 font-bold">/ {stats.totalRelays}</span>
+            </h3>
+            <div className="mt-4 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+                Active Bidirectional Relays
+              </span>
+            </div>
+          </div>
         </div>
-        <div className="text-xs text-muted-foreground font-medium">
-          Showing <span className="font-bold text-foreground">{filteredLibraries.length}</span> libraries
+
+        {/* 2. Signature Electric Lime Card: IoT Coverage */}
+        <div className="bg-[#C6F135] p-7 rounded-[2.5rem] border border-[#b5e022] shadow-[0_8px_30px_rgba(198,241,53,0.15)] hover:shadow-[0_8px_30px_rgba(198,241,53,0.25)] hover:-translate-y-1 transition-all duration-300 group flex flex-col justify-between relative overflow-hidden">
+          <div className="absolute -right-6 -top-6 w-32 h-32 bg-white opacity-25 rounded-full blur-[40px] pointer-events-none"></div>
+
+          <div className="flex justify-between items-start mb-6 relative z-10">
+            <span className="text-sm font-bold text-slate-900">IoT Coverage</span>
+            <div className="p-2.5 bg-white/50 backdrop-blur-sm rounded-xl">
+              <Building2 className="w-5 h-5 text-slate-900" />
+            </div>
+          </div>
+
+          <div className="relative z-10 mt-auto">
+            <h3 className="text-5xl font-black text-slate-900 tracking-tight drop-shadow-sm">
+              {stats.equippedLibs}{" "}
+              <span className="text-2xl text-slate-800 font-bold">/ {libraries.length}</span>
+            </h3>
+            <div className="mt-4 flex items-center gap-1.5 text-[11px] font-bold">
+              <span className="text-slate-800/80 uppercase tracking-widest">
+                {stats.equippedLibs} Fitted • {stats.unlinkedLibs} Unlinked
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* 3. Crisp White Card: Diagnostic Alarms */}
+        <div className="bg-white p-7 rounded-[2.5rem] border border-slate-200/80 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:-translate-y-1 transition-all duration-300 group flex flex-col justify-between relative overflow-hidden">
+          <div className="absolute -right-12 -top-12 w-64 h-64 bg-amber-500/10 rounded-full blur-[50px] pointer-events-none group-hover:bg-amber-500/20 transition-colors duration-500"></div>
+
+          <div className="flex justify-between items-start mb-6 relative z-10">
+            <span className="text-sm font-bold text-slate-500">Diagnostic Alarms</span>
+            <div className="p-2.5 bg-slate-50 border border-slate-100 shadow-sm rounded-xl">
+              {stats.faultCount > 0 ? (
+                <AlertTriangle className="w-5 h-5 text-amber-500" />
+              ) : (
+                <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+              )}
+            </div>
+          </div>
+
+          <div className="relative z-10">
+            <h3
+              className={`text-4xl font-black tracking-tight ${
+                stats.faultCount > 0 ? "text-amber-600" : "text-slate-900"
+              }`}
+            >
+              {stats.faultCount > 0 ? `${stats.faultCount} Active` : "Zero Faults"}
+            </h3>
+            <div className="mt-4 flex items-center gap-2">
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  stats.faultCount > 0 ? "bg-amber-500" : "bg-emerald-500"
+                }`}
+              ></span>
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">
+                {stats.faultCount > 0
+                  ? "NFC Reader or Gate Warning"
+                  : "All RFID & Reed Nominal"}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* 4. Crisp White Card: Realtime Bus */}
+        <div className="bg-white p-7 rounded-[2.5rem] border border-slate-200/80 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:-translate-y-1 transition-all duration-300 group flex flex-col justify-between relative overflow-hidden">
+          <div className="absolute -right-12 -top-12 w-64 h-64 bg-[#2781CA]/10 rounded-full blur-[50px] pointer-events-none group-hover:bg-[#2781CA]/20 transition-colors duration-500"></div>
+
+          <div className="flex justify-between items-start mb-6 relative z-10">
+            <span className="text-sm font-bold text-slate-500">Realtime Telemetry</span>
+            <div className="p-2.5 bg-blue-50/70 border border-blue-100/60 shadow-sm rounded-xl">
+              <Radio className="w-5 h-5 text-[#2781CA]" />
+            </div>
+          </div>
+
+          <div className="relative z-10">
+            <div className="flex items-center gap-2">
+              <h3 className="text-3xl font-black text-slate-900 tracking-tight">Supabase Bus</h3>
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            </div>
+            <div className="mt-4 flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
+              <Zap className="w-3.5 h-3.5 text-[#2781CA]" />
+              <span className="uppercase tracking-widest">Broadcast Channel Active</span>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Libraries & Hardware Grid */}
-      <div className="grid gap-6">
-        {filteredLibraries.map((lib) => {
-          const hasRelays = lib.relays.length > 0;
+      {/* Search & Filter Bar (FocusX Clean White Card Placement) */}
+      <div className="p-4 rounded-3xl bg-white border border-slate-200/80 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-4">
+        {/* Search Input */}
+        <div className="relative flex-1 max-w-md">
+          <Search className="w-4 h-4 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            placeholder="Search by library name, MAC, or BLE Reader ID..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-11 pr-4 py-3 rounded-2xl border border-slate-200 bg-slate-50/70 text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2781CA] focus:bg-white transition-all"
+          />
+          {searchTerm && (
+            <button
+              onClick={() => setSearchTerm("")}
+              className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 hover:text-slate-900"
+            >
+              Clear
+            </button>
+          )}
+        </div>
 
-          return (
-            <div key={lib.id} className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
-              {/* Library Header */}
-              <div className="p-5 border-b border-border bg-muted/20 flex flex-col sm:flex-row justify-between sm:items-center gap-3">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <Building2 className="w-5 h-5 text-primary" />
-                    <h3 className="text-lg font-bold text-foreground">{lib.name}</h3>
-                  </div>
-                  <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
-                    <MapPin className="w-3.5 h-3.5" /> {lib.address}
-                  </p>
-                </div>
-                <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                  {lib.managerName && <div><span className="font-semibold text-foreground">Manager:</span> {lib.managerName}</div>}
-                  {lib.managerPhone && <div><span className="font-semibold text-foreground">Phone:</span> {lib.managerPhone}</div>}
-                </div>
-              </div>
+        {/* Filter Pills */}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setActiveFilter("WITH_HARDWARE")}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+              activeFilter === "WITH_HARDWARE"
+                ? "bg-[#2781CA] text-white shadow-[0_2px_10px_-4px_rgba(39,129,202,0.5)]"
+                : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900"
+            }`}
+          >
+            <Cpu className="w-3.5 h-3.5" />
+            With Hardware ({stats.equippedLibs})
+          </button>
 
-              {/* Machine Relays List */}
-              <div className="p-5 space-y-4">
-                {!hasRelays ? (
-                  <div className="py-6 text-center text-sm text-muted-foreground bg-muted/10 rounded-xl border border-dashed border-border">
-                    No hardware machine linked to this library.
-                  </div>
-                ) : (
-                  lib.relays.map((baseRelay) => {
-                    const relay = liveRelays[baseRelay.id] || baseRelay;
-                    const modules = modulesMap[relay.id] || {};
-                    const isOnline = relay.status === "ONLINE";
-                    const lastActiveTime = Math.max(
-                      relay.lastSeenAt ? new Date(relay.lastSeenAt).getTime() : 0,
-                      relay.lastSync ? new Date(relay.lastSync).getTime() : 0
-                    );
+          <button
+            onClick={() => setActiveFilter("ONLINE")}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+              activeFilter === "ONLINE"
+                ? "bg-emerald-600 text-white shadow-sm"
+                : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900"
+            }`}
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            Online ({stats.onlineRelays})
+          </button>
 
-                    // Component health checks
-                    const nfc1Ok = modules.nfc1 !== false;
-                    const nfc2Ok = modules.nfc2 !== false;
-                    const doorClosed = modules.doorReed !== false;
-                    const hasComponentIssue = !nfc1Ok || !nfc2Ok || !doorClosed;
+          {stats.faultCount > 0 && (
+            <button
+              onClick={() => setActiveFilter("WARNINGS")}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                activeFilter === "WARNINGS"
+                  ? "bg-amber-600 text-white shadow-sm"
+                  : "bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200"
+              }`}
+            >
+              <AlertTriangle className="w-3.5 h-3.5" />
+              Sensor Alerts ({stats.faultCount})
+            </button>
+          )}
 
-                    return (
-                      <div
-                        key={relay.id}
-                        className={`p-5 rounded-xl border transition-all ${
-                          !isOnline
-                            ? "border-border bg-muted/5 opacity-80"
-                            : hasComponentIssue
-                            ? "border-amber-300 bg-amber-50/20"
-                            : "border-border bg-card"
-                        }`}
-                      >
-                        {/* Hardware Alert Banner for Admin */}
-                        {isOnline && hasComponentIssue && (
-                          <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-900 flex items-start gap-2.5 text-xs font-medium">
-                            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                            <div>
-                              <span className="font-bold">Hardware Alert: </span>
-                              {!nfc1Ok && "Entry Reader (PN532 #1) error. "}
-                              {!nfc2Ok && "Exit Reader (PN532 #2) error. "}
-                              {!doorClosed && "Door sensor indicates gate held open."}
-                            </div>
-                          </div>
+          <button
+            onClick={() => setActiveFilter("ALL")}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+              activeFilter === "ALL"
+                ? "bg-slate-900 text-white shadow-sm"
+                : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900"
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            All ({libraries.length})
+          </button>
+
+          <button
+            onClick={() => setActiveFilter("UNLINKED")}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+              activeFilter === "UNLINKED"
+                ? "bg-slate-900 text-white shadow-sm"
+                : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900"
+            }`}
+          >
+            Unlinked ({stats.unlinkedLibs})
+          </button>
+        </div>
+      </div>
+
+      {/* Library Nodes Listing (FocusX Rounded 2.5rem Cards) */}
+      <div className="space-y-5">
+        {filteredLibraries.length === 0 ? (
+          <div className="p-12 rounded-[2.5rem] bg-white border border-slate-200/80 shadow-[0_8px_30px_rgb(0,0,0,0.04)] text-center space-y-3">
+            <Cpu className="w-12 h-12 text-slate-400 mx-auto" />
+            <h3 className="text-base font-black text-slate-900">No Matching Hardware Found</h3>
+            <p className="text-sm font-medium text-slate-500 max-w-sm mx-auto">
+              No library nodes match your current search and filter criteria. Try clicking &quot;All&quot; or clearing the search bar.
+            </p>
+          </div>
+        ) : (
+          filteredLibraries.map((lib) => {
+            const hasRelays = lib.relays.length > 0;
+            const isExpanded = expandedLibraries[lib.id] ?? hasRelays;
+
+            return (
+              <div
+                key={lib.id}
+                className="rounded-[2.5rem] bg-white border border-slate-200/80 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:border-slate-300 transition-all duration-300 overflow-hidden"
+              >
+                {/* Library Header Bar */}
+                <div
+                  onClick={() => toggleExpand(lib.id)}
+                  className="p-6 bg-white border-b border-slate-100 flex flex-col md:flex-row justify-between md:items-center gap-4 cursor-pointer select-none hover:bg-slate-50/50 transition-colors"
+                >
+                  <div className="flex items-start gap-4">
+                    <div
+                      className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 border ${
+                        hasRelays
+                          ? "bg-blue-50 text-[#2781CA] border-blue-100 shadow-sm"
+                          : "bg-slate-100 text-slate-400 border-slate-200/60"
+                      }`}
+                    >
+                      <Building2 className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-3">
+                        <h3 className="text-lg font-black text-slate-900 tracking-tight">
+                          {lib.name}
+                        </h3>
+                        {hasRelays ? (
+                          <span className="px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                            {lib.relays.length} {lib.relays.length === 1 ? "Gate Relay" : "Gate Relays"}
+                          </span>
+                        ) : (
+                          <span className="px-3 py-1 rounded-full text-xs font-bold text-slate-500 bg-slate-100 border border-slate-200">
+                            Unlinked Branch
+                          </span>
                         )}
-
-                        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
-                          {/* Machine Info */}
-                          <div className="flex items-start gap-3.5">
-                            <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
-                              isOnline ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"
-                            }`}>
-                              <Cpu className="w-6 h-6" />
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2.5">
-                                <h4 className="font-bold text-foreground text-base">FocusX Smart Gate Relay</h4>
-                                <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider ${
-                                  isOnline
-                                    ? "bg-emerald-500/15 text-emerald-700"
-                                    : "bg-red-500/15 text-red-700"
-                                }`}>
-                                  <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`} />
-                                  {isOnline ? "ONLINE" : "OFFLINE"}
-                                </span>
-                              </div>
-                              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground font-mono mt-1">
-                                <span>MAC: {relay.macAddress || "N/A"}</span>
-                                <span>BLE ID: {relay.bleReaderId || "N/A"}</span>
-                                {isOnline ? (
-                                  <span className="text-emerald-600 font-semibold flex items-center gap-1">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span> Live
-                                  </span>
-                                ) : (
-                                  <span>Last Seen: {lastActiveTime > 0 ? new Date(lastActiveTime).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }) : "Never"}</span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Remote Actions */}
-                          <div className="flex flex-wrap items-center gap-2 self-start lg:self-center">
-                            <button
-                              type="button"
-                              onClick={() => handleCommand(relay.id, "open_in")}
-                              disabled={isSendingCmd !== null || !isOnline}
-                              className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-border bg-background hover:bg-muted text-foreground transition-all flex items-center gap-1.5 shadow-sm disabled:opacity-40"
-                              title="Trigger Door Unlock from Entry side"
-                            >
-                              <Unlock className="w-3.5 h-3.5 text-emerald-600" />
-                              <span>Unlock In</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleCommand(relay.id, "open_out")}
-                              disabled={isSendingCmd !== null || !isOnline}
-                              className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-border bg-background hover:bg-muted text-foreground transition-all flex items-center gap-1.5 shadow-sm disabled:opacity-40"
-                              title="Trigger Door Unlock from Exit side"
-                            >
-                              <Unlock className="w-3.5 h-3.5 text-blue-600" />
-                              <span>Unlock Out</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (confirm("Send factory reset command to device?")) {
-                                  handleCommand(relay.id, "factory_reset");
-                                }
-                              }}
-                              disabled={isSendingCmd !== null || !isOnline}
-                              className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition-all flex items-center gap-1.5 shadow-sm disabled:opacity-40"
-                              title="Reboot & Factory Reset Device"
-                            >
-                              <RotateCcw className="w-3.5 h-3.5" />
-                              <span>Reset</span>
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Diagnostic Badges */}
-                        <div className="mt-4 pt-3.5 border-t border-border/60 flex flex-wrap items-center gap-2">
-                          <span className="text-xs font-semibold text-muted-foreground mr-1">Modules Health:</span>
-
-                          {/* Reader 1 (Entry) */}
-                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold border ${
-                            nfc1Ok
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                              : "bg-red-50 text-red-700 border-red-200"
-                          }`}>
-                            {nfc1Ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
-                            <span>Reader 1 (Entry): {nfc1Ok ? "OK" : "ERROR"}</span>
-                          </span>
-
-                          {/* Reader 2 (Exit) */}
-                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold border ${
-                            nfc2Ok
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                              : "bg-red-50 text-red-700 border-red-200"
-                          }`}>
-                            {nfc2Ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
-                            <span>Reader 2 (Exit): {nfc2Ok ? "OK" : "ERROR"}</span>
-                          </span>
-
-                          {/* Door Sensor */}
-                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold border ${
-                            doorClosed
-                              ? "bg-slate-50 text-slate-700 border-slate-200"
-                              : "bg-amber-50 text-amber-700 border-amber-200"
-                          }`}>
-                            {doorClosed ? <DoorClosed className="w-3.5 h-3.5 text-slate-500" /> : <DoorOpen className="w-3.5 h-3.5 text-amber-600" />}
-                            <span>Door Sensor: {doorClosed ? "Closed" : "Open"}</span>
-                          </span>
-
-                          {/* BLE Beacon */}
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold border bg-indigo-50 text-indigo-700 border-indigo-200">
-                            <Radio className="w-3.5 h-3.5" />
-                            <span>BLE Beacon: Active</span>
-                          </span>
-
-                          {/* WiFi Signal */}
-                          {getRssiBadge(modules.rssi)}
-                        </div>
                       </div>
-                    );
-                  })
+                      <p className="text-xs font-medium text-slate-500 flex items-center gap-1 mt-1.5">
+                        <MapPin className="w-3.5 h-3.5 text-slate-400" /> {lib.address}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-4 self-end md:self-auto">
+                    {lib.managerName && (
+                      <div className="text-xs font-medium text-slate-600 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-100 hidden sm:block">
+                        <span className="font-bold text-slate-400 uppercase text-[10px] mr-1">Manager:</span> {lib.managerName}
+                      </div>
+                    )}
+                    {lib.managerPhone && (
+                      <div className="text-xs font-mono font-bold text-slate-600 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-100 hidden sm:block">
+                        <span className="font-bold text-slate-400 uppercase text-[10px] mr-1 font-sans">Phone:</span> {lib.managerPhone}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      className="p-2 rounded-xl text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+                      title={isExpanded ? "Collapse" : "Expand"}
+                    >
+                      {isExpanded ? (
+                        <ChevronUp className="w-5 h-5" />
+                      ) : (
+                        <ChevronDown className="w-5 h-5" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Relays Container */}
+                {isExpanded && (
+                  <div className="p-6 space-y-4 bg-slate-50/40">
+                    {!hasRelays ? (
+                      <div className="py-8 px-6 rounded-2xl bg-white border border-dashed border-slate-200 text-center flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">
+                        <div className="text-left">
+                          <p className="text-sm font-bold text-slate-800">
+                            No FocusX Smart Relay gateway attached
+                          </p>
+                          <p className="text-xs font-medium text-slate-500 mt-1">
+                            This branch currently operates without IoT gate hardware. Pair an ESP32 unit to enable RFID attendance and automated door actuation.
+                          </p>
+                        </div>
+                        <span className="text-xs font-bold px-4 py-2 rounded-xl bg-slate-100 text-slate-600 border border-slate-200 shrink-0">
+                          Manual Check-in Only
+                        </span>
+                      </div>
+                    ) : (
+                      lib.relays.map((baseRelay) => {
+                        const relay = liveRelays[baseRelay.id] || baseRelay;
+                        const modules = modulesMap[relay.id] || {};
+                        const isOnline = relay.status === "ONLINE";
+                        const lastActiveTime = Math.max(
+                          relay.lastSeenAt ? new Date(relay.lastSeenAt).getTime() : 0,
+                          relay.lastSync ? new Date(relay.lastSync).getTime() : 0
+                        );
+
+                        // Component health checks
+                        const nfc1Ok = modules.nfc1 !== false;
+                        const nfc2Ok = modules.nfc2 !== false;
+                        const doorClosed = modules.doorReed !== false;
+                        const hasComponentIssue = !nfc1Ok || !nfc2Ok || !doorClosed;
+
+                        return (
+                          <div
+                            key={relay.id}
+                            className={`p-6 rounded-2xl border transition-all ${
+                              !isOnline
+                                ? "bg-white border-slate-200 opacity-80"
+                                : hasComponentIssue
+                                ? "bg-amber-50/40 border-amber-300 shadow-sm"
+                                : "bg-white border-slate-200/90 shadow-sm hover:border-slate-300"
+                            }`}
+                          >
+                            {/* Hardware Alert Banner */}
+                            {isOnline && hasComponentIssue && (
+                              <div className="mb-4 p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-2.5 text-xs font-semibold">
+                                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                                <div>
+                                  <span className="font-black">Hardware Sensor Warning: </span>
+                                  {!nfc1Ok && "Entry Reader (PN532 #1) disconnected. "}
+                                  {!nfc2Ok && "Exit Reader (PN532 #2) disconnected. "}
+                                  {!doorClosed && "Gate Reed switch indicates door held open."}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Top Controller Row */}
+                            <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+                              {/* Left: Device Info */}
+                              <div className="flex items-start gap-4">
+                                <div
+                                  className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 border ${
+                                    isOnline
+                                      ? "bg-emerald-50 text-emerald-600 border-emerald-200 shadow-sm"
+                                      : "bg-red-50 text-red-600 border-red-200"
+                                  }`}
+                                >
+                                  <Cpu className="w-6 h-6" />
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-3">
+                                    <h4 className="font-black text-slate-900 text-base">
+                                      FocusX Smart Gate Relay
+                                    </h4>
+                                    <span
+                                      className={`inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-[11px] font-black uppercase tracking-wider border ${
+                                        isOnline
+                                          ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                                          : "bg-red-100 text-red-800 border-red-200"
+                                      }`}
+                                    >
+                                      <span
+                                        className={`w-2 h-2 rounded-full ${
+                                          isOnline ? "bg-emerald-500 animate-pulse" : "bg-red-500"
+                                        }`}
+                                      />
+                                      {isOnline ? "ONLINE" : "OFFLINE"}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs font-mono font-bold text-slate-600 mt-2">
+                                    <span
+                                      onClick={() => copyToClipboard(relay.macAddress || "", "MAC Address")}
+                                      className="hover:border-[#2781CA] cursor-pointer transition-colors flex items-center gap-1.5 bg-slate-50 px-3 py-1 rounded-xl border border-slate-200 shadow-xs"
+                                      title="Click to copy MAC"
+                                    >
+                                      <span>MAC: {relay.macAddress || "N/A"}</span>
+                                      <Copy className="w-3.5 h-3.5 text-slate-400" />
+                                    </span>
+
+                                    <span
+                                      onClick={() => copyToClipboard(relay.bleReaderId || "", "BLE Reader ID")}
+                                      className="hover:border-[#2781CA] cursor-pointer transition-colors flex items-center gap-1.5 bg-slate-50 px-3 py-1 rounded-xl border border-slate-200 shadow-xs"
+                                      title="Click to copy BLE ID"
+                                    >
+                                      <span>BLE: {relay.bleReaderId || "N/A"}</span>
+                                      <Copy className="w-3.5 h-3.5 text-slate-400" />
+                                    </span>
+
+                                    {isOnline ? (
+                                      <span className="text-emerald-700 font-sans font-black flex items-center gap-1.5">
+                                        <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
+                                        Live Pulse
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-400 font-sans font-medium">
+                                        Last Seen:{" "}
+                                        {lastActiveTime > 0
+                                          ? new Date(lastActiveTime).toLocaleTimeString("en-IN", {
+                                              timeZone: "Asia/Kolkata",
+                                            })
+                                          : "Never"}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Right: Remote Actuation Controls */}
+                              <div className="flex flex-wrap items-center gap-2.5 self-start lg:self-center">
+                                <button
+                                  type="button"
+                                  onClick={() => handleCommand(relay.id, "open_in")}
+                                  disabled={isSendingCmd !== null || !isOnline}
+                                  className="px-4 py-2.5 rounded-xl text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm flex items-center gap-2 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                                  title="Trigger Door Unlock from Entry side"
+                                >
+                                  <Unlock className="w-4 h-4" />
+                                  <span>{isSendingCmd === `${relay.id}:open_in` ? "Actuating..." : "Unlock In"}</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleCommand(relay.id, "open_out")}
+                                  disabled={isSendingCmd !== null || !isOnline}
+                                  className="px-4 py-2.5 rounded-xl text-xs font-black bg-[#2781CA] hover:opacity-90 text-white shadow-[0_2px_10px_-4px_rgba(39,129,202,0.5)] flex items-center gap-2 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                                  title="Trigger Door Unlock from Exit side"
+                                >
+                                  <Unlock className="w-4 h-4" />
+                                  <span>{isSendingCmd === `${relay.id}:open_out` ? "Actuating..." : "Unlock Out"}</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (confirm("Send remote factory reset & reboot signal to this ESP32 controller?")) {
+                                      handleCommand(relay.id, "factory_reset");
+                                    }
+                                  }}
+                                  disabled={isSendingCmd !== null || !isOnline}
+                                  className="px-3.5 py-2.5 rounded-xl text-xs font-bold bg-white text-rose-600 hover:bg-rose-50 border border-rose-200 flex items-center gap-1.5 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                                  title="Reboot & Reset Controller"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5" />
+                                  <span>Reset</span>
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Diagnostic Sensor Bar */}
+                            <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap items-center gap-3">
+                              <span className="text-[11px] font-black text-slate-400 uppercase tracking-wider mr-1">
+                                Telemetry:
+                              </span>
+
+                              {/* Reader 1 (Entry) */}
+                              <span
+                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border shadow-xs ${
+                                  nfc1Ok
+                                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                    : "bg-red-50 text-red-700 border-red-200"
+                                }`}
+                              >
+                                {nfc1Ok ? (
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                ) : (
+                                  <XCircle className="w-3.5 h-3.5" />
+                                )}
+                                <span>Reader 1 (Entry): {nfc1Ok ? "OK" : "ERR"}</span>
+                              </span>
+
+                              {/* Reader 2 (Exit) */}
+                              <span
+                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border shadow-xs ${
+                                  nfc2Ok
+                                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                    : "bg-red-50 text-red-700 border-red-200"
+                                }`}
+                              >
+                                {nfc2Ok ? (
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                ) : (
+                                  <XCircle className="w-3.5 h-3.5" />
+                                )}
+                                <span>Reader 2 (Exit): {nfc2Ok ? "OK" : "ERR"}</span>
+                              </span>
+
+                              {/* Door Reed Sensor */}
+                              <span
+                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border shadow-xs ${
+                                  doorClosed
+                                    ? "bg-slate-50 text-slate-700 border-slate-200"
+                                    : "bg-amber-50 text-amber-700 border-amber-200"
+                                }`}
+                              >
+                                {doorClosed ? (
+                                  <DoorClosed className="w-3.5 h-3.5 text-slate-500" />
+                                ) : (
+                                  <DoorOpen className="w-3.5 h-3.5 text-amber-600" />
+                                )}
+                                <span>Door: {doorClosed ? "Secured" : "Open Alert"}</span>
+                              </span>
+
+                              {/* BLE Beacon */}
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border bg-blue-50 text-[#2781CA] border-blue-100 shadow-xs">
+                                <Radio className="w-3.5 h-3.5 text-[#2781CA]" />
+                                <span>BLE Radar: Active</span>
+                              </span>
+
+                              {/* WiFi RSSI */}
+                              {renderRssi(modules.rssi)}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
                 )}
               </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
       </div>
     </div>
   );
