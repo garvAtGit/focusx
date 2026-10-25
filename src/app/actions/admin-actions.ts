@@ -5,6 +5,7 @@ import { getSession } from "./auth-actions"
 import { revalidatePath, updateTag } from "next/cache"
 import { deleteByPattern, redis } from "@/lib/redis"
 import { invalidateLibraryRuntimeCache } from "@/lib/library-cache"
+import { invalidateAdminCache } from "@/lib/admin-cache"
 import { parseSafeUrl } from "@/lib/validation"
 import type { Role } from "@prisma/client"
 
@@ -17,6 +18,9 @@ async function requireAdmin() {
 
 async function clearLibraryCache(libraryId?: string) {
   try {
+    // Invalidate Admin overview and fleet caches atomically
+    await invalidateAdminCache();
+
     // SCAN-based delete (non-blocking) instead of KEYS.
     await deleteByPattern('libraries:search:*');
     if (libraryId) {
@@ -210,6 +214,7 @@ export async function createOrPromoteAdmin(formData: FormData) {
   revalidatePath("/admin/team");
   revalidatePath("/admin/users");
   revalidatePath("/admin");
+  await invalidateAdminCache();
   return { success: true };
 }
 
@@ -245,6 +250,7 @@ export async function revokeAdminRole(targetUserId: string) {
   revalidatePath("/admin/team");
   revalidatePath("/admin/users");
   revalidatePath("/admin");
+  await invalidateAdminCache();
   return { success: true };
 }
 
@@ -271,5 +277,7 @@ export async function updateUserRole(userId: string, newRole: Role) {
 
   revalidatePath("/admin/users");
   revalidatePath("/admin/team");
+  revalidatePath("/admin");
+  await invalidateAdminCache();
   return { success: true };
 }
