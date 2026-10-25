@@ -80,7 +80,7 @@ async function AdminAuthWrapper({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex">
+    <div className="min-h-screen bg-[#FCFBF9] text-slate-900 flex">
       {/* Persistent Left Sidebar */}
       <AdminSidebar userEmail={session.email} userPhone={session.phone} />
 

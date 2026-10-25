@@ -67,8 +67,42 @@ async function generateFocusXId() {
   return id;
 }
 
+export async function devAdminLogin() {
+  if (process.env.NODE_ENV !== 'development') {
+    throw new Error('Not allowed');
+  }
+  const cookieStore = await cookies();
+  cookieStore.set('dev_admin', 'true', {
+    path: '/',
+    httpOnly: true,
+    sameSite: 'lax',
+    maxAge: 86400,
+  });
+  redirect('/admin/machines');
+}
+
 export async function getSession(): Promise<SessionData | null> {
   const cookieStore = await cookies();
+  if (process.env.NODE_ENV === 'development' && cookieStore.get('dev_admin')?.value === 'true') {
+    const adminUser = await prisma.user.findFirst({ where: { role: 'ADMIN' } });
+    if (adminUser) {
+      return {
+        userId: adminUser.id,
+        role: 'ADMIN',
+        email: adminUser.email || 'admin@focusx.test',
+        phone: adminUser.phone || '+919354610893',
+        employerLibraryId: adminUser.employerLibraryId,
+      };
+    }
+    return {
+      userId: 'dev-admin-id',
+      role: 'ADMIN',
+      email: 'admin@focusx.test',
+      phone: '+919354610893',
+      employerLibraryId: null,
+    };
+  }
+
   const sessionCookie = cookieStore.get('session')?.value;
 
   if (!sessionCookie || !adminAuth) return null;

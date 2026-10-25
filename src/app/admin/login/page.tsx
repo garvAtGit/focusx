@@ -18,7 +18,7 @@ import {
   InputOTPSlot,
 } from "@/components/ui/input-otp"
 import { ShieldCheck, Lock, Loader2, ArrowRight, ArrowLeft } from 'lucide-react'
-import { verifyAdminLogin } from '@/app/actions/auth-actions'
+import { verifyAdminLogin, devAdminLogin } from '@/app/actions/auth-actions'
 import toast from 'react-hot-toast'
 import Link from 'next/link'
 
@@ -414,6 +414,23 @@ export default function AdminLoginPage() {
               )}
             </Button>
           </form>
+        )}
+
+        {process.env.NODE_ENV === 'development' && (
+          <div className="mt-4">
+            <Button
+              type="button"
+              variant="outline"
+              id="dev-admin-bypass"
+              onClick={() => {
+                document.cookie = "dev_admin=true; path=/; max-age=86400; SameSite=Lax";
+                window.location.href = "/admin/machines";
+              }}
+              className="w-full h-10 border-dashed border-red-500/40 text-red-400 hover:bg-red-500/10 text-xs font-semibold cursor-pointer"
+            >
+              ⚡ Dev Bypass: Enter Hardware & Admin Dashboard
+            </Button>
+          </div>
         )}
 
         <div className="mt-8 pt-6 border-t border-slate-800/80 text-center">

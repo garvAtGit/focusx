@@ -155,8 +155,10 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/onboarding') || 
     (pathname.startsWith('/admin') && !pathname.startsWith('/admin/login'));
 
+  const isDevAdmin = process.env.NODE_ENV === 'development' && request.cookies.get('dev_admin')?.value === 'true';
+
   if (isProtected) {
-    if (!session) {
+    if (!session && !isDevAdmin) {
       if (pathname.startsWith('/admin')) {
         return NextResponse.redirect(new URL('/admin/login', request.url));
       }
