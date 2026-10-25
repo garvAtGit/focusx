@@ -19,124 +19,124 @@ export default async function AdminViewLibraryPage({ params }: { params: Promise
   if (!library) notFound();
 
   return (
-    <div className="max-w-5xl mx-auto space-y-8">
-      <div className="flex items-center justify-between">
-        <Link href="/admin/libraries" className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors text-sm font-medium">
+    <div className="max-w-5xl mx-auto space-y-8 font-sans pb-12">
+      <div className="flex items-center justify-between pb-4 border-b border-slate-200/80">
+        <Link href="/admin/libraries" className="flex items-center gap-2 text-slate-500 hover:text-slate-900 transition-colors text-sm font-bold">
           <ArrowLeft className="w-4 h-4" /> Back to Libraries
         </Link>
         <div className="flex items-center gap-3">
-          <Link href={`/admin/edit/${library.id}`} className="px-4 py-2 bg-secondary text-secondary-foreground rounded-lg font-medium hover:bg-secondary/80 transition-colors flex items-center gap-2">
+          <Link href={`/admin/edit/${library.id}`} className="px-4 py-2 bg-slate-100 text-slate-800 rounded-xl font-bold hover:bg-slate-200 transition-colors flex items-center gap-2 text-xs">
             <Edit className="w-4 h-4" /> Edit Details
           </Link>
           <form action={async () => { "use server"; await rejectLibrary(library.id); }}>
-            <button type="submit" className="px-4 py-2 bg-destructive/10 text-destructive rounded-lg font-medium hover:bg-destructive/20 transition-colors flex items-center gap-2">
+            <button type="submit" className="px-4 py-2 bg-rose-50 text-rose-700 border border-rose-200 rounded-xl font-bold hover:bg-rose-100 transition-colors flex items-center gap-2 text-xs">
               <X className="w-4 h-4" /> Reject
             </button>
           </form>
           <form action={async () => { "use server"; await approveLibrary(library.id); }}>
-            <button type="submit" className="px-4 py-2 bg-success text-success-foreground rounded-lg font-medium hover:opacity-90 transition-opacity flex items-center gap-2">
+            <button type="submit" className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-opacity flex items-center gap-2 text-xs shadow-sm">
               <Check className="w-4 h-4" /> Approve
             </button>
           </form>
         </div>
       </div>
 
-      <div className="flex items-center justify-between border-b border-border pb-6">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-heading font-bold text-foreground flex items-center gap-3">
+          <h1 className="text-[28px] font-black text-slate-900 tracking-tight leading-none flex items-center gap-3">
             {library.name}
-            <span className={`px-2 py-0.5 text-xs font-bold rounded uppercase tracking-wide ${
-              library.kycStatus === 'APPROVED' ? 'bg-success/10 text-success' : 
-              library.kycStatus === 'REJECTED' ? 'bg-destructive/10 text-destructive' : 
-              'bg-warning/10 text-warning'
+            <span className={`px-2.5 py-1 text-[10px] font-black rounded-full uppercase tracking-wider ${
+              library.kycStatus === 'APPROVED' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 
+              library.kycStatus === 'REJECTED' ? 'bg-rose-50 text-rose-700 border border-rose-200' : 
+              'bg-amber-50 text-amber-700 border border-amber-200'
             }`}>
               {library.kycStatus}
             </span>
           </h1>
-          <p className="text-muted-foreground mt-2 flex items-center gap-1.5">
-            <MapPin className="w-4 h-4" /> {library.address}, {library.city}
+          <p className="text-slate-500 mt-2 flex items-center gap-1.5 text-sm font-medium">
+            <MapPin className="w-4 h-4 text-[#2781CA]" /> {library.address}, {library.city}
           </p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-        <div className="md:col-span-2 space-y-8">
-          <div className="bg-card rounded-2xl border border-border p-6 shadow-sm">
-            <h2 className="text-xl font-bold flex items-center gap-2 mb-4">
-              <Building className="w-5 h-5 text-primary" /> Basic Information
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="md:col-span-2 space-y-6">
+          <div className="bg-white rounded-[2.5rem] border border-slate-200/80 p-7 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+            <h2 className="text-lg font-black text-slate-900 tracking-tight flex items-center gap-2 mb-5">
+              <Building className="w-5 h-5 text-[#2781CA]" /> Basic Information
             </h2>
-            <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="grid grid-cols-2 gap-5 text-xs">
               <div>
-                <p className="text-muted-foreground">Manager Name</p>
-                <p className="font-medium text-foreground">{library.managerName || "N/A"}</p>
+                <p className="text-slate-400 font-medium">Manager Name</p>
+                <p className="font-bold text-slate-900 text-sm mt-0.5">{library.managerName || "N/A"}</p>
               </div>
               <div>
-                <p className="text-muted-foreground">Manager Phone</p>
-                <p className="font-medium text-foreground">{library.managerPhone || "N/A"}</p>
+                <p className="text-slate-400 font-medium">Manager Phone</p>
+                <p className="font-mono font-bold text-slate-900 text-sm mt-0.5">{library.managerPhone || "N/A"}</p>
               </div>
               <div>
-                <p className="text-muted-foreground">Librarian Email</p>
-                <p className="font-medium text-foreground">{library.librarian.email}</p>
+                <p className="text-slate-400 font-medium">Librarian Email</p>
+                <p className="font-medium text-slate-800 mt-0.5">{library.librarian.email}</p>
               </div>
               <div>
-                <p className="text-muted-foreground">WhatsApp</p>
-                <p className="font-medium text-foreground">{library.whatsapp || "N/A"}</p>
+                <p className="text-slate-400 font-medium">WhatsApp</p>
+                <p className="font-mono font-bold text-slate-900 mt-0.5">{library.whatsapp || "N/A"}</p>
               </div>
             </div>
           </div>
 
-          <div className="bg-card rounded-2xl border border-border p-6 shadow-sm">
-            <h2 className="text-xl font-bold flex items-center gap-2 mb-4">
-              <CreditCard className="w-5 h-5 text-primary" /> KYC & Passbook Document
+          <div className="bg-white rounded-[2.5rem] border border-slate-200/80 p-7 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+            <h2 className="text-lg font-black text-slate-900 tracking-tight flex items-center gap-2 mb-5">
+              <CreditCard className="w-5 h-5 text-[#2781CA]" /> KYC & Passbook Document
             </h2>
             {library.passbookPhoto ? (
-              <div className="rounded-xl overflow-hidden border border-border">
+              <div className="rounded-2xl overflow-hidden border border-slate-200 bg-slate-50">
                 {/* Admins preview user-uploaded URLs from arbitrary providers. */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={library.passbookPhoto} alt="Passbook/KYC Document" className="w-full h-auto object-contain max-h-[500px] bg-muted/50" />
+                <img src={library.passbookPhoto} alt="Passbook/KYC Document" className="w-full h-auto object-contain max-h-[500px]" />
               </div>
             ) : (
-              <div className="bg-muted/50 rounded-xl p-8 text-center text-muted-foreground border border-dashed border-border">
+              <div className="bg-slate-50 rounded-2xl p-10 text-center text-slate-400 border border-dashed border-slate-200 text-xs font-medium">
                 No passbook or KYC document uploaded yet.
               </div>
             )}
           </div>
         </div>
 
-        <div className="space-y-8">
-          <div className="bg-card rounded-2xl border border-border p-6 shadow-sm">
-            <h2 className="text-xl font-bold flex items-center gap-2 mb-4">
-              <Users className="w-5 h-5 text-primary" /> Details
+        <div className="space-y-6">
+          <div className="bg-white rounded-[2.5rem] border border-slate-200/80 p-7 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+            <h2 className="text-lg font-black text-slate-900 tracking-tight flex items-center gap-2 mb-5">
+              <Users className="w-5 h-5 text-[#2781CA]" /> Details
             </h2>
-            <div className="space-y-4 text-sm">
+            <div className="space-y-4 text-xs">
               <div>
-                <p className="text-muted-foreground">Available Seats</p>
-                <p className="font-medium text-foreground">{library.seatsAvailable || 0}</p>
+                <p className="text-slate-400 font-medium">Available Seats</p>
+                <p className="font-black text-slate-900 text-base mt-0.5">{library.seatsAvailable || 0}</p>
               </div>
               <div>
-                <p className="text-muted-foreground">Timings</p>
-                <p className="font-medium text-foreground">{library.openingTime || "N/A"} - {library.closingTime || "N/A"}</p>
+                <p className="text-slate-400 font-medium">Timings</p>
+                <p className="font-bold text-slate-900 mt-0.5">{library.openingTime || "N/A"} - {library.closingTime || "N/A"}</p>
               </div>
               <div>
-                <p className="text-muted-foreground">Facilities</p>
-                <div className="flex flex-wrap gap-2 mt-1">
+                <p className="text-slate-400 font-medium">Facilities</p>
+                <div className="flex flex-wrap gap-1.5 mt-2">
                   {library.facilities.map(f => (
-                    <span key={f} className="px-2 py-1 bg-secondary text-secondary-foreground rounded text-xs font-medium">{f}</span>
+                    <span key={f} className="px-2.5 py-1 bg-slate-100 text-slate-800 rounded-lg text-[11px] font-bold">{f}</span>
                   ))}
-                  {library.facilities.length === 0 && <span className="text-muted-foreground">None listed</span>}
+                  {library.facilities.length === 0 && <span className="text-slate-400 font-medium">None listed</span>}
                 </div>
               </div>
             </div>
           </div>
           
           {library.photos.length > 0 && (
-            <div className="bg-card rounded-2xl border border-border p-6 shadow-sm">
-              <h2 className="text-xl font-bold mb-4">Library Photos</h2>
+            <div className="bg-white rounded-[2.5rem] border border-slate-200/80 p-7 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
+              <h2 className="text-lg font-black text-slate-900 tracking-tight mb-4">Library Photos</h2>
               <div className="space-y-3">
                 {library.photos.map((url, i) => (
                   // Library uploads may use arbitrary providers.
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img key={i} src={url} alt={`Library photo ${i+1}`} className="w-full rounded-lg border border-border object-cover aspect-video" />
+                  <img key={i} src={url} alt={`Library photo ${i+1}`} className="w-full rounded-2xl border border-slate-200 object-cover aspect-video" />
                 ))}
               </div>
             </div>
