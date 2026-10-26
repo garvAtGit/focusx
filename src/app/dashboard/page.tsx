@@ -1,3 +1,4 @@
+import { startOfDayIST } from "@/lib/date-utils";
 import { getSession } from "@/app/actions/auth-actions";
 import prisma from "@/lib/prisma";
 import { redirect } from "next/navigation";
@@ -22,8 +23,7 @@ export default async function LibrarianDashboardPage() {
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
   sevenDaysAgo.setHours(0, 0, 0, 0);
 
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
+  const startOfDay = startOfDayIST(new Date());
 
   const expiringBefore = new Date();
   expiringBefore.setDate(expiringBefore.getDate() + 3);
@@ -74,10 +74,9 @@ export default async function LibrarianDashboardPage() {
       take: 10
     }),
     prisma.checkinLog.findMany({
-      where: { libraryId: library.id, timestamp: { gte: sevenDaysAgo } },
+      where: { libraryId: library.id, timestamp: { gte: startOfDay } },
       include: { student: { select: { id: true, name: true, phone: true, uniqueId: true } }, relay: true },
       orderBy: { timestamp: 'desc' },
-      take: 50,
     }),
     prisma.booking.count({
       where: {
@@ -93,10 +92,9 @@ export default async function LibrarianDashboardPage() {
       take: 20,
     }),
     prisma.entryLog.findMany({
-      where: { libraryId: library.id, timestamp: { gte: sevenDaysAgo }, status: { in: ["SUCCESS", "DENIED", "IN", "OUT"] } },
+      where: { libraryId: library.id, timestamp: { gte: startOfDay }, status: { in: ["SUCCESS", "DENIED", "IN", "OUT"] } },
       include: { user: { select: { id: true, name: true, phone: true, uniqueId: true } } },
       orderBy: { timestamp: 'desc' },
-      take: 50,
     }),
     prisma.booking.findMany({
       where: {
