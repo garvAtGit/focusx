@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Bluetooth } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import { useRouter } from 'next/navigation';
 
 interface BluetoothUnlockButtonProps {
   libraryId: string;
@@ -13,6 +14,7 @@ interface BluetoothUnlockButtonProps {
 }
 
 export function BluetoothUnlockButton({ libraryId, className, children, isCheckedIn, studentId }: BluetoothUnlockButtonProps) {
+  const router = useRouter();
   const [isConnecting, setIsConnecting] = useState(false);
 
   const handleBluetoothUnlock = async () => {
@@ -73,6 +75,12 @@ export function BluetoothUnlockButton({ libraryId, className, children, isChecke
       
       // Disconnect cleanly
       device.gatt?.disconnect();
+
+      try {
+        router.refresh();
+      } catch (e) {
+        console.error("Router refresh error:", e);
+      }
 
     } catch (error: any) {
       console.error(error);

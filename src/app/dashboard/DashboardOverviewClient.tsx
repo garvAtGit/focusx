@@ -17,6 +17,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import { StudentProfileModal } from "@/components/StudentProfileModal";
 import { AssignRFIDModal } from "@/components/AssignRFIDModal";
+import { auth } from "@/lib/firebase/clientApp";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -48,11 +49,43 @@ export function DashboardOverviewClient({
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
   const [isLoadingChart, setIsLoadingChart] = useState(false);
+  const [supabaseToken, setSupabaseToken] = useState<string | null>(null);
 
   const router = useRouter();
 
+  // Obtain authenticated token for secure private Realtime channels
   useEffect(() => {
-    if (!supabaseUrl || !supabaseKey) return;
+    const unsubscribe = auth.onIdTokenChanged(async (user) => {
+      if (user) {
+        try {
+          const idToken = await user.getIdToken();
+          const res = await fetch('/api/auth/supabase-token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ idToken })
+          });
+          const data = await res.json();
+          if (data.supabaseToken) {
+            setSupabaseToken(data.supabaseToken);
+          } else {
+            setSupabaseToken(idToken);
+          }
+        } catch (err) {
+          console.error("Failed to fetch Supabase token for dashboard:", err);
+        }
+      } else {
+        setSupabaseToken(null);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!supabaseUrl || !supabaseKey || !library?.id) return;
+
+    if (supabaseToken) {
+      supabase.realtime.setAuth(supabaseToken);
+    }
 
     let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
     const debouncedRefresh = () => {
@@ -70,8 +103,22 @@ export function DashboardOverviewClient({
       }
     };
 
-    const channel = supabase
-      .channel('dashboard-realtime')
+    // 1. Listen to private broadcast from physical hardware & web scanner
+    const scanBroadcastChannel = supabase
+      .channel(`library_scans:${library.id}`, { config: { private: true } })
+      .on(
+        'broadcast',
+        { event: 'scanner_update' },
+        (payload) => {
+          console.log('[Dashboard Realtime] scanner_update received:', payload.payload);
+          debouncedRefresh();
+        }
+      )
+      .subscribe();
+
+    // 2. Also listen to postgres_changes as fallback
+    const dbChangesChannel = supabase
+      .channel(`dashboard-db-changes-${library.id}`)
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'EntryLog', filter: `libraryId=eq.${library.id}` },
@@ -89,9 +136,10 @@ export function DashboardOverviewClient({
     return () => {
       if (refreshTimeout) clearTimeout(refreshTimeout);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-      supabase.removeChannel(channel);
+      supabase.removeChannel(scanBroadcastChannel);
+      supabase.removeChannel(dbChangesChannel);
     };
-  }, [library.id, router]);
+  }, [library?.id, router, supabaseToken]);
 
   useEffect(() => {
     if (dateRange === "30d" && !customStart) {
