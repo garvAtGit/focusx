@@ -18,6 +18,7 @@ export default async function AdminTeamPage() {
       phone: true,
       email: true,
       uniqueId: true,
+      adminPermissions: true,
       createdAt: true,
       updatedAt: true,
     },

@@ -8,12 +8,14 @@ import { QrCode, Loader2, CheckCircle2 } from "lucide-react";
 import { generateEntryQR, getCheckinStatus } from "@/app/actions/hardware-actions";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import confetti from "canvas-confetti";
 import { auth } from '@/lib/firebase/clientApp';
 import { supabase } from "@/lib/supabase-client";
 
 export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: initialIsCheckedIn, initialQrPayload, children }: { libraryId: string; studentId: string; iconOnly?: boolean; isCheckedIn?: boolean; initialQrPayload?: string; children?: React.ReactNode }) {
+  const router = useRouter();
   const [qrData, setQrData] = useState<string | null>(initialQrPayload || null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -121,9 +123,20 @@ export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: ini
       setOpen(false);
       setShowSuccess(false);
       setIsCheckedIn(newStatus);
-      console.log(`[Diagnostic][UI][+${(performance.now() - t0Ref.current).toFixed(0)}ms] Modal closed by timeout`);
+      try {
+        router.refresh();
+      } catch (e) {
+        console.error("Router refresh error:", e);
+      }
+      console.log(`[Diagnostic][UI][+${(performance.now() - t0Ref.current).toFixed(0)}ms] Modal closed by timeout and page refreshed`);
     }, 3000);
   };
+
+  useEffect(() => {
+    if (initialIsCheckedIn !== undefined) {
+      setIsCheckedIn(initialIsCheckedIn);
+    }
+  }, [initialIsCheckedIn]);
 
   // PRIMARY NOTIFICATION: Supabase Realtime Broadcast (Zero Latency)
   const channelInstanceId = useRef(0);
@@ -146,10 +159,21 @@ export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: ini
         (payload) => {
           console.log(`[Diagnostic][${cid}][+${(performance.now() - t0Ref.current).toFixed(0)}ms] scan_result RECEIVED`, payload.payload);
           const data = payload.payload;
-          if (data && (data.status === 'CHECK_IN' || data.status === 'CHECK_OUT')) {
-            const newStatus = data.status === 'CHECK_IN';
+          if (!data) return;
+
+          let isCheckIn: boolean | null = null;
+          if (data.status === 'CHECK_IN' || data.passType === 'IN' || data.state === 'INSIDE') {
+            isCheckIn = true;
+          } else if (data.status === 'CHECK_OUT' || data.passType === 'OUT' || data.state === 'OUTSIDE') {
+            isCheckIn = false;
+          } else if (data.status === 'ALLOW' && (data.passType === 'IN' || data.passType === 'OUT')) {
+            isCheckIn = data.passType === 'IN';
+          }
+
+          if (isCheckIn !== null) {
+            const newStatus = isCheckIn;
             if (newStatus !== isCheckedInRef.current && qrDataRef.current) {
-              console.log(`[Diagnostic][${cid}][+${(performance.now() - t0Ref.current).toFixed(0)}ms] triggerSuccess() called from Realtime`);
+              console.log(`[Diagnostic][${cid}][+${(performance.now() - t0Ref.current).toFixed(0)}ms] triggerSuccess(${newStatus}) called from Realtime`);
               triggerSuccess(newStatus);
             }
           }
@@ -222,8 +246,6 @@ export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: ini
 
     const pollStatus = async () => {
       if (showSuccess || !active || !qrDataRef.current || isPolling) return;
-      // If Realtime WebSocket is connected, skip polling to protect database
-      if (isRealtimeSubscribed.current) return;
 
       isPolling = true;
       try {

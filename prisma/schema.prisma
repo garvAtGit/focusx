@@ -48,6 +48,7 @@ model User {
   walletBalance               Int                @default(0)
   currentStreak               Int                @default(0)
   lastActiveDate              DateTime?
+  adminPermissions            String[]           @default([])
   winterArcEnrollment         WinterArcEnrollment?
   bookings                    Booking[]
   bookingIntents              BookingIntent[]
