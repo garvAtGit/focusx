@@ -92,3 +92,4 @@ test_safe_i2c/
 .env*
 
 FocusX_Scanner_Firmware_V5_DualRFID/build_8mb/
+FocusX_Scanner_Firmware_V5_DualRFID/build_ota_test/

@@ -1,18 +1,20 @@
 "use client";
 
 import React, { useState } from "react";
-import { Plus, CheckCircle2, AlertCircle, Cpu, Loader2 } from "lucide-react";
+import { Plus, CheckCircle2, AlertCircle, Cpu, Loader2, ArrowUpCircle, RefreshCw, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 export default function HardwareSetupClient({ libraryId, initialHardware }: { libraryId: string, initialHardware: any[] }) {
   const [claimCode, setClaimCode] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [actionLoading, setActionLoading] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const router = useRouter();
 
   const handleSelfDestruct = async (hwId: string) => {
     if (!confirm('Are you sure you want to factory reset this device? It will erase all memory and reboot into setup mode.')) return;
     
+    setActionLoading(prev => ({ ...prev, [hwId]: 'reset' }));
     try {
       const res = await fetch('/api/hardware/command', {
         method: 'POST',
@@ -20,15 +22,71 @@ export default function HardwareSetupClient({ libraryId, initialHardware }: { li
         body: JSON.stringify({ id: hwId, command: 'factory_reset' })
       });
       if (res.ok) {
-        alert('Self-destruct command queued! The device will wipe its memory on the next ping or realtime update.');
+        alert('Self-destruct command queued! The device will wipe its memory on the next ping or heartbeat.');
       } else {
         alert('Failed to send command.');
       }
-    } catch (e) {
+    } catch {
       alert('Error sending command.');
+    } finally {
+      setActionLoading(prev => {
+        const next = { ...prev };
+        delete next[hwId];
+        return next;
+      });
     }
   };
 
+  const handleSendCommand = async (hwId: string, command: string, description: string) => {
+    setActionLoading(prev => ({ ...prev, [hwId]: command }));
+    try {
+      const res = await fetch('/api/hardware/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: hwId, command })
+      });
+      if (res.ok) {
+        alert(`${description} queued successfully! The device will execute it on the next heartbeat.`);
+      } else {
+        alert(`Failed to queue ${description}.`);
+      }
+    } catch {
+      alert(`Error queueing ${description}.`);
+    } finally {
+      setActionLoading(prev => {
+        const next = { ...prev };
+        delete next[hwId];
+        return next;
+      });
+    }
+  };
+
+  const handleQueueOTA = async (hwId: string) => {
+    if (!confirm('Queue OTA firmware update (v5.1.0-ota) to this device? It will be downloaded and verified on the next heartbeat.')) return;
+
+    setActionLoading(prev => ({ ...prev, [hwId]: 'ota' }));
+    try {
+      const res = await fetch('/api/hardware/ota', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ relayId: hwId })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert(`OTA firmware update queued! Command: ${data.queuedCommand}`);
+      } else {
+        alert(`Failed to queue OTA: ${data.error || 'Server error'}`);
+      }
+    } catch {
+      alert('Network error while requesting OTA update.');
+    } finally {
+      setActionLoading(prev => {
+        const next = { ...prev };
+        delete next[hwId];
+        return next;
+      });
+    }
+  };
 
   const handleClaim = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -52,7 +110,7 @@ export default function HardwareSetupClient({ libraryId, initialHardware }: { li
       } else {
         setMessage({ type: 'error', text: data.error || "Failed to pair hardware." });
       }
-    } catch (err) {
+    } catch {
       setMessage({ type: 'error', text: "A network error occurred. Please try again." });
     } finally {
       setIsSubmitting(false);
@@ -108,7 +166,7 @@ export default function HardwareSetupClient({ libraryId, initialHardware }: { li
       {/* Active Hardware List */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         <div className="border-b border-slate-200 bg-slate-50/50 p-6">
-          <h3 className="text-lg font-semibold text-slate-800">Linked Devices</h3>
+          <h3 className="text-lg font-semibold text-slate-800">Linked Devices & Fleet Observability</h3>
         </div>
         <div className="divide-y divide-slate-100">
           {initialHardware.length === 0 ? (
@@ -119,6 +177,9 @@ export default function HardwareSetupClient({ libraryId, initialHardware }: { li
             initialHardware.map((hw) => {
               const lastActive = new Date((hw.lastSeenAt || hw.lastSync)).getTime();
               const isOnline = Date.now() - lastActive < 120000;
+              const fwVer = hw.firmwareVersion || "5.0.0-p0a";
+              const isUpToDate = fwVer === "5.1.0-ota";
+              const activeAction = actionLoading[hw.id];
 
               return (
                 <div key={hw.id} className="p-6 hover:bg-slate-50 transition-colors">
@@ -128,7 +189,17 @@ export default function HardwareSetupClient({ libraryId, initialHardware }: { li
                         <Cpu className="w-6 h-6" />
                       </div>
                       <div>
-                        <h4 className="font-semibold text-slate-800">FocusX ESP32 Reader</h4>
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-semibold text-slate-800">FocusX ESP32 Reader</h4>
+                          {/* Firmware Version Badge */}
+                          <span className={`px-2 py-0.5 text-xs font-mono rounded-full font-medium ${
+                            isUpToDate 
+                              ? 'bg-blue-50 text-blue-700 border border-blue-200' 
+                              : 'bg-amber-50 text-amber-700 border border-amber-200'
+                          }`}>
+                            v{fwVer}
+                          </span>
+                        </div>
                         <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-slate-500 font-mono">
                           <span>MAC: {hw.macAddress}</span>
                           <span className="w-1 h-1 rounded-full bg-slate-300"></span>
@@ -156,6 +227,11 @@ export default function HardwareSetupClient({ libraryId, initialHardware }: { li
                           <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
                             {hw.pendingEventsCount === 0 ? '✓ Outbox Clean (0 queued)' : `⟳ ${hw.pendingEventsCount} queued`}
                           </span>
+                          {hw.pendingCommand && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-purple-50 text-purple-700 border border-purple-200">
+                              Queued: {hw.pendingCommand.split(':')[0]}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -168,17 +244,53 @@ export default function HardwareSetupClient({ libraryId, initialHardware }: { li
                         <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></span>
                         {isOnline ? "ONLINE" : "OFFLINE"}
                       </div>
-                      <button onClick={() => handleSelfDestruct(hw.id)} className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-700 text-xs rounded-md transition-colors font-medium border border-red-200 shadow-sm">
-                        Factory Reset
-                      </button>
+                      
+                      {/* Fleet Management Action Buttons */}
+                      <div className="flex items-center gap-2 mt-1">
+                        {!isUpToDate && (
+                          <button 
+                            onClick={() => handleQueueOTA(hw.id)} 
+                            disabled={!!activeAction}
+                            className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded-md transition-colors font-medium shadow-sm flex items-center gap-1 disabled:opacity-50"
+                          >
+                            {activeAction === 'ota' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUpCircle className="w-3.5 h-3.5" />}
+                            OTA Update
+                          </button>
+                        )}
+                        <button 
+                          onClick={() => handleSendCommand(hw.id, 'SYNC_SNAPSHOT', 'Snapshot sync')} 
+                          disabled={!!activeAction}
+                          title="Trigger snapshot update"
+                          className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs rounded-md transition-colors font-medium border border-slate-300 flex items-center gap-1 disabled:opacity-50"
+                        >
+                          {activeAction === 'SYNC_SNAPSHOT' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                          Sync
+                        </button>
+                        <button 
+                          onClick={() => handleSendCommand(hw.id, 'REBOOT', 'Remote reboot')} 
+                          disabled={!!activeAction}
+                          title="Reboot reader"
+                          className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs rounded-md transition-colors font-medium border border-slate-300 flex items-center gap-1 disabled:opacity-50"
+                        >
+                          {activeAction === 'REBOOT' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+                          Reboot
+                        </button>
+                        <button 
+                          onClick={() => handleSelfDestruct(hw.id)} 
+                          disabled={!!activeAction}
+                          className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-700 text-xs rounded-md transition-colors font-medium border border-red-200 shadow-sm disabled:opacity-50"
+                        >
+                          Reset
+                        </button>
+                      </div>
                     </div>
                   </div>
 
-                  {/* Clean alert for librarian if machine is disconnected or malfunctioning */}
+                  {/* Warning banner for offline devices */}
                   {!isOnline && (
                     <div className="mt-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs font-medium flex items-center gap-2.5">
                       <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-                      <span>There is an issue with the machine. Please reboot it.</span>
+                      <span>Device has not reported a heartbeat in over 2 minutes. Check Wi-Fi connection or power supply.</span>
                     </div>
                   )}
                 </div>
