@@ -26,7 +26,7 @@ export async function POST(req: Request) {
 
     const relay = await prisma.relay.findFirst({
       where: { OR: [{ bleReaderId: readerId }, { macAddress: readerId }] },
-      select: { id: true, lastSync: true, status: true },
+      select: { id: true, lastSync: true, lastSeenAt: true, status: true },
     });
 
     if (!relay) {
@@ -40,6 +40,7 @@ export async function POST(req: Request) {
         where: { id: relay.id },
         data: {
           lastSync: new Date(now),
+          lastSeenAt: new Date(now),
           status: 'ONLINE',
         },
       });
@@ -55,6 +56,24 @@ export async function POST(req: Request) {
       } catch (err) {
         console.warn("Failed to cache relay modules in Redis:", err);
       }
+    }
+
+    // Broadcast to real-time channel for admin dashboard
+    try {
+      const { supabaseServer } = await import('@/lib/supabase-server');
+      await supabaseServer.channel('admin-hardware-diagnostics').send({
+        type: 'broadcast',
+        event: 'hardware_status',
+        payload: {
+          relayId: relay.id,
+          modules: modules || {},
+          lastSync: new Date(now).toISOString(),
+          lastSeenAt: new Date(now).toISOString(),
+          status: 'ONLINE',
+        },
+      });
+    } catch (realtimeErr) {
+      // Best effort broadcast
     }
 
     return NextResponse.json({ status: 'OK', message: 'Status updated successfully' });

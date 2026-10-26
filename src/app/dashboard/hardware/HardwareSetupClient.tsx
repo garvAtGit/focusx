@@ -175,8 +175,11 @@ export default function HardwareSetupClient({ libraryId, initialHardware }: { li
             </div>
           ) : (
             initialHardware.map((hw) => {
-              const lastActive = new Date((hw.lastSeenAt || hw.lastSync)).getTime();
-              const isOnline = Date.now() - lastActive < 120000;
+              const lastActive = Math.max(
+                hw.lastSeenAt ? new Date(hw.lastSeenAt).getTime() : 0,
+                hw.lastSync ? new Date(hw.lastSync).getTime() : 0
+              );
+              const isOnline = hw.status === "ONLINE" || (lastActive > 0 && Date.now() - lastActive < 120000);
               const fwVer = hw.firmwareVersion || "5.0.0-p0a";
               const isUpToDate = fwVer === "5.1.0-ota";
               const activeAction = actionLoading[hw.id];
@@ -200,10 +203,18 @@ export default function HardwareSetupClient({ libraryId, initialHardware }: { li
                             v{fwVer}
                           </span>
                         </div>
-                        <div className="flex flex-wrap items-center gap-2 mt-1 text-xs text-slate-500 font-mono">
+                        <div className="flex flex-wrap items-center gap-3 mt-1 text-sm text-slate-500 font-mono">
                           <span>MAC: {hw.macAddress}</span>
                           <span className="w-1 h-1 rounded-full bg-slate-300"></span>
                           <span>BLE ID: {hw.bleReaderId || 'N/A'}</span>
+                          <span className="w-1 h-1 rounded-full bg-slate-300"></span>
+                          {isOnline ? (
+                            <span className="text-emerald-600 font-semibold flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span> Live
+                            </span>
+                          ) : (
+                            <span>Last Seen: {lastActive > 0 ? new Date(lastActive).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" }) : "Never"}</span>
+                          )}
                           {hw.currentAuthRevision && (
                             <>
                               <span className="w-1 h-1 rounded-full bg-slate-300"></span>
@@ -244,7 +255,6 @@ export default function HardwareSetupClient({ libraryId, initialHardware }: { li
                         <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></span>
                         {isOnline ? "ONLINE" : "OFFLINE"}
                       </div>
-                      
                       {/* Fleet Management Action Buttons */}
                       <div className="flex items-center gap-2 mt-1">
                         {!isUpToDate && (

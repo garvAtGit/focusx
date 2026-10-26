@@ -10,9 +10,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: "Missing readerId" }, { status: 400 });
     }
 
-    const relay = await prisma.relay.findUnique({
-      where: { bleReaderId: readerId },
-      select: { id: true, lastSeenAt: true },
+    const relay = await prisma.relay.findFirst({
+      where: { OR: [{ bleReaderId: readerId }, { macAddress: readerId }] },
+      select: { id: true, lastSeenAt: true, lastSync: true, status: true },
     });
 
     if (!relay) {
@@ -21,11 +21,31 @@ export async function POST(req: Request) {
 
     const now = Date.now();
     const lastSeenTime = relay.lastSeenAt ? relay.lastSeenAt.getTime() : 0;
-    if (now - lastSeenTime > 30_000) {
+    if (relay.status !== 'ONLINE' || now - lastSeenTime > 30_000) {
       await prisma.relay.update({
         where: { id: relay.id },
-        data: { lastSeenAt: new Date(now) },
+        data: {
+          lastSeenAt: new Date(now),
+          lastSync: new Date(now),
+          status: "ONLINE",
+        },
       });
+
+      try {
+        const { supabaseServer } = await import('@/lib/supabase-server');
+        await supabaseServer.channel('admin-hardware-diagnostics').send({
+          type: 'broadcast',
+          event: 'hardware_status',
+          payload: {
+            relayId: relay.id,
+            lastSync: new Date(now).toISOString(),
+            lastSeenAt: new Date(now).toISOString(),
+            status: 'ONLINE',
+          },
+        });
+      } catch (realtimeErr) {
+        // Non-blocking
+      }
     }
 
     return NextResponse.json({ success: true, timestamp: Date.now() });

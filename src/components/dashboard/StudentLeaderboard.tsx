@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronDown, User as UserIcon } from 'lucide-react';
+import { ChevronDown, User as UserIcon, Calendar } from 'lucide-react';
+import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 
 export type LeaderboardEntry = {
   id?: string;
@@ -23,11 +24,19 @@ interface StudentLeaderboardProps {
 
 export function StudentLeaderboard({ libraryName, leaderboards }: StudentLeaderboardProps) {
   const [leaderboardTimeline, setLeaderboardTimeline] = useState<'today' | 'week' | 'month'>('today');
+  const [now] = useState(() => new Date());
+
   const currentLeaderboard = leaderboards[leaderboardTimeline] || [];
+
+  // Date ranges
+  const weekStart = startOfWeek(now, { weekStartsOn: 1 });
+  const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
+  const monthStart = startOfMonth(now);
+  const monthEnd = endOfMonth(now);
 
   return (
     <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 relative overflow-hidden">
-      <div className="flex flex-col gap-5 mb-6 relative z-10">
+      <div className="flex flex-col gap-4 mb-5 relative z-10">
         <div className="flex flex-col gap-0.5">
           <h2 className="text-lg font-medium text-slate-800 tracking-tight">
             Top Scholars
@@ -54,6 +63,16 @@ export function StudentLeaderboard({ libraryName, leaderboards }: StudentLeaderb
             </button>
           ))}
         </div>
+
+        {/* Date Range Banner */}
+        <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium px-3 py-1.5 bg-slate-50/80 rounded-xl border border-slate-100 w-fit">
+          <Calendar className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+          <span className="font-semibold text-slate-700 text-[11px]">
+            {leaderboardTimeline === 'today' && format(now, 'EEE, d MMM')}
+            {leaderboardTimeline === 'week' && `${format(weekStart, 'd MMM')} – ${format(weekEnd, 'd MMM')}`}
+            {leaderboardTimeline === 'month' && `${format(monthStart, 'd MMM')} – ${format(monthEnd, 'd MMM')}`}
+          </span>
+        </div>
       </div>
 
       <div className="space-y-4 relative z-10">
@@ -65,7 +84,7 @@ export function StudentLeaderboard({ libraryName, leaderboards }: StudentLeaderb
           currentLeaderboard.map((student, i) => {
             const hrs = Math.floor(student.minutes / 60);
             const mins = student.minutes % 60;
-            
+
             const isExtraRow = student.isCurrentUser && student.rank > 5;
             const maxMinutes = currentLeaderboard[0]?.minutes || 1;
 

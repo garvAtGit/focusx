@@ -1,4 +1,9 @@
 import { useEffect, useState, useRef } from "react"
+import { createClient } from "@supabase/supabase-js"
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
+const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null
 
 export type AdminOccupantData = {
   studentId?: string;
@@ -38,6 +43,8 @@ export function useAdminRealtimeSeats(
     let disposed = false
     let controller: AbortController | null = null
     let retryAfterUntil = 0
+    let refreshTimeout: ReturnType<typeof setTimeout> | null = null
+
     const refresh = async () => {
       if (
         document.visibilityState === "hidden"
@@ -90,9 +97,61 @@ export function useAdminRealtimeSeats(
 
     refreshRef.current = refresh
 
+    // Initial load
     void refresh()
-    // Poll every 60s instead of 15s to save 75% database load; users have manual sync button
-    const interval = window.setInterval(refresh, 60_000)
+
+    // Realtime debounced refresh to avoid burst re-renders when multiple events arrive
+    const debouncedRefresh = () => {
+      if (refreshTimeout) clearTimeout(refreshTimeout)
+      refreshTimeout = setTimeout(() => {
+        if (!disposed && document.visibilityState !== "hidden") {
+          void refresh()
+        }
+      }, 300)
+    }
+
+    // Subscribe to real-time events via Supabase Realtime WebSocket
+    const channel = supabase
+      ? supabase
+          .channel(`seats_realtime_${libraryId}`)
+          .on(
+            "postgres_changes",
+            {
+              event: "*",
+              schema: "public",
+              table: "CheckinLog",
+              filter: `libraryId=eq.${libraryId}`,
+            },
+            debouncedRefresh
+          )
+          .on(
+            "postgres_changes",
+            {
+              event: "INSERT",
+              schema: "public",
+              table: "EntryLog",
+              filter: `libraryId=eq.${libraryId}`,
+            },
+            debouncedRefresh
+          )
+          .on(
+            "postgres_changes",
+            {
+              event: "*",
+              schema: "public",
+              table: "Booking",
+              filter: `libraryId=eq.${libraryId}`,
+            },
+            debouncedRefresh
+          )
+          .on(
+            "broadcast",
+            { event: "scanner_update" },
+            debouncedRefresh
+          )
+          .subscribe()
+      : null
+
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") void refresh()
     }
@@ -105,9 +164,12 @@ export function useAdminRealtimeSeats(
     return () => {
       disposed = true
       controller?.abort()
-      window.clearInterval(interval)
+      if (refreshTimeout) clearTimeout(refreshTimeout)
       document.removeEventListener("visibilitychange", onVisibilityChange)
       window.removeEventListener("pageshow", onPageShow)
+      if (channel && supabase) {
+        supabase.removeChannel(channel)
+      }
     }
   }, [libraryId, enabled])
 

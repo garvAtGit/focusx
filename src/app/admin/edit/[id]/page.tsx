@@ -11,7 +11,7 @@ import { AdminNoteEditor } from "@/components/admin-note-editor";
 
 export default async function AdminEditLibraryPage(props: { params: Promise<{ id: string }> }) {
   const session = await getSession();
-  if (!session || session.role !== 'ADMIN') redirect("/");
+  if (!session || session.role !== 'ADMIN') redirect("/admin/login");
   const params = await props.params;
   const library = await prisma.library.findUnique({
     where: { id: params.id }
@@ -20,26 +20,26 @@ export default async function AdminEditLibraryPage(props: { params: Promise<{ id
   if (!library) notFound();
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
-      <Link href="/admin" className="text-sm font-medium text-muted-foreground hover:text-foreground flex items-center gap-2 w-fit">
-        <ArrowLeft className="w-4 h-4" /> Back to Dashboard
+    <div className="max-w-3xl mx-auto space-y-6 font-sans pb-12">
+      <Link href="/admin/libraries" className="text-sm font-bold text-slate-500 hover:text-slate-900 flex items-center gap-2 w-fit transition-colors">
+        <ArrowLeft className="w-4 h-4" /> Back to Libraries
       </Link>
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between pb-4 border-b border-slate-200/80">
         <div>
-          <h1 className="text-3xl font-heading font-bold">Edit Library</h1>
-          <p className="text-muted-foreground">Modify library details before approval.</p>
+          <h1 className="text-[28px] font-black text-slate-900 tracking-tight leading-none">Edit Library</h1>
+          <p className="text-sm font-medium text-slate-500 mt-2">Modify library details and operational parameters before approval.</p>
         </div>
-        <span className={`px-3 py-1 text-sm font-bold rounded uppercase tracking-wide ${
-          library.kycStatus === "APPROVED" ? "bg-success/10 text-success" : 
-          library.kycStatus === "REJECTED" ? "bg-destructive/10 text-destructive" : 
-          "bg-warning/10 text-warning"
+        <span className={`px-3 py-1 text-xs font-black rounded-full uppercase tracking-wider ${
+          library.kycStatus === "APPROVED" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : 
+          library.kycStatus === "REJECTED" ? "bg-rose-50 text-rose-700 border border-rose-200" : 
+          "bg-amber-50 text-amber-700 border border-amber-200"
         }`}>
           {library.kycStatus}
         </span>
       </div>
 
-      <div className="bg-card border border-border rounded-xl p-8 shadow-sm">
+      <div className="bg-white border border-slate-200/80 rounded-[2.5rem] p-8 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
         <form action={updateLibraryDetails.bind(null, library.id)} className="space-y-6">
           
           <div className="space-y-2">

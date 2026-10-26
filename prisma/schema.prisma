@@ -64,6 +64,7 @@ model User {
 
   @@index([name])
   @@index([phone])
+  @@index([role])
 }
 
 model Library {
