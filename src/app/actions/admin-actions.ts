@@ -9,11 +9,40 @@ import { invalidateAdminCache } from "@/lib/admin-cache"
 import { parseSafeUrl } from "@/lib/validation"
 import type { Role } from "@prisma/client"
 
-async function requireAdmin() {
+export async function requireAdmin(requiredPermission?: string) {
   const session = await getSession();
   if (!session || session.role !== "ADMIN") {
     throw new Error("Unauthorized: Admin access required");
   }
+
+  if (requiredPermission) {
+    const adminEmails = process.env.ADMIN_EMAILS
+      ? process.env.ADMIN_EMAILS.split(",").map((e) => e.trim().toLowerCase())
+      : [];
+    const adminPhones = process.env.ADMIN_PHONES
+      ? process.env.ADMIN_PHONES.split(",").map((p) => p.trim())
+      : [];
+
+    const isSuperAdminEnv =
+      (session.email && adminEmails.includes(session.email.toLowerCase())) ||
+      (session.phone && adminPhones.includes(session.phone));
+
+    if (!isSuperAdminEnv) {
+      const perms = session.adminPermissions || [];
+      const isReadOnly = perms.includes("READ_ONLY");
+      const hasFullAccess = perms.includes("FULL_ACCESS") || perms.length === 0;
+
+      if (isReadOnly && requiredPermission !== "VIEW") {
+        throw new Error("Unauthorized: Read-only admin cannot modify records");
+      }
+
+      if (!hasFullAccess && !perms.includes(requiredPermission)) {
+        throw new Error(`Unauthorized: You lack the authority '${requiredPermission}'`);
+      }
+    }
+  }
+
+  return session;
 }
 
 async function clearLibraryCache(libraryId?: string) {
@@ -32,10 +61,14 @@ async function clearLibraryCache(libraryId?: string) {
 }
 
 export async function approveLibrary(libraryId: string) {
-  await requireAdmin();
+  await requireAdmin("APPROVE_KYC");
   
   const library = await prisma.library.findUnique({ where: { id: libraryId } });
   if (!library) throw new Error("Library not found");
+
+  if (library.kycStatus === "APPROVED") {
+    return { success: true, message: "Library is already approved" };
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.library.update({
@@ -51,26 +84,47 @@ export async function approveLibrary(libraryId: string) {
     }
   });
   
-  await clearLibraryCache(libraryId);
-  updateTag(`library:${libraryId}`);
-  updateTag('libraries:featured');
-  revalidatePath('/admin');
-  revalidatePath('/'); // Revalidate public feed
+  try {
+    await clearLibraryCache(libraryId);
+    updateTag(`library:${libraryId}`);
+    updateTag('libraries:featured');
+    revalidatePath('/admin');
+    revalidatePath('/admin/libraries');
+    revalidatePath('/'); // Revalidate public feed
+  } catch (cacheErr) {
+    console.warn("Cache revalidation notice:", cacheErr);
+  }
+
+  return { success: true };
 }
 
 export async function rejectLibrary(libraryId: string) {
-  await requireAdmin();
+  await requireAdmin("APPROVE_KYC");
   
+  const library = await prisma.library.findUnique({ where: { id: libraryId } });
+  if (!library) throw new Error("Library not found");
+
+  if (library.kycStatus === "REJECTED") {
+    return { success: true, message: "Library is already rejected" };
+  }
+
   await prisma.library.update({
     where: { id: libraryId },
     data: { kycStatus: "REJECTED" }
   });
   
-  await clearLibraryCache(libraryId);
-  updateTag(`library:${libraryId}`);
-  updateTag('libraries:featured');
-  revalidatePath('/admin');
-  revalidatePath('/');
+  try {
+    await clearLibraryCache(libraryId);
+    updateTag(`library:${libraryId}`);
+    updateTag('libraries:featured');
+    revalidatePath('/admin');
+    revalidatePath('/admin/libraries');
+    revalidatePath('/');
+  } catch (cacheErr) {
+    console.warn("Cache revalidation notice:", cacheErr);
+  }
+
+  return { success: true };
 }
 
 export async function updateLibraryDetails(libraryId: string, formData: FormData) {
@@ -162,10 +216,20 @@ export async function createOrPromoteAdmin(formData: FormData) {
   const name = (formData.get("name") as string)?.trim();
   const rawPhone = (formData.get("phone") as string)?.trim();
   const email = (formData.get("email") as string)?.trim().toLowerCase() || null;
+  const rawPermissions = formData.get("permissions") as string;
 
   if (!name) throw new Error("Admin name is required");
   if (!rawPhone || rawPhone.replace(/\D/g, "").length < 10) {
     throw new Error("A valid 10-digit mobile number is required");
+  }
+
+  let permissions: string[] = [];
+  if (rawPermissions) {
+    try {
+      permissions = JSON.parse(rawPermissions);
+    } catch {
+      permissions = rawPermissions.split(",").map((p) => p.trim()).filter(Boolean);
+    }
   }
 
   const cleanPhone = rawPhone.replace(/\D/g, "").slice(-10);
@@ -188,6 +252,7 @@ export async function createOrPromoteAdmin(formData: FormData) {
       data: {
         role: "ADMIN",
         name,
+        adminPermissions: permissions,
         ...(email && !existingUser.email ? { email } : {}),
       },
     });
@@ -207,6 +272,7 @@ export async function createOrPromoteAdmin(formData: FormData) {
         email,
         role: "ADMIN",
         uniqueId,
+        adminPermissions: permissions,
       },
     });
   }
@@ -214,6 +280,28 @@ export async function createOrPromoteAdmin(formData: FormData) {
   revalidatePath("/admin/team");
   revalidatePath("/admin/users");
   revalidatePath("/admin");
+  await invalidateAdminCache();
+  return { success: true };
+}
+
+export async function updateAdminPermissions(targetUserId: string, permissions: string[]) {
+  const currentSession = await getSession();
+  if (!currentSession || currentSession.role !== "ADMIN") {
+    throw new Error("Unauthorized: Super Admin access required");
+  }
+
+  const targetUser = await prisma.user.update({
+    where: { id: targetUserId },
+    data: { adminPermissions: permissions },
+  });
+
+  if (targetUser.authId) {
+    try {
+      await redis.del(`usersess:${targetUser.authId}`);
+    } catch {}
+  }
+
+  revalidatePath("/admin/team");
   await invalidateAdminCache();
   return { success: true };
 }
