@@ -19,6 +19,7 @@ export type SessionData = {
   email: string | null;
   phone: string | null;
   employerLibraryId: string | null;
+  adminPermissions?: string[];
 }
 
 type UserExistsResult =
@@ -45,7 +46,8 @@ function isSessionData(value: unknown): value is SessionData {
     SESSION_ROLES.has(candidate.role as Role) &&
     isNullableString(candidate.email) &&
     isNullableString(candidate.phone) &&
-    isNullableString(candidate.employerLibraryId)
+    isNullableString(candidate.employerLibraryId) &&
+    (candidate.adminPermissions === undefined || Array.isArray(candidate.adminPermissions))
   );
 }
 
@@ -142,7 +144,8 @@ export async function getSession(): Promise<SessionData | null> {
       role: user.role, 
       email: user.email, 
       phone: user.phone,
-      employerLibraryId: user.employerLibraryId
+      employerLibraryId: user.employerLibraryId,
+      adminPermissions: user.adminPermissions || [],
     };
     
     try {
