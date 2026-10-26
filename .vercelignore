@@ -33,3 +33,4 @@ nodemcu_qr_access/
  
 .env*
 .vercel
+FocusX_Scanner_Firmware_V5_DualRFID/build*
