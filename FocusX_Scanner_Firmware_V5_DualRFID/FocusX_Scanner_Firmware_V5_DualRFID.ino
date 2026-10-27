@@ -1222,7 +1222,7 @@ void httpWorkerTask(void *pvParameters) {
       }
     }
 
-    if (millis() - lastHeartbeatMs >= 60000 || lastHeartbeatMs == 0) {
+    if (millis() - lastHeartbeatMs >= 120000 || lastHeartbeatMs == 0) {
       lastHeartbeatMs = millis();
       esp_task_wdt_reset();
       sendHeartbeat();
@@ -1353,42 +1353,16 @@ String getISOTime() {
 }
 
 void sendHardwarePing() {
-  // 30 seconds backup ping with full component health diagnostics
-  if (millis() - lastPingTime > 30000) {
+  // 90 seconds ping interval: cuts total ping volume by 66%
+  if (millis() - lastPingTime > 90000) {
     if (WiFi.status() == WL_CONNECTED && String(READER_ID) != "") {
       String isoTime = getISOTime();
       if (isoTime != "") {
-        // Collect hardware component diagnostics
-        bool doorClosed = (digitalRead(REED_PIN) == LOW);
-        int wifiRssi = WiFi.RSSI();
-        
-        // Report to FocusX Hardware Diagnostic endpoint
         WiFiClientSecure client;
         client.setInsecure();
-        HTTPClient http;
 
-        
-        if (http.begin(client, "https://www.focusx.in/api/hardware/status")) {
-          http.addHeader("Content-Type", "application/json");
-          http.addHeader("Authorization", String("Bearer ") + HARDWARE_API_KEY);
-          http.setTimeout(4000);
-          
-          StaticJsonDocument<256> diagDoc;
-          diagDoc["readerId"] = READER_ID.c_str();
-          JsonObject mods = diagDoc.createNestedObject("modules");
-          mods["nfc1"] = true; // PN532 #1 active
-          mods["nfc2"] = true; // PN532 #2 active
-          mods["doorReed"] = doorClosed;
-          mods["ble"] = true;
-          mods["rssi"] = wifiRssi;
-          
-          String diagBody;
-          serializeJson(diagDoc, diagBody);
-          http.POST(diagBody);
-          http.end();
-        }
-
-        // Direct Supabase PATCH backup for lastSeenAt
+        // 1. PRIMARY: Direct Supabase Realtime PATCH (Zero Vercel CPU / Invocations!)
+        bool directSuccess = false;
         HTTPClient patchHttp;
         String url = String(SUPABASE_URL) + "/rest/v1/Relay?bleReaderId=eq." + String(READER_ID);
         if (patchHttp.begin(client, url)) {
@@ -1396,10 +1370,44 @@ void sendHardwarePing() {
           patchHttp.addHeader("Authorization", "Bearer " + String(SUPABASE_ANON_KEY));
           patchHttp.addHeader("Content-Type", "application/json");
           patchHttp.addHeader("Prefer", "return=minimal");
+          patchHttp.setTimeout(3000);
           
           String payload = "{\"lastSeenAt\": \"" + isoTime + "\"}";
-          patchHttp.PATCH(payload);
+          int patchCode = patchHttp.PATCH(payload);
+          if (patchCode == 200 || patchCode == 204) {
+            directSuccess = true;
+            Serial.println("[Direct Supabase Realtime] Ping success: " + isoTime);
+          } else {
+            Serial.println("[Direct Supabase] Failed: HTTP " + String(patchCode));
+          }
           patchHttp.end();
+        }
+
+        // 2. BACKUP: Only if Direct Supabase fails, fall back to Vercel endpoint
+        if (!directSuccess) {
+          Serial.println("[Ping Fallback] Direct Supabase failed, calling Vercel backup...");
+          bool doorClosed = (digitalRead(REED_PIN) == LOW);
+          int wifiRssi = WiFi.RSSI();
+          HTTPClient http;
+          if (http.begin(client, "https://www.focusx.in/api/hardware/status")) {
+            http.addHeader("Content-Type", "application/json");
+            http.addHeader("Authorization", String("Bearer ") + HARDWARE_API_KEY);
+            http.setTimeout(4000);
+            
+            StaticJsonDocument<256> diagDoc;
+            diagDoc["readerId"] = READER_ID.c_str();
+            JsonObject mods = diagDoc.createNestedObject("modules");
+            mods["nfc1"] = true;
+            mods["nfc2"] = true;
+            mods["doorReed"] = doorClosed;
+            mods["ble"] = true;
+            mods["rssi"] = wifiRssi;
+            
+            String diagBody;
+            serializeJson(diagDoc, diagBody);
+            http.POST(diagBody);
+            http.end();
+          }
         }
       }
     }

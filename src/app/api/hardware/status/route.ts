@@ -35,7 +35,7 @@ export async function POST(req: Request) {
 
     const now = Date.now();
     const lastSyncTime = relay.lastSync ? relay.lastSync.getTime() : 0;
-    if (relay.status !== 'ONLINE' || now - lastSyncTime > 30_000) {
+    if (relay.status !== 'ONLINE' || now - lastSyncTime > 60_000) {
       await prisma.relay.update({
         where: { id: relay.id },
         data: {
