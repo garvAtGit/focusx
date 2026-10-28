@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from "react";
-import { addStaffMember } from "@/app/actions/staff-actions";
+import { addStaffMember, getStaffCandidateByPhoneOrAuthId, type StaffCandidateProfile } from "@/app/actions/staff-actions";
 import {
   Loader2,
   ChevronDown,
@@ -52,6 +52,8 @@ export function StaffForm({ libraryName }: StaffFormProps) {
 
   // Form Fields
   const [name, setName] = useState("");
+  const [candidateProfile, setCandidateProfile] = useState<StaffCandidateProfile | null>(null);
+  const [fetchingProfile, setFetchingProfile] = useState(false);
   const [role, setRole] = useState<StaffRole>("RECEPTIONIST");
   const [customRoleName, setCustomRoleName] = useState("");
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>(
@@ -163,7 +165,32 @@ export function StaffForm({ libraryName }: StaffFormProps) {
       if (secondaryApp) {
         await getAuth(secondaryApp).signOut();
       }
-      toast.success("Phone verified!");
+
+      // Automatically fetch existing candidate profile by phone / UID identical to student enrollment
+      setFetchingProfile(true);
+      try {
+        const candidate = await getStaffCandidateByPhoneOrAuthId(result.user.uid, phone);
+        if (candidate) {
+          setCandidateProfile(candidate);
+          if (candidate.name) {
+            setName(candidate.name);
+            if (candidate.digilockerVerified) {
+              toast.success(`Found verified profile: ${candidate.name}!`);
+            } else {
+              toast.success(`Found existing profile: ${candidate.name}!`);
+            }
+          } else {
+            toast.success("Phone verified!");
+          }
+        } else {
+          toast.success("Phone verified!");
+        }
+      } catch (fetchErr) {
+        console.error("Profile fetch error:", fetchErr);
+        toast.success("Phone verified!");
+      } finally {
+        setFetchingProfile(false);
+      }
     } catch (err: unknown) {
       console.error(err);
       setError(getErrorMessage(err, "Invalid OTP"));
@@ -204,6 +231,7 @@ export function StaffForm({ libraryName }: StaffFormProps) {
       } else {
         toast.success("Staff member onboarded successfully!");
         setName("");
+        setCandidateProfile(null);
         setRole("RECEPTIONIST");
         setCustomRoleName("");
         setSelectedPermissions(ROLE_PRESETS.RECEPTIONIST);
@@ -229,25 +257,11 @@ export function StaffForm({ libraryName }: StaffFormProps) {
         </div>
       )}
 
-      {/* Staff Identity Section */}
+      {/* Staff Phone & Identity Verification Section */}
       <div className="space-y-4">
         <div className="space-y-1.5">
-          <Label htmlFor="staff-name" className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-            Staff Full Name *
-          </Label>
-          <Input
-            id="staff-name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-            placeholder="e.g. Ramesh Kumar"
-            className="rounded-xl"
-          />
-        </div>
-
-        <div className="space-y-1.5">
           <Label htmlFor="staff-phone" className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-            Phone Number (OTP Verification Required) *
+            Staff Phone Number (OTP Verification Required) *
           </Label>
           <div className="flex gap-2">
             <Input
@@ -266,7 +280,7 @@ export function StaffForm({ libraryName }: StaffFormProps) {
                 disabled={otpLoading || phone.length < 10}
                 className="rounded-xl shrink-0"
               >
-                {otpLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Verify OTP"}
+                {otpLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Verify Phone"}
               </Button>
             )}
           </div>
@@ -285,16 +299,78 @@ export function StaffForm({ libraryName }: StaffFormProps) {
                 disabled={otpLoading || otp.length < 6}
                 className="rounded-xl shrink-0"
               >
-                {otpLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Confirm OTP"}
+                {otpLoading || fetchingProfile ? <Loader2 className="w-4 h-4 animate-spin" /> : "Confirm OTP"}
               </Button>
             </div>
           )}
           {verifiedIdToken && (
             <div className="text-xs text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1.5 mt-1">
-              <Check className="w-3.5 h-3.5" /> Phone Verified & Bound to Identity
+              <Check className="w-3.5 h-3.5" /> Phone Verified & Identity Confirmed
             </div>
           )}
         </div>
+
+        {/* Profile Card & Name Confirmation (Fetched after phone verification) */}
+        {verifiedIdToken && (
+          <div className="p-4 rounded-2xl bg-muted/40 border border-border space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold text-base uppercase shrink-0">
+                  {name ? name.slice(0, 2) : <ShieldCheck className="w-5 h-5" />}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-sm text-foreground">
+                      {name || "New Staff Member"}
+                    </span>
+                    {candidateProfile?.digilockerVerified && (
+                      <span className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full font-bold uppercase">
+                        Verified Profile
+                      </span>
+                    )}
+                    {candidateProfile && !candidateProfile.digilockerVerified && (
+                      <span className="text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 px-2 py-0.5 rounded-full font-bold uppercase">
+                        Existing User
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-muted-foreground font-mono mt-0.5">
+                    {candidateProfile?.email || phone}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Editable name input if the user wants to adjust, or if new user with no name in DB */}
+            <div className="space-y-1.5 pt-2 border-t border-border/60">
+              <Label htmlFor="staff-name" className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                Staff Name {name ? "" : "*"}
+              </Label>
+              <Input
+                id="staff-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Staff full legal name"
+                required={!name}
+                className="rounded-xl bg-background"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                {candidateProfile?.name
+                  ? "Profile automatically fetched from platform database. You can keep or edit this name."
+                  : "Please enter the staff member's full name to complete onboarding."}
+              </p>
+            </div>
+
+            {candidateProfile?.alreadyStaff && (
+              <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 text-xs font-medium flex items-center gap-2">
+                <Info className="w-4 h-4 shrink-0" />
+                <span>
+                  This user already has a staff assignment in this library ({candidateProfile.existingRole} - {candidateProfile.existingStatus}). Submitting will update their permissions.
+                </span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Role Template Selector */}

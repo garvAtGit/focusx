@@ -40,6 +40,104 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
+export type StaffCandidateProfile = {
+  id: string;
+  name: string | null;
+  phone: string | null;
+  email: string | null;
+  role: string;
+  digilockerVerified: boolean;
+  alreadyStaff: boolean;
+  existingRole?: StaffRole;
+  existingStatus?: StaffStatus;
+};
+
+/**
+ * Fetch candidate user profile by phone or Firebase Auth UID after OTP verification.
+ * Enables automatic profile lookup identical to the student enrollment workflow.
+ */
+export async function getStaffCandidateByPhoneOrAuthId(
+  authId?: string,
+  phone?: string
+): Promise<StaffCandidateProfile | null> {
+  const session = await getSession();
+  if (!session) return null;
+
+  const activeLibrary = await getActiveLibrary(session);
+  if (!activeLibrary) return null;
+
+  const canManageStaff =
+    session.role === 'ADMIN' ||
+    activeLibrary.librarianId === session.userId ||
+    (await hasPermission(session, activeLibrary.id, 'staff.manage'));
+
+  if (!canManageStaff) return null;
+
+  let user = null;
+  if (authId) {
+    user = await prisma.user.findUnique({
+      where: { authId },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        email: true,
+        role: true,
+        digilockerVerified: true,
+        employerLibraryId: true,
+      },
+    });
+  }
+
+  if (!user && phone) {
+    const rawDigits = phone.replace(/\D/g, "");
+    const last10 = rawDigits.slice(-10);
+    const normalizedPhone = phone.replace(/\s+/g, "");
+
+    user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { phone },
+          { phone: normalizedPhone },
+          ...(last10.length === 10 ? [{ phone: { contains: last10 } }] : []),
+        ],
+      },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        email: true,
+        role: true,
+        digilockerVerified: true,
+        employerLibraryId: true,
+      },
+    });
+  }
+
+  if (!user) return null;
+
+  const existingMembership = await prisma.libraryStaff.findUnique({
+    where: {
+      userId_libraryId: {
+        userId: user.id,
+        libraryId: activeLibrary.id,
+      },
+    },
+  });
+
+  return {
+    id: user.id,
+    name: user.name,
+    phone: user.phone,
+    email: user.email,
+    role: user.role,
+    digilockerVerified: !!user.digilockerVerified,
+    alreadyStaff: !!existingMembership,
+    existingRole: existingMembership?.role,
+    existingStatus: existingMembership?.status,
+  };
+}
+
 /**
  * Add or update a staff member with a specific role template and granular permissions.
  */
@@ -69,13 +167,11 @@ export async function addStaffMember(formData: FormData): Promise<StaffActionRes
 
   if (
     typeof phone !== "string" ||
-    typeof name !== "string" ||
     typeof idToken !== "string" ||
     !phone ||
-    !name ||
     !idToken
   ) {
-    return { error: "Name, phone, and verified OTP token are required" };
+    return { error: "Phone number and verified OTP token are required" };
   }
 
   const role: StaffRole =
@@ -128,11 +224,15 @@ export async function addStaffMember(formData: FormData): Promise<StaffActionRes
         return { error: "Library Owner cannot be assigned as subordinate staff for their own library" };
       }
 
+      const candidateName = (typeof name === "string" && name.trim().length > 0)
+        ? name.trim()
+        : (user.name || "Staff Member");
+
       // Update basic info and set role to RECEPTIONIST if was STUDENT
       await prisma.user.update({
         where: { id: user.id },
         data: {
-          name,
+          name: candidateName,
           phone,
           authId,
           ...(user.role === 'STUDENT' ? { role: 'RECEPTIONIST' } : {}),
@@ -140,11 +240,15 @@ export async function addStaffMember(formData: FormData): Promise<StaffActionRes
         },
       });
     } else {
+      const candidateName = (typeof name === "string" && name.trim().length > 0)
+        ? name.trim()
+        : "Staff Member";
+
       // Create new user
       const uniqueId = "FD-" + Math.random().toString(36).substring(2, 8).toUpperCase();
       user = await prisma.user.create({
         data: {
-          name,
+          name: candidateName,
           phone,
           authId,
           role: 'RECEPTIONIST',
