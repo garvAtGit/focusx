@@ -7,6 +7,9 @@ import { useReportWebVitals } from 'next/web-vitals'
 // blocks the main thread or delays navigation.
 export function WebVitals() {
   useReportWebVitals((metric) => {
+    // Sample only 5% of web-vitals beacons to prevent exhausting serverless invocation limits
+    if (Math.random() > 0.05) return;
+
     try {
       const body = JSON.stringify({
         name: metric.name,

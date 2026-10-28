@@ -72,6 +72,10 @@ interface BookingsClientProps {
   currentPage: number;
   pageSize: number;
   currentStatus: 'ALL' | BookingIntentStatus;
+  currentChannel: 'ALL' | 'RECEPTION' | 'RAZORPAY';
+  receptionStudentCount: number;
+  razorpayStudentCount: number;
+  statusCounts?: Record<string, number>;
   initialQuery: string;
   initialTab: 'INTENTS' | 'REFUNDS';
 }
@@ -83,6 +87,10 @@ export function BookingsClient({
   currentPage,
   pageSize,
   currentStatus,
+  currentChannel,
+  receptionStudentCount,
+  razorpayStudentCount,
+  statusCounts,
   initialQuery,
   initialTab,
 }: BookingsClientProps) {
@@ -113,12 +121,14 @@ export function BookingsClient({
       page?: number;
       q?: string;
       status?: 'ALL' | BookingIntentStatus;
+      channel?: 'ALL' | 'RECEPTION' | 'RAZORPAY';
       tab?: 'INTENTS' | 'REFUNDS';
     }) => {
       const params = new URLSearchParams(searchParams.toString());
 
       const nextQ = updates.q !== undefined ? updates.q.trim() : searchInput.trim();
       const nextStatus = updates.status !== undefined ? updates.status : currentStatus;
+      const nextChannel = updates.channel !== undefined ? updates.channel : currentChannel;
       const nextPage = updates.page !== undefined ? updates.page : 1;
       const nextTab = updates.tab !== undefined ? updates.tab : tab;
 
@@ -132,6 +142,12 @@ export function BookingsClient({
         params.set('status', nextStatus);
       } else {
         params.delete('status');
+      }
+
+      if (nextChannel && nextChannel !== 'ALL') {
+        params.set('channel', nextChannel);
+      } else {
+        params.delete('channel');
       }
 
       if (nextPage > 1) {
@@ -153,7 +169,7 @@ export function BookingsClient({
         router.push(targetUrl, { scroll: false });
       });
     },
-    [pathname, searchParams, searchInput, currentStatus, tab, router]
+    [pathname, searchParams, searchInput, currentStatus, currentChannel, tab, router]
   );
 
   // Debounced search effect (350ms)
@@ -174,6 +190,10 @@ export function BookingsClient({
 
   const handleStatusSelect = (status: 'ALL' | BookingIntentStatus) => {
     updateUrl({ status, page: 1 });
+  };
+
+  const handleChannelSelect = (channel: 'ALL' | 'RECEPTION' | 'RAZORPAY') => {
+    updateUrl({ channel, page: 1 });
   };
 
   const handlePageChange = (newPage: number) => {
@@ -248,6 +268,7 @@ export function BookingsClient({
           </span>
         );
       }
+
       const pageNum = item as number;
       const isActive = pageNum === currentPage;
       return (
@@ -326,51 +347,112 @@ export function BookingsClient({
 
       {tab === 'INTENTS' ? (
         <>
-          {/* Controls: Search & Status Filters */}
-          <div className="p-4 rounded-3xl bg-white border border-slate-200/80 shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-1.5 overflow-x-auto">
-              {(['ALL', 'CONFIRMED', 'AWAITING_PAYMENT', 'FAILED', 'REFUNDED'] as const).map((st) => (
+          {/* Controls: Payment Mode & Status Filters & Search */}
+          <div className="p-5 rounded-3xl bg-white border border-slate-200/80 shadow-[0_8px_30px_rgb(0,0,0,0.04)] space-y-4">
+            {/* Top Row: Payment Mode Filter Pills */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2 overflow-x-auto">
+                <span className="text-[11px] font-black text-slate-400 uppercase tracking-wider whitespace-nowrap">
+                  Payment Mode:
+                </span>
                 <button
-                  key={st}
-                  onClick={() => handleStatusSelect(st)}
+                  onClick={() => handleChannelSelect('ALL')}
                   disabled={isPending}
                   className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-                    currentStatus === st
+                    currentChannel === 'ALL'
                       ? 'bg-slate-900 text-white shadow-sm'
                       : 'bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200'
                   }`}
                 >
-                  {st === 'ALL' ? 'All' : st}
+                  All Payments
                 </button>
-              ))}
+                <button
+                  onClick={() => handleChannelSelect('RECEPTION')}
+                  disabled={isPending}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                    currentChannel === 'RECEPTION'
+                      ? 'bg-purple-600 text-white shadow-sm shadow-purple-600/30'
+                      : 'bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200/60'
+                  }`}
+                >
+                  Paid to Receptionist ({receptionStudentCount})
+                </button>
+                <button
+                  onClick={() => handleChannelSelect('RAZORPAY')}
+                  disabled={isPending}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                    currentChannel === 'RAZORPAY'
+                      ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-600/30'
+                      : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200/60'
+                  }`}
+                >
+                  Paid through Razorpay ({razorpayStudentCount})
+                </button>
+              </div>
+
+              {currentChannel !== 'ALL' && (
+                <button
+                  onClick={() => handleChannelSelect('ALL')}
+                  className="text-xs text-slate-400 hover:text-slate-700 font-semibold self-start sm:self-auto"
+                >
+                  Reset Mode Filter
+                </button>
+              )}
             </div>
 
-            <div className="relative w-full sm:w-80">
-              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    updateUrl({ q: searchInput, page: 1 });
-                  }
-                }}
-                placeholder="Search across all pages (ref ID, student, library)..."
-                className="w-full h-11 pl-10 pr-10 bg-slate-50/70 border border-slate-200 rounded-2xl text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2781CA] focus:bg-white transition-all shadow-sm"
-              />
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
-                {isPending ? (
-                  <Loader2 className="w-4 h-4 animate-spin text-[#2781CA]" />
-                ) : searchInput ? (
-                  <button
-                    onClick={handleClearSearch}
-                    aria-label="Clear search"
-                    className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                ) : null}
+            {/* Bottom Row: Status Filters & Search */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-1.5 overflow-x-auto">
+                <span className="text-[11px] font-black text-slate-400 uppercase tracking-wider whitespace-nowrap mr-1">
+                  Status:
+                </span>
+                {(['ALL', 'CONFIRMED', 'AWAITING_PAYMENT', 'FAILED', 'REFUNDED'] as const).map((st) => {
+                  const count = statusCounts ? (statusCounts[st] ?? 0) : undefined;
+                  const label = st === 'ALL' ? 'All' : st;
+                  return (
+                    <button
+                      key={st}
+                      onClick={() => handleStatusSelect(st)}
+                      disabled={isPending}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+                        currentStatus === st
+                          ? 'bg-[#2781CA] text-white shadow-sm shadow-blue-500/20'
+                          : 'bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+                      }`}
+                    >
+                      {count !== undefined ? `${label} (${count})` : label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="relative w-full sm:w-80">
+                <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      updateUrl({ q: searchInput, page: 1 });
+                    }
+                  }}
+                  placeholder="Search ref ID, student, library..."
+                  className="w-full h-10 pl-10 pr-10 bg-slate-50/70 border border-slate-200 rounded-2xl text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#2781CA] focus:bg-white transition-all shadow-sm"
+                />
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                  {isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-[#2781CA]" />
+                  ) : searchInput ? (
+                    <button
+                      onClick={handleClearSearch}
+                      aria-label="Clear search"
+                      className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  ) : null}
+                </div>
               </div>
             </div>
           </div>
@@ -382,6 +464,7 @@ export function BookingsClient({
                 <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200/80">
                   <tr>
                     <th className="px-6 py-4 font-bold">Reference ID</th>
+                    <th className="px-6 py-4 font-bold">Payment Mode</th>
                     <th className="px-6 py-4 font-bold">Student</th>
                     <th className="px-6 py-4 font-bold">Library & Seat</th>
                     <th className="px-6 py-4 font-bold">Amount</th>
@@ -398,6 +481,18 @@ export function BookingsClient({
                         <div className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">
                           Via {item.source}
                         </div>
+                      </td>
+
+                      <td className="px-6 py-4">
+                        {item.source === 'RAZORPAY' ? (
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            Paid through Razorpay
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-purple-50 text-purple-700 border border-purple-200">
+                            Paid to Receptionist
+                          </span>
+                        )}
                       </td>
 
                       <td className="px-6 py-4">
@@ -440,7 +535,7 @@ export function BookingsClient({
                   ))}
                   {initialIntents.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="px-6 py-14 text-center">
+                      <td colSpan={8} className="px-6 py-14 text-center">
                         <div className="flex flex-col items-center justify-center max-w-sm mx-auto space-y-3">
                           <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400">
                             <FilterX className="w-6 h-6" />
@@ -449,13 +544,13 @@ export function BookingsClient({
                           <p className="text-xs text-slate-400">
                             {searchInput
                               ? `No transactions matched "${searchInput}" across all records in the ledger.`
-                              : 'No transactions found for this status filter.'}
+                              : 'No transactions found for this filter.'}
                           </p>
-                          {(searchInput || currentStatus !== 'ALL') && (
+                          {(searchInput || currentStatus !== 'ALL' || currentChannel !== 'ALL') && (
                             <button
                               onClick={() => {
                                 setSearchInput('');
-                                updateUrl({ q: '', status: 'ALL', page: 1 });
+                                updateUrl({ q: '', status: 'ALL', channel: 'ALL', page: 1 });
                               }}
                               className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors"
                             >

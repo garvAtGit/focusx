@@ -26,35 +26,51 @@ export async function POST(request: NextRequest) {
 
     const relay = await prisma.relay.findFirst({
       where: { OR: [{ bleReaderId: deviceId }, { macAddress: deviceId }] },
-      include: { library: true }
+      select: {
+        id: true,
+        lastSeenAt: true,
+        status: true,
+        currentAuthRevision: true,
+        library: {
+          select: {
+            authRevision: true,
+          },
+        },
+      },
     });
 
     if (!relay || !relay.library) {
       return NextResponse.json({ error: "Relay not found" }, { status: 404 });
     }
 
-    // Persist real-time device observability metrics into PostgreSQL
-    await prisma.relay.update({
-      where: { id: relay.id },
-      data: {
-        lastSeenAt: new Date(),
-        status: "ONLINE",
-        clockState: statusPayload.clockState !== undefined ? String(statusPayload.clockState) : undefined,
-        freeFlashBytes: typeof statusPayload.freeBytes === "number" ? statusPayload.freeBytes : undefined,
-        pendingEventsCount: typeof statusPayload.pendingEvents === "number" ? statusPayload.pendingEvents : undefined,
-        currentAuthRevision: typeof statusPayload.currentAuthRevision === "number" ? statusPayload.currentAuthRevision : undefined,
-      }
-    });
+    const now = Date.now();
+    const lastSeenTime = relay.lastSeenAt ? relay.lastSeenAt.getTime() : 0;
+    const clientAuthRev = Number(statusPayload.currentAuthRevision) || 0;
+    const revChanged = clientAuthRev !== (relay.currentAuthRevision || 0);
+
+    // Throttle updates: only hit PostgreSQL if > 45 seconds have elapsed, or status changed, or auth revision changed
+    if (relay.status !== "ONLINE" || now - lastSeenTime > 45_000 || revChanged) {
+      await prisma.relay.update({
+        where: { id: relay.id },
+        data: {
+          lastSeenAt: new Date(now),
+          status: "ONLINE",
+          clockState: statusPayload.clockState !== undefined ? String(statusPayload.clockState) : undefined,
+          freeFlashBytes: typeof statusPayload.freeBytes === "number" ? statusPayload.freeBytes : undefined,
+          pendingEventsCount: typeof statusPayload.pendingEvents === "number" ? statusPayload.pendingEvents : undefined,
+          currentAuthRevision: typeof statusPayload.currentAuthRevision === "number" ? statusPayload.currentAuthRevision : undefined,
+        },
+      });
+    }
 
     const serverAuthRevision = relay.library.authRevision;
-    const clientAuthRev = Number(statusPayload.currentAuthRevision) || 0;
     const reconcileNeeded = serverAuthRevision > clientAuthRev;
 
     return NextResponse.json({
       success: true,
       serverTimeUnix: Math.floor(Date.now() / 1000),
       serverAuthRevision,
-      reconcileNeeded
+      reconcileNeeded,
     });
 
   } catch (error) {

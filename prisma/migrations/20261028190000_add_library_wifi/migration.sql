@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Library" ADD COLUMN IF NOT EXISTS "wifiSsid" TEXT;
+ALTER TABLE "Library" ADD COLUMN IF NOT EXISTS "wifiPassword" TEXT;

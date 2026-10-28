@@ -12,6 +12,7 @@ import ExtendPlanModal from "./ExtendPlanModal";
 import { AccessQRModal } from "@/components/AccessQRModal";
 import { DigitalPassCard } from "@/components/dashboard/DigitalPassCard";
 import { StudentLeaderboard } from "@/components/dashboard/StudentLeaderboard";
+import { StudentLibraryWifiCard } from "@/components/dashboard/StudentLibraryWifiCard";
 
 import { formatStandardDate, formatStandardDateTime, startOfDayIST } from "@/lib/date-utils";
 import { startOfDay, startOfWeek, startOfMonth, subDays, differenceInMinutes } from "date-fns";
@@ -457,6 +458,17 @@ where: { timestamp: { gte: fetchStart } },
                           )}
                         </div>
                       </div>
+
+                      {/* Library Wi-Fi Credentials if configured */}
+                      {(booking.library.wifiSsid || booking.library.wifiPassword) && (
+                        <div className="mt-4">
+                          <StudentLibraryWifiCard 
+                            libraryName={booking.library.name}
+                            wifiSsid={booking.library.wifiSsid}
+                            wifiPassword={booking.library.wifiPassword}
+                          />
+                        </div>
+                      )}
                     </div>
 
                     {/* Action Footer */}

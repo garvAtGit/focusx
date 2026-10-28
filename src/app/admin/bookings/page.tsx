@@ -20,6 +20,7 @@ export default async function AdminBookingsPage(props: {
   const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
   const q = typeof searchParams.q === "string" ? searchParams.q.trim() : "";
   const rawStatus = typeof searchParams.status === "string" ? searchParams.status.toUpperCase() : "ALL";
+  const rawChannel = typeof searchParams.channel === "string" ? searchParams.channel.toUpperCase() : "ALL";
   const validStatuses: string[] = [
     "CONFIRMED",
     "AWAITING_PAYMENT",
@@ -31,6 +32,8 @@ export default async function AdminBookingsPage(props: {
     "REFUND_PENDING",
   ];
   const status = validStatuses.includes(rawStatus) ? (rawStatus as BookingIntentStatus) : "ALL";
+  const channel: "ALL" | "RECEPTION" | "RAZORPAY" =
+    rawChannel === "RECEPTION" || rawChannel === "RAZORPAY" ? rawChannel : "ALL";
   const tab = searchParams.tab === "REFUNDS" ? "REFUNDS" : "INTENTS";
 
   // Build Prisma where filter for BookingIntents
@@ -38,6 +41,12 @@ export default async function AdminBookingsPage(props: {
 
   if (status !== "ALL") {
     where.status = status;
+  }
+
+  if (channel === "RECEPTION") {
+    where.source = { in: ["RECEPTION", "MANUAL", "RENEWAL", "HARDWARE"] };
+  } else if (channel === "RAZORPAY") {
+    where.source = "RAZORPAY";
   }
 
   if (q) {
@@ -65,14 +74,24 @@ export default async function AdminBookingsPage(props: {
     ];
   }
 
-  const cacheKey = q
-    ? `bookings:q:${encodeURIComponent(q.toLowerCase())}:p:${page}:s:${status}`
-    : `bookings:p:${page}:s:${status}`;
+  const statusCountsWhere: Prisma.BookingIntentWhereInput = {};
+  if (channel === "RECEPTION") {
+    statusCountsWhere.source = { in: ["RECEPTION", "MANUAL", "RENEWAL", "HARDWARE"] };
+  } else if (channel === "RAZORPAY") {
+    statusCountsWhere.source = "RAZORPAY";
+  }
+  if (q && where.OR) {
+    statusCountsWhere.OR = where.OR;
+  }
 
-  const { intents, totalCount, refundTasks } = await getCachedAdminData(
+  const cacheKey = q
+    ? `bookings:q:${encodeURIComponent(q.toLowerCase())}:p:${page}:s:${status}:c:${channel}`
+    : `bookings:p:${page}:s:${status}:c:${channel}`;
+
+  const { intents, totalCount, refundTasks, receptionStudentCount, razorpayStudentCount, statusCounts } = await getCachedAdminData(
     cacheKey,
     async () => {
-      const [count, intents, refundTasks] = await Promise.all([
+      const [count, intents, refundTasks, receptionStudents, razorpayStudents, statusGroups] = await Promise.all([
         prisma.bookingIntent.count({ where }),
         prisma.bookingIntent.findMany({
           where,
@@ -122,9 +141,45 @@ export default async function AdminBookingsPage(props: {
             },
           },
         }),
+        prisma.bookingIntent.findMany({
+          where: { source: { in: ["RECEPTION", "MANUAL", "RENEWAL", "HARDWARE"] } },
+          select: { studentId: true },
+          distinct: ["studentId"],
+        }),
+        prisma.bookingIntent.findMany({
+          where: { source: "RAZORPAY" },
+          select: { studentId: true },
+          distinct: ["studentId"],
+        }),
+        prisma.bookingIntent.groupBy({
+          by: ["status"],
+          where: statusCountsWhere,
+          _count: { _all: true },
+        }),
       ]);
 
-      return { intents, totalCount: count, refundTasks };
+      const statusCounts: Record<string, number> = {
+        ALL: 0,
+        CONFIRMED: 0,
+        AWAITING_PAYMENT: 0,
+        FAILED: 0,
+        REFUNDED: 0,
+      };
+      let totalStatusCount = 0;
+      for (const group of statusGroups) {
+        statusCounts[group.status] = group._count._all;
+        totalStatusCount += group._count._all;
+      }
+      statusCounts.ALL = totalStatusCount;
+
+      return {
+        intents,
+        totalCount: count,
+        refundTasks,
+        receptionStudentCount: receptionStudents.length,
+        razorpayStudentCount: razorpayStudents.length,
+        statusCounts,
+      };
     },
     q ? 20 : 30
   );
@@ -138,6 +193,10 @@ export default async function AdminBookingsPage(props: {
         currentPage={page}
         pageSize={PAGE_SIZE}
         currentStatus={status}
+        currentChannel={channel}
+        receptionStudentCount={receptionStudentCount}
+        razorpayStudentCount={razorpayStudentCount}
+        statusCounts={statusCounts}
         initialQuery={q}
         initialTab={tab}
       />
