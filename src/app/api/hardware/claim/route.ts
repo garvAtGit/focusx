@@ -60,9 +60,16 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      // 3. Upsert the Relay mapping for this library
+      // 3. Upsert the Relay mapping for this specific hardware unit in this library
       const existingRelay = await tx.relay.findFirst({
-        where: { libraryId }
+        where: {
+          libraryId,
+          OR: [
+            ...(claim.macAddress ? [{ macAddress: claim.macAddress }] : []),
+            ...(claim.bleReaderId ? [{ bleReaderId: claim.bleReaderId }] : []),
+            ...(claim.nfcTagId ? [{ nfcTagId: claim.nfcTagId }] : [])
+          ]
+        }
       });
 
       if (existingRelay) {

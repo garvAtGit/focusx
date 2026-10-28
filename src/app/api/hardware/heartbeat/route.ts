@@ -4,6 +4,7 @@ import path from "path";
 import prisma from "@/lib/prisma";
 import { verifyRelayKey } from "@/lib/relay-auth";
 import { handleDeviceOtaAck } from "@/lib/ota-rollout-service";
+import { resolveRelay } from "@/lib/hardware-resolver";
 
 const RELEASE_DIR = path.join(process.cwd(), "firmware_releases");
 const MANIFEST_PATH = path.join(RELEASE_DIR, "manifest.json");
@@ -39,10 +40,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Missing deviceId" }, { status: 400 });
     }
 
-    const relay = await prisma.relay.findFirst({
-      where: { OR: [{ bleReaderId: deviceId }, { macAddress: deviceId }, { id: deviceId }] },
-      include: { library: true }
-    });
+    const relay = await resolveRelay(deviceId, { includeLibrary: true });
+    console.log('[Hardware Heartbeat] Device:', deviceId, '-> Relay:', relay?.id, 'Library:', relay?.library?.name);
 
     if (!relay || !relay.library) {
       return NextResponse.json({ error: "Relay not found" }, { status: 404 });

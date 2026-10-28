@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { verifyRelayKey } from '@/lib/relay-auth'; // Assuming verifyRelayKey is in your auth lib
+import { verifyRelayKey } from '@/lib/relay-auth';
+import { resolveRelay } from '@/lib/hardware-resolver'; // Assuming verifyRelayKey is in your auth lib
 
 export async function POST(req: Request) {
   try {
@@ -24,10 +25,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ status: 'ERROR', message: 'Missing readerId' }, { status: 400 });
     }
 
-    const relay = await prisma.relay.findFirst({
-      where: { OR: [{ bleReaderId: readerId }, { macAddress: readerId }] },
-      select: { id: true, lastSync: true, lastSeenAt: true, status: true },
-    });
+    const relay = await resolveRelay(readerId);
+    console.log('[Hardware Status] Reader:', readerId, '-> Relay:', relay?.id);
 
     if (!relay) {
       return NextResponse.json({ status: 'ERROR', message: 'Relay not found' }, { status: 404 });
