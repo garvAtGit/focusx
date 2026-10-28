@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 import prisma from "@/lib/prisma";
 import { verifyRelayKey } from "@/lib/relay-auth";
 
 const RELEASE_DIR = path.join(process.cwd(), "firmware_releases");
 const MANIFEST_PATH = path.join(RELEASE_DIR, "manifest.json");
-const BIN_PATH = path.join(RELEASE_DIR, "v5.1.0-ota", "FocusX_Scanner_Firmware_V5_DualRFID.ino.bin");
 
 function getManifest() {
   if (!fs.existsSync(MANIFEST_PATH)) return null;
@@ -15,6 +15,24 @@ function getManifest() {
   } catch {
     return null;
   }
+}
+
+function resolveBinaryPath(manifest: any): string | null {
+  if (!manifest || !manifest.version) return null;
+  const filename = manifest.binary?.filename || "FocusX_Scanner_Firmware_V5_DualRFID.ino.bin";
+  const vPrefixed = manifest.version.startsWith("v") ? manifest.version : `v${manifest.version}`;
+  const rawVer = manifest.version.startsWith("v") ? manifest.version.substring(1) : manifest.version;
+
+  const candidatePaths = [
+    path.join(RELEASE_DIR, vPrefixed, filename),
+    path.join(RELEASE_DIR, rawVer, filename),
+    path.join(RELEASE_DIR, manifest.version, filename),
+  ];
+
+  for (const p of candidatePaths) {
+    if (fs.existsSync(p)) return p;
+  }
+  return candidatePaths[0];
 }
 
 export async function GET(request: NextRequest) {
@@ -35,12 +53,13 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    if (!fs.existsSync(BIN_PATH)) {
+    const binPath = resolveBinaryPath(manifest);
+    if (!binPath || !fs.existsSync(binPath)) {
       return NextResponse.json({ error: "Firmware binary not found on server" }, { status: 404 });
     }
 
-    const fileBuffer = fs.readFileSync(BIN_PATH);
-    const stat = fs.statSync(BIN_PATH);
+    const fileBuffer = fs.readFileSync(binPath);
+    const stat = fs.statSync(binPath);
 
     return new NextResponse(fileBuffer, {
       status: 200,
@@ -83,6 +102,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Missing relayId" }, { status: 400 });
     }
 
+    const relay = await prisma.relay.findUnique({
+      where: { id: relayId }
+    });
+
+    if (!relay) {
+      return NextResponse.json({ error: "Relay not found" }, { status: 404 });
+    }
+
+    // Duplicate command prevention: do not queue if an OTA command is actively in-flight
+    if (relay.pendingCommand) {
+      try {
+        const existing = JSON.parse(relay.pendingCommand);
+        const activeStates = ["QUEUED", "DOWNLOADING", "INSTALLING", "REBOOTING", "VALIDATING"];
+        if (existing.action === "OTA" && activeStates.includes(existing.status)) {
+          return NextResponse.json({
+            error: `An OTA update is already active on this device (State: ${existing.status})`,
+            cmdId: existing.cmdId,
+            status: existing.status
+          }, { status: 409 });
+        }
+      } catch {
+        // Non-JSON legacy format; proceed with overwrite
+      }
+    }
+
     const manifest = getManifest();
     if (!manifest) {
       return NextResponse.json({ error: "No firmware release available" }, { status: 404 });
@@ -93,18 +137,34 @@ export async function POST(request: NextRequest) {
     const baseUrl = `${protocol}://${host}`;
     const downloadUrl = `${baseUrl}/api/hardware/ota?download=1`;
 
-    // Queue command format: OTA:<url>:<sha256>:<size>
-    const otaCommand = `OTA:${downloadUrl}:${manifest.binary.sha256}:${manifest.binary.size}`;
+    const now = Date.now();
+    const cmdId = `cmd_ota_${now}_${crypto.randomBytes(3).toString('hex')}`;
+    const expiresAt = now + 24 * 60 * 60 * 1000; // 24-hour expiration
 
-    const relay = await prisma.relay.update({
+    const structuredCommand = JSON.stringify({
+      cmdId,
+      action: "OTA",
+      status: "QUEUED",
+      args: {
+        url: downloadUrl,
+        sha256: manifest.binary.sha256,
+        size: manifest.binary.size,
+        targetVersion: targetVersion || manifest.version
+      },
+      createdAt: now,
+      expiresAt
+    });
+
+    const updatedRelay = await prisma.relay.update({
       where: { id: relayId },
-      data: { pendingCommand: otaCommand },
+      data: { pendingCommand: structuredCommand },
     });
 
     return NextResponse.json({
       success: true,
-      message: `OTA update to ${manifest.version} queued for relay ${relay.id}`,
-      queuedCommand: otaCommand,
+      cmdId,
+      message: `OTA update to ${targetVersion || manifest.version} queued for relay ${updatedRelay.id}`,
+      queuedCommand: structuredCommand,
     });
   } catch (err: any) {
     console.error("[OTA POST Error]:", err);

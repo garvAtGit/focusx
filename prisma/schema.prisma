@@ -334,6 +334,7 @@ model Relay {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   logs        CheckinLog[]
+  deviceRollouts OtaDeviceRollout[]
   library     Library      @relation(fields: [libraryId], references: [id])
 
   @@index([libraryId])
@@ -671,3 +672,48 @@ model WinterArcEnrollment {
   createdAt     DateTime @default(now())
 }
 
+
+
+model OtaRollout {
+  id              String             @id @default(uuid())
+  name            String
+  targetVersion   String
+  targetSha256    String
+  targetSize      Int
+  status          String             @default("ACTIVE")
+  totalBatches    Int                @default(1)
+  currentBatch    Int                @default(1)
+  batchConfig     String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  createdById     String?
+  deviceRollouts  OtaDeviceRollout[]
+
+  @@index([status])
+  @@index([targetVersion])
+}
+
+model OtaDeviceRollout {
+  id              String       @id @default(uuid())
+  rolloutId       String
+  relayId         String
+  batchIndex      Int          @default(1)
+  cmdId           String?
+  status          String       @default("NOT_STARTED")
+  initialVersion  String?
+  targetVersion   String
+  attempts        Int          @default(0)
+  lastError       String?
+  dispatchedAt    DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  rollout         OtaRollout   @relation(fields: [rolloutId], references: [id], onDelete: Cascade)
+  relay           Relay        @relation(fields: [relayId], references: [id], onDelete: Cascade)
+
+  @@unique([rolloutId, relayId])
+  @@index([relayId])
+  @@index([status])
+  @@index([cmdId])
+  @@index([rolloutId, batchIndex])
+}

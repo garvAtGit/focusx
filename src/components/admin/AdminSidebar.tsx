@@ -12,6 +12,7 @@ import {
   CreditCard,
   Cpu,
   Activity,
+  ArrowUpCircle,
   LogOut,
   ExternalLink,
   Menu,
@@ -51,6 +52,11 @@ const NAV_ITEMS = [
     label: 'Bookings & Ledger',
     href: '/admin/bookings',
     icon: CreditCard,
+  },
+  {
+    label: 'OTA Fleet Rollout',
+    href: '/admin/ota',
+    icon: ArrowUpCircle,
   },
   {
     label: 'Hardware & IoT',

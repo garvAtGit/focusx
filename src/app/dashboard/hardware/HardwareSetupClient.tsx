@@ -4,7 +4,17 @@ import React, { useState } from "react";
 import { Plus, CheckCircle2, AlertCircle, Cpu, Loader2, ArrowUpCircle, RefreshCw, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-export default function HardwareSetupClient({ libraryId, initialHardware }: { libraryId: string, initialHardware: any[] }) {
+export default function HardwareSetupClient({ 
+  libraryId, 
+  initialHardware,
+  otaLogs = [],
+  latestReleaseVersion = "5.1.1-ota"
+}: { 
+  libraryId: string; 
+  initialHardware: any[];
+  otaLogs?: any[];
+  latestReleaseVersion?: string;
+}) {
   const [claimCode, setClaimCode] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actionLoading, setActionLoading] = useState<Record<string, string>>({});
@@ -62,14 +72,14 @@ export default function HardwareSetupClient({ libraryId, initialHardware }: { li
   };
 
   const handleQueueOTA = async (hwId: string) => {
-    if (!confirm('Queue OTA firmware update (v5.1.0-ota) to this device? It will be downloaded and verified on the next heartbeat.')) return;
+    if (!confirm(`Queue OTA firmware update (${latestReleaseVersion}) to this device? It will be downloaded and verified on the next heartbeat.`)) return;
 
     setActionLoading(prev => ({ ...prev, [hwId]: 'ota' }));
     try {
       const res = await fetch('/api/hardware/ota', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ relayId: hwId })
+        body: JSON.stringify({ relayId: hwId, targetVersion: latestReleaseVersion })
       });
       const data = await res.json();
       if (res.ok) {
@@ -181,7 +191,8 @@ export default function HardwareSetupClient({ libraryId, initialHardware }: { li
               );
               const isOnline = hw.status === "ONLINE" || (lastActive > 0 && Date.now() - lastActive < 120000);
               const fwVer = hw.firmwareVersion || "5.0.0-p0a";
-              const isUpToDate = fwVer === "5.1.0-ota";
+              const isUpToDate = fwVer === latestReleaseVersion || fwVer === `v${latestReleaseVersion}` || `v${fwVer}` === latestReleaseVersion;
+              const lastOta = otaLogs && otaLogs.length > 0 ? otaLogs[0] : null;
               const activeAction = actionLoading[hw.id];
 
               return (
@@ -238,11 +249,65 @@ export default function HardwareSetupClient({ libraryId, initialHardware }: { li
                           <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
                             {hw.pendingEventsCount === 0 ? '✓ Outbox Clean (0 queued)' : `⟳ ${hw.pendingEventsCount} queued`}
                           </span>
-                          {hw.pendingCommand && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-purple-50 text-purple-700 border border-purple-200">
-                              Queued: {hw.pendingCommand.split(':')[0]}
-                            </span>
-                          )}
+                          {(() => {
+                            if (!hw.pendingCommand) {
+                              if (!lastOta) return null;
+                              if (lastOta.status === "SUCCESS") {
+                                return (
+                                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                    <span>✓ {lastOta.reason || "OTA Update Complete"}</span>
+                                  </span>
+                                );
+                              } else if (lastOta.status === "FAILED") {
+                                return (
+                                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-rose-50 text-rose-700 border border-rose-200">
+                                    <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
+                                    <span>✕ OTA Failed: {lastOta.reason || "Execution error"}</span>
+                                  </span>
+                                );
+                              }
+                              return null;
+                            }
+                            let cmd: any = null;
+                            try {
+                              cmd = JSON.parse(hw.pendingCommand);
+                            } catch {
+                              cmd = { action: hw.pendingCommand, status: "QUEUED" };
+                            }
+                            const st = (cmd.status || "QUEUED").toUpperCase();
+                            if (st === "DOWNLOADING") {
+                              return (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-blue-50 text-blue-700 border border-blue-200">
+                                  <Loader2 className="w-3 h-3 animate-spin text-blue-600" /> Downloading Firmware...
+                                </span>
+                              );
+                            } else if (st === "INSTALLING") {
+                              return (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                  <Loader2 className="w-3 h-3 animate-spin text-indigo-600" /> Installing to Inactive Slot...
+                                </span>
+                              );
+                            } else if (st === "REBOOTING") {
+                              return (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-purple-50 text-purple-700 border border-purple-200 animate-pulse">
+                                  ⟳ Rebooting Device...
+                                </span>
+                              );
+                            } else if (st === "VALIDATING") {
+                              return (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-cyan-50 text-cyan-700 border border-cyan-200 animate-pulse">
+                                  ⚙ Validating Health Gate...
+                                </span>
+                              );
+                            } else {
+                              return (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                                  Queued: {cmd.action}
+                                </span>
+                              );
+                            }
+                          })()}
                         </div>
                       </div>
                     </div>
@@ -264,7 +329,7 @@ export default function HardwareSetupClient({ libraryId, initialHardware }: { li
                             className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded-md transition-colors font-medium shadow-sm flex items-center gap-1 disabled:opacity-50"
                           >
                             {activeAction === 'ota' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUpCircle className="w-3.5 h-3.5" />}
-                            OTA Update
+                            OTA Update ({latestReleaseVersion})
                           </button>
                         )}
                         <button 
