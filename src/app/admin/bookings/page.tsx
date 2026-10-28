@@ -20,6 +20,7 @@ export default async function AdminBookingsPage(props: {
   const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
   const q = typeof searchParams.q === "string" ? searchParams.q.trim() : "";
   const rawStatus = typeof searchParams.status === "string" ? searchParams.status.toUpperCase() : "ALL";
+  const rawChannel = typeof searchParams.channel === "string" ? searchParams.channel.toUpperCase() : "ALL";
   const validStatuses: string[] = [
     "CONFIRMED",
     "AWAITING_PAYMENT",
@@ -31,6 +32,8 @@ export default async function AdminBookingsPage(props: {
     "REFUND_PENDING",
   ];
   const status = validStatuses.includes(rawStatus) ? (rawStatus as BookingIntentStatus) : "ALL";
+  const channel: "ALL" | "RECEPTION" | "RAZORPAY" =
+    rawChannel === "RECEPTION" || rawChannel === "RAZORPAY" ? rawChannel : "ALL";
   const tab = searchParams.tab === "REFUNDS" ? "REFUNDS" : "INTENTS";
 
   // Build Prisma where filter for BookingIntents
@@ -38,6 +41,12 @@ export default async function AdminBookingsPage(props: {
 
   if (status !== "ALL") {
     where.status = status;
+  }
+
+  if (channel === "RECEPTION") {
+    where.source = { in: ["RECEPTION", "MANUAL", "RENEWAL", "HARDWARE"] };
+  } else if (channel === "RAZORPAY") {
+    where.source = "RAZORPAY";
   }
 
   if (q) {
@@ -66,13 +75,13 @@ export default async function AdminBookingsPage(props: {
   }
 
   const cacheKey = q
-    ? `bookings:q:${encodeURIComponent(q.toLowerCase())}:p:${page}:s:${status}`
-    : `bookings:p:${page}:s:${status}`;
+    ? `bookings:q:${encodeURIComponent(q.toLowerCase())}:p:${page}:s:${status}:c:${channel}`
+    : `bookings:p:${page}:s:${status}:c:${channel}`;
 
-  const { intents, totalCount, refundTasks } = await getCachedAdminData(
+  const { intents, totalCount, refundTasks, receptionStudentCount, razorpayStudentCount } = await getCachedAdminData(
     cacheKey,
     async () => {
-      const [count, intents, refundTasks] = await Promise.all([
+      const [count, intents, refundTasks, receptionStudents, razorpayStudents] = await Promise.all([
         prisma.bookingIntent.count({ where }),
         prisma.bookingIntent.findMany({
           where,
@@ -122,9 +131,25 @@ export default async function AdminBookingsPage(props: {
             },
           },
         }),
+        prisma.bookingIntent.findMany({
+          where: { source: { in: ["RECEPTION", "MANUAL", "RENEWAL", "HARDWARE"] } },
+          select: { studentId: true },
+          distinct: ["studentId"],
+        }),
+        prisma.bookingIntent.findMany({
+          where: { source: "RAZORPAY" },
+          select: { studentId: true },
+          distinct: ["studentId"],
+        }),
       ]);
 
-      return { intents, totalCount: count, refundTasks };
+      return {
+        intents,
+        totalCount: count,
+        refundTasks,
+        receptionStudentCount: receptionStudents.length,
+        razorpayStudentCount: razorpayStudents.length,
+      };
     },
     q ? 20 : 30
   );
@@ -138,6 +163,9 @@ export default async function AdminBookingsPage(props: {
         currentPage={page}
         pageSize={PAGE_SIZE}
         currentStatus={status}
+        currentChannel={channel}
+        receptionStudentCount={receptionStudentCount}
+        razorpayStudentCount={razorpayStudentCount}
         initialQuery={q}
         initialTab={tab}
       />

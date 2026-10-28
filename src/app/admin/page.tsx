@@ -48,6 +48,8 @@ export default async function AdminDashboardPage() {
     pendingOutboxCount,
     pendingLibraries,
     recentBookings,
+    receptionStudentCount,
+    razorpayStudentCount,
   } = await getCachedAdminData("overview", async () => {
     const startOfToday = startOfDayIST(new Date());
 
@@ -68,13 +70,15 @@ export default async function AdminDashboardPage() {
       pendingOutboxCount,
       pendingLibraries,
       recentBookings,
+      receptionStudents,
+      razorpayStudents,
     ] = await Promise.all([
       prisma.library.count(),
       prisma.library.count({ where: { kycStatus: "PENDING" } }),
       prisma.library.count({ where: { kycStatus: "APPROVED" } }),
       prisma.library.count({ where: { kycStatus: "REJECTED" } }),
       prisma.user.count({ where: { role: "STUDENT" } }),
-      prisma.user.count({ where: { digilockerVerified: true } }),
+      prisma.user.count({ where: { role: "STUDENT", digilockerVerified: true } }),
       prisma.user.count({ where: { role: "ADMIN" } }),
       prisma.booking.count(),
       prisma.booking.count({ where: { createdAt: { gte: startOfToday } } }),
@@ -109,6 +113,16 @@ export default async function AdminDashboardPage() {
           seat: { select: { name: true } },
         },
       }),
+      prisma.bookingIntent.findMany({
+        where: { source: { in: ["RECEPTION", "MANUAL", "RENEWAL", "HARDWARE"] } },
+        select: { studentId: true },
+        distinct: ["studentId"],
+      }),
+      prisma.bookingIntent.findMany({
+        where: { source: "RAZORPAY" },
+        select: { studentId: true },
+        distinct: ["studentId"],
+      }),
     ]);
 
     const activeCheckins = activeEntries.filter((e) => e.status !== "OUT").length;
@@ -130,6 +144,8 @@ export default async function AdminDashboardPage() {
       pendingOutboxCount,
       pendingLibraries,
       recentBookings,
+      receptionStudentCount: receptionStudents.length,
+      razorpayStudentCount: razorpayStudents.length,
     };
   }, 30);
 
@@ -272,13 +288,27 @@ export default async function AdminDashboardPage() {
 
       {/* Recent Global Bookings Stream */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-black text-slate-900 tracking-tight">Recent Platform Bookings</h2>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h2 className="text-xl font-black text-slate-900 tracking-tight">Recent Platform Bookings</h2>
+            <Link
+              href="/admin/bookings?channel=RECEPTION"
+              className="px-3 py-1 rounded-full text-xs font-bold bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 transition-colors flex items-center gap-1.5 shadow-sm"
+            >
+              Paid to Receptionist ({receptionStudentCount})
+            </Link>
+            <Link
+              href="/admin/bookings?channel=RAZORPAY"
+              className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition-colors flex items-center gap-1.5 shadow-sm"
+            >
+              Paid through Razorpay ({razorpayStudentCount})
+            </Link>
+          </div>
           <Link
             href="/admin/bookings"
-            className="text-xs font-bold text-[#2781CA] hover:underline flex items-center gap-1 transition-colors"
+            className="text-xs font-bold text-[#2781CA] hover:underline flex items-center gap-1 transition-colors self-start sm:self-auto"
           >
-            All Transactions <ArrowRight className="w-3.5 h-3.5" />
+            All Transactions ({totalBookings}) <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </div>
 
@@ -290,51 +320,67 @@ export default async function AdminDashboardPage() {
                   <th className="px-6 py-4 font-black uppercase text-[11px] tracking-wider">Student</th>
                   <th className="px-6 py-4 font-black uppercase text-[11px] tracking-wider">Library</th>
                   <th className="px-6 py-4 font-black uppercase text-[11px] tracking-wider">Seat Number</th>
+                  <th className="px-6 py-4 font-black uppercase text-[11px] tracking-wider">Payment Mode</th>
                   <th className="px-6 py-4 font-black uppercase text-[11px] tracking-wider">Status</th>
                   <th className="px-6 py-4 font-black uppercase text-[11px] tracking-wider">Date & Time</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {recentBookings.map((b) => (
-                  <tr key={b.id} className="hover:bg-slate-50/60 transition-colors">
-                    <td className="px-6 py-4">
-                      <div className="font-bold text-slate-900">{b.student?.name || "Student"}</div>
-                      <div className="text-[11px] text-slate-400 font-mono mt-0.5">{b.student?.phone || "No phone"}</div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="text-slate-800 font-bold">{b.library?.name}</div>
-                      <div className="text-[11px] text-slate-400 mt-0.5">{b.library?.city || "India"}</div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className="font-mono text-xs px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-bold border border-slate-200">
-                        {b.seat ? `Seat #${b.seat.name}` : "Flexible Plan"}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span
-                        className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                          b.status === "CONFIRMED"
-                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                            : b.status === "COMPLETED"
-                            ? "bg-blue-50 text-blue-700 border border-blue-200"
-                            : "bg-amber-50 text-amber-700 border border-amber-200"
-                        }`}
-                      >
-                        {b.status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-slate-500 font-medium">
-                      {new Date(b.createdAt).toLocaleString("en-IN", {
-                        dateStyle: "medium",
-                        timeStyle: "short",
-                        timeZone: "Asia/Kolkata",
-                      })}
-                    </td>
-                  </tr>
-                ))}
+                {recentBookings.map((b) => {
+                  const isRazorpay = b.paymentRef?.startsWith('pay_') || b.paymentRef?.toUpperCase().includes('RAZORPAY');
+
+                  return (
+                    <tr key={b.id} className="hover:bg-slate-50/60 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="font-bold text-slate-900">{b.student?.name || "Student"}</div>
+                        <div className="text-[11px] text-slate-400 font-mono mt-0.5">{b.student?.phone || "No phone"}</div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="text-slate-800 font-bold">{b.library?.name}</div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">{b.library?.city || "India"}</div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="font-mono text-xs px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-bold border border-slate-200">
+                          {b.seat ? `Seat #${b.seat.name}` : "Flexible Plan"}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        {isRazorpay ? (
+                          <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            Paid through Razorpay
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-purple-50 text-purple-700 border border-purple-200">
+                            Paid to Receptionist
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span
+                          className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                            b.status === "CONFIRMED"
+                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                              : b.status === "COMPLETED"
+                              ? "bg-blue-50 text-blue-700 border border-blue-200"
+                              : "bg-amber-50 text-amber-700 border border-amber-200"
+                          }`}
+                        >
+                          {b.status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-slate-500 font-medium">
+                        {new Date(b.createdAt).toLocaleString("en-IN", {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                          timeZone: "Asia/Kolkata",
+                        })}
+                      </td>
+                    </tr>
+                  );
+                })}
                 {recentBookings.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-6 py-10 text-center text-slate-400 font-medium">
+                    <td colSpan={6} className="px-6 py-10 text-center text-slate-400 font-medium">
                       No platform bookings recorded yet.
                     </td>
                   </tr>

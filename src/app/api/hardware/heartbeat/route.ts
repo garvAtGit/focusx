@@ -48,20 +48,28 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Relay not found" }, { status: 404 });
     }
 
-    // Persist real-time device observability metrics into PostgreSQL
+    const now = Date.now();
+    const lastSeenTime = relay.lastSeenAt ? relay.lastSeenAt.getTime() : 0;
+    const clientAuthRev = Number(statusPayload.currentAuthRevision) || 0;
+    const revChanged = clientAuthRev !== (relay.currentAuthRevision || 0);
     const fwVersion = statusPayload.firmwareVersion ? String(statusPayload.firmwareVersion) : undefined;
-    await prisma.relay.update({
-      where: { id: relay.id },
-      data: {
-        lastSeenAt: new Date(),
-        status: "ONLINE",
-        clockState: statusPayload.clockState !== undefined ? String(statusPayload.clockState) : undefined,
-        freeFlashBytes: typeof statusPayload.freeBytes === "number" ? statusPayload.freeBytes : undefined,
-        pendingEventsCount: typeof statusPayload.pendingEvents === "number" ? statusPayload.pendingEvents : undefined,
-        currentAuthRevision: typeof statusPayload.currentAuthRevision === "number" ? statusPayload.currentAuthRevision : undefined,
-        firmwareVersion: fwVersion,
-      }
-    });
+    const fwChanged = Boolean(fwVersion && fwVersion !== relay.firmwareVersion);
+
+    // Throttle updates: only hit PostgreSQL if > 45 seconds have elapsed, or status changed, or auth revision / firmware changed
+    if (relay.status !== "ONLINE" || now - lastSeenTime > 45_000 || revChanged || fwChanged) {
+      await prisma.relay.update({
+        where: { id: relay.id },
+        data: {
+          lastSeenAt: new Date(now),
+          status: "ONLINE",
+          clockState: statusPayload.clockState !== undefined ? String(statusPayload.clockState) : undefined,
+          freeFlashBytes: typeof statusPayload.freeBytes === "number" ? statusPayload.freeBytes : undefined,
+          pendingEventsCount: typeof statusPayload.pendingEvents === "number" ? statusPayload.pendingEvents : undefined,
+          currentAuthRevision: typeof statusPayload.currentAuthRevision === "number" ? statusPayload.currentAuthRevision : undefined,
+          firmwareVersion: fwVersion,
+        },
+      });
+    }
 
     // Synchronize durable OTA fleet rollout lifecycle state machine
     try {
@@ -193,7 +201,6 @@ export async function POST(request: NextRequest) {
     }
 
     const serverAuthRevision = relay.library.authRevision;
-    const clientAuthRev = Number(statusPayload.currentAuthRevision) || 0;
     const reconcileNeeded = serverAuthRevision > clientAuthRev;
 
     // Check OTA release availability
