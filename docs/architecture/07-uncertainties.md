@@ -17,7 +17,7 @@ The following components exist in the repository, but active production usage or
 ## 3. Hardware Relays
 - **Status**: IMPLEMENTED_NOT_VERIFIED
 - **Confidence**: MEDIUM
-- **Evidence**: The root contains `esp32_qr_access/` and `arduino-cli/`. Backend APIs like `src/app/api/hardware/log/route.ts` exist.
+- **Evidence**: The supported firmware is `FocusX_Scanner_Firmware_V5_DualRFID/`. The local Arduino toolchain is unavailable in this checkout. See [firmware retirement](../cleanup-2026-10-14/firmware-retirement.md) for retired QR hardware and retained offline modules. Backend APIs like `src/app/api/hardware/log/route.ts` exist.
 - **Note**: While the firmware and backend endpoints are implemented, we cannot verify if physical relays are currently deployed and operating in production libraries.
 
 ## 4. Background Push Notifications

@@ -93,3 +93,23 @@ test_safe_i2c/
 
 FocusX_Scanner_Firmware_V5_DualRFID/build_8mb/
 FocusX_Scanner_Firmware_V5_DualRFID/build_ota_test/
+
+# Local credential exports and generated diagnostic output
+/cf_key.txt
+/hack.json
+/push_env.js
+/compile.log
+/compile2.log
+/compile_out.txt
+/firebase-debug.log
+/git_diff.txt
+/git_diff_utf8.txt
+/logs.json
+/new_performScan.txt
+/recovered_code.txt
+/recovered_code2.txt
+/scratch_mock_recovered.txt
+/scratch_search.txt
+/temp2.txt
+/test-out.txt
+

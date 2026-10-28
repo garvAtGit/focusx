@@ -7,6 +7,8 @@ import { Suspense } from "react";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
 import { ShieldAlert, LogOut, ArrowLeft } from "lucide-react";
 import Link from "next/link";
+import { NotificationBell } from "@/components/NotificationBell";
+import { NotificationProvider } from "@/components/notifications/NotificationProvider";
 
 async function AdminAuthWrapper({ children }: { children: React.ReactNode }) {
   const headerStore = await headers();
@@ -53,9 +55,8 @@ async function AdminAuthWrapper({ children }: { children: React.ReactNode }) {
               <ShieldAlert className="w-8 h-8" />
             </div>
             <h2 className="text-2xl font-bold text-white mb-2">Access Denied (403)</h2>
-            <p className="text-slate-400 text-sm mb-6">
-              Your account <span className="text-white font-medium">({session.phone || session.email})</span> is registered with role{' '}
-              <span className="text-amber-400 font-semibold">{session.role}</span> and does not have Super Admin authorization.
+            <p className="text-slate-400 text-sm mb-6 leading-relaxed">
+              Your account (<span className="text-slate-200 font-mono text-xs">{session.email || session.phone}</span>) is authenticated but does not possess superuser privileges for FocusX HQ.
             </p>
             <div className="flex flex-col gap-3">
               <Link
@@ -79,18 +80,28 @@ async function AdminAuthWrapper({ children }: { children: React.ReactNode }) {
     }
   }
 
-  return (
-    <div className="min-h-screen bg-[#FCFBF9] text-slate-900 flex">
-      {/* Persistent Left Sidebar */}
-      <AdminSidebar userEmail={session.email} userPhone={session.phone} />
+  const adminNotifications = await prisma.notification.findMany({
+    where: {
+      OR: [{ userId: session.userId }, { studentId: session.userId }],
+    },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+  });
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col md:pl-64 min-w-0">
-        <main className="flex-1 p-4 md:p-8 overflow-y-auto">
-          {children}
-        </main>
+  return (
+    <NotificationProvider userId={session.userId} initialNotifications={adminNotifications}>
+      <div className="min-h-screen bg-[#FCFBF9] text-slate-900 flex">
+        {/* Persistent Left Sidebar */}
+        <AdminSidebar userEmail={session.email} userPhone={session.phone} />
+
+        {/* Main Content Area */}
+        <div className="flex-1 flex flex-col md:pl-64 min-w-0">
+          <main className="flex-1 p-4 md:p-8 overflow-y-auto">
+            {children}
+          </main>
+        </div>
       </div>
-    </div>
+    </NotificationProvider>
   );
 }
 

@@ -4,16 +4,21 @@ import { redirect } from "next/navigation";
 import { AlertCircle, Code, Copy, LayoutTemplate, QrCode, ExternalLink } from "lucide-react";
 import { CopyableField } from "@/components/CopyableField";
 import { getActiveLibrary } from "@/lib/dashboard-utils";
+import { hasPermission } from "@/lib/permissions";
 
 export default async function WidgetsPage() {
   const session = await getSession();
-  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN')) {
+  if (!session) {
     redirect("/login");
   }
 
   const library = await getActiveLibrary(session);
-
   if (!library) redirect("/onboarding");
+
+  const canView = await hasPermission(session, library.id, 'widgets.view');
+  if (!canView) {
+    redirect("/dashboard");
+  }
 
   return (
     <div className="max-w-4xl mx-auto space-y-8">

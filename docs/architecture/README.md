@@ -51,7 +51,7 @@ This is the canonical source of truth for the Library Near platform architecture
   - **Production verification**: Not established.
 - **Hardware Relay**
   - **Status**: IMPLEMENTED_NOT_VERIFIED (Confidence: MEDIUM)
-  - **Evidence**: `esp32_qr_access` directory, `/api/hardware/log/` routes exist.
+  - **Evidence**: `FocusX_Scanner_Firmware_V5_DualRFID/` and `/api/hardware/log/` routes exist. See [firmware retirement](../cleanup-2026-10-14/firmware-retirement.md) for retired generations and preserved offline modules.
   - **Production verification**: Hardware code exists, API routes exist, but active deployment to physical locations cannot be proven from the repo.
 
 ## BACKEND MODULES

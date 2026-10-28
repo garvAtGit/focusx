@@ -1,6 +1,7 @@
 import { getSession } from "@/app/actions/auth-actions";
 import { getActiveLibrary } from "@/lib/dashboard-utils";
 import { redirect } from "next/navigation";
+import { hasPermission } from "@/lib/permissions";
 import { ScannerClient } from "./ScannerClient";
 
 export const metadata = {
@@ -9,7 +10,7 @@ export const metadata = {
 
 export default async function ScannerPage() {
   const session = await getSession();
-  if (!session || (session.role !== "LIBRARIAN" && session.role !== "ADMIN" && session.role !== "RECEPTIONIST")) {
+  if (!session) {
     redirect("/login");
   }
 
@@ -20,6 +21,14 @@ export default async function ScannerPage() {
         <p className="text-muted-foreground">No active library found. Please select a library first.</p>
       </div>
     );
+  }
+
+  const canView =
+    (await hasPermission(session, activeLibrary.id, 'attendance.view')) ||
+    (await hasPermission(session, activeLibrary.id, 'attendance.manage'));
+
+  if (!canView) {
+    redirect("/dashboard");
   }
 
   return (

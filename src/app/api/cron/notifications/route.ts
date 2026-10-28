@@ -1,10 +1,19 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { fireRules } from '@/lib/rule-engine';
+import { processDueScheduledBroadcasts, processDuePushDeliveries } from '@/lib/notifications';
+import {
+  notifyMembershipExpiring,
+  notifyMembershipExpired,
+} from '@/lib/notification-triggers';
+import { claimOutboxBatch, processOutboxItem } from '@/lib/realtime-publisher';
+
+export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 export async function GET(request: Request) {
   try {
-    // Only allow cron requests in production (Vercel sets this header)
+    // 1. Authenticate cron requests (Vercel sets Authorization: Bearer <CRON_SECRET>)
     const authHeader = request.headers.get('authorization');
     if (
       process.env.NODE_ENV === 'production' &&
@@ -13,16 +22,33 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const workerId = `cron-notifications-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const now = new Date();
+
+    // 2. Process due scheduled broadcasts with atomic leasing
+    let broadcastOutcome = { processed: 0, succeeded: 0, failed: 0 };
+    try {
+      broadcastOutcome = await processDueScheduledBroadcasts(workerId, 10);
+    } catch (bcastErr) {
+      console.error('[Cron Notifications] Error processing scheduled broadcasts:', bcastErr);
+    }
+
+    // 3. Process Expiry Reminders (3-Day and 1-Day offsets) and Expired Alerts
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-    // 3 Days before expiry
-    const threeDaysFromNowStart = new Date(today);
-    threeDaysFromNowStart.setDate(threeDaysFromNowStart.getDate() + 3);
-    const threeDaysFromNowEnd = new Date(threeDaysFromNowStart);
-    threeDaysFromNowEnd.setDate(threeDaysFromNowEnd.getDate() + 1);
+    // 3-Day window: [today + 3 days, today + 4 days)
+    const threeDaysStart = new Date(today);
+    threeDaysStart.setDate(threeDaysStart.getDate() + 3);
+    const threeDaysEnd = new Date(threeDaysStart);
+    threeDaysEnd.setDate(threeDaysEnd.getDate() + 1);
 
-    // Just Expired (plans that expired yesterday)
+    // 1-Day window: [today + 1 day, today + 2 days)
+    const oneDayStart = new Date(today);
+    oneDayStart.setDate(oneDayStart.getDate() + 1);
+    const oneDayEnd = new Date(oneDayStart);
+    oneDayEnd.setDate(oneDayEnd.getDate() + 1);
+
+    // Just expired window (expired yesterday): [today - 1 day, today)
     const yesterdayStart = new Date(today);
     yesterdayStart.setDate(yesterdayStart.getDate() - 1);
     const yesterdayEnd = new Date(yesterdayStart);
@@ -31,30 +57,56 @@ export async function GET(request: Request) {
     // Fetch active bookings expiring in 3 days
     const expiringIn3Days = await prisma.booking.findMany({
       where: {
-        status: { in: ['CONFIRMED', 'COMPLETED'] },
-        endTime: { gte: threeDaysFromNowStart, lt: threeDaysFromNowEnd },
-        isPaused: false
+        status: 'CONFIRMED',
+        endTime: { gte: threeDaysStart, lt: threeDaysEnd },
+        isPaused: false,
       },
-      include: { plan: true }
+      include: { plan: true },
     });
 
-    // Fetch bookings that just expired yesterday
+    // Fetch active bookings expiring in 1 day
+    const expiringIn1Day = await prisma.booking.findMany({
+      where: {
+        status: 'CONFIRMED',
+        endTime: { gte: oneDayStart, lt: oneDayEnd },
+        isPaused: false,
+      },
+      include: { plan: true },
+    });
+
+    // Fetch bookings that expired yesterday
     const expiredYesterday = await prisma.booking.findMany({
       where: {
-        status: { in: ['CONFIRMED', 'COMPLETED'] },
+        status: 'CONFIRMED',
         endTime: { gte: yesterdayStart, lt: yesterdayEnd },
-        isPaused: false
+        isPaused: false,
       },
-      include: { plan: true }
+      include: { plan: true },
     });
 
-    let notificationsCreated = 0;
+    let remindersCreated = 0;
     let rulesFired = 0;
 
-    // -------------------------------------------------------------------------
-    // BOOKING_EXPIRING rules + fallback hardcoded notification
-    // -------------------------------------------------------------------------
+    // Helper: checks if the student has already renewed in the same library
+    async function hasActiveRenewal(studentId: string, libraryId: string, currentEndTime: Date): Promise<boolean> {
+      const newerBooking = await prisma.booking.findFirst({
+        where: {
+          studentId,
+          libraryId,
+          status: 'CONFIRMED',
+          endTime: { gt: currentEndTime },
+        },
+        select: { id: true },
+      });
+      return Boolean(newerBooking);
+    }
+
+    // Process 3-Day Reminders
     for (const booking of expiringIn3Days) {
+      // Check renewal invalidation
+      const renewed = await hasActiveRenewal(booking.studentId, booking.libraryId, booking.endTime);
+      if (renewed) continue; // Skip obsolete reminder if already renewed
+
       // Try configured rules first
       const fired = await fireRules({
         trigger: 'BOOKING_EXPIRING',
@@ -64,92 +116,89 @@ export async function GET(request: Request) {
       });
       rulesFired += fired;
 
-      // Fallback if no rules configured
-      if (fired === 0) {
-        const existing = await prisma.notification.findFirst({
-          where: {
-            studentId: booking.studentId,
-            title: "Plan Expiring Soon 🗓️",
-            createdAt: { gte: today }
-          }
-        });
-        if (!existing) {
-          await prisma.notification.create({
-            data: {
-              studentId: booking.studentId,
-              title: "Plan Expiring Soon 🗓️",
-              message: `Your ${booking.plan.name} plan expires in 3 days. [Renew Plan](/student/dashboard) to avoid losing access.`,
-            }
-          });
-          notificationsCreated++;
-        }
-      }
+      // Authoritative idempotent fallback notification
+      const result = await notifyMembershipExpiring({
+        bookingId: booking.id,
+        studentId: booking.studentId,
+        planName: booking.plan?.name || 'membership',
+        daysLeft: 3,
+        endTime: booking.endTime,
+      });
+      if (!result.isDuplicate) remindersCreated++;
     }
 
-    // -------------------------------------------------------------------------
-    // Expired yesterday — fallback notification
-    // -------------------------------------------------------------------------
+    // Process 1-Day Reminders
+    for (const booking of expiringIn1Day) {
+      const renewed = await hasActiveRenewal(booking.studentId, booking.libraryId, booking.endTime);
+      if (renewed) continue;
+
+      const fired = await fireRules({
+        trigger: 'BOOKING_EXPIRING',
+        libraryId: booking.libraryId,
+        studentId: booking.studentId,
+        context: { days_left: 1 },
+      });
+      rulesFired += fired;
+
+      const result = await notifyMembershipExpiring({
+        bookingId: booking.id,
+        studentId: booking.studentId,
+        planName: booking.plan?.name || 'membership',
+        daysLeft: 1,
+        endTime: booking.endTime,
+      });
+      if (!result.isDuplicate) remindersCreated++;
+    }
+
+    // Process Expired Alerts
     for (const booking of expiredYesterday) {
-      const existing = await prisma.notification.findFirst({
-        where: {
-          studentId: booking.studentId,
-          title: "Plan Expired ⚠️",
-          createdAt: { gte: today }
-        }
+      const renewed = await hasActiveRenewal(booking.studentId, booking.libraryId, booking.endTime);
+      if (renewed) continue; // Don't send expired alert if already renewed with a new booking
+
+      const result = await notifyMembershipExpired({
+        bookingId: booking.id,
+        studentId: booking.studentId,
+        planName: booking.plan?.name || 'membership',
+        expiredDate: booking.endTime,
       });
-      if (!existing) {
-        await prisma.notification.create({
-          data: {
-            studentId: booking.studentId,
-            title: "Plan Expired ⚠️",
-            message: `Your ${booking.plan.name} plan has expired. [Renew Plan](/student/dashboard) to regain access to the library.`,
-          }
-        });
-        notificationsCreated++;
-      }
+      if (!result.isDuplicate) remindersCreated++;
     }
 
-    // -------------------------------------------------------------------------
-    // ABSENT rules — students who haven't visited in N days
-    // Find all active bookings and check last checkin date
-    // -------------------------------------------------------------------------
-    const activeBookings = await prisma.booking.findMany({
-      where: {
-        status: 'CONFIRMED',
-        endTime: { gt: now },
-        isPaused: false,
-      },
-      select: { studentId: true, libraryId: true },
-      distinct: ['studentId', 'libraryId'],
+    // 4. Process Pending Realtime Outbox Batches for Recoverability
+    let outboxProcessed = 0;
+    try {
+      const claimedOutbox = await claimOutboxBatch(50, workerId, 60);
+      if (claimedOutbox.length > 0) {
+        await Promise.allSettled(
+          claimedOutbox.map((item) =>
+            processOutboxItem(item, workerId, item.leaseToken || undefined)
+          )
+        );
+        outboxProcessed = claimedOutbox.length;
+      }
+    } catch (outboxErr) {
+      console.warn('[Cron Notifications] Outbox processing warning:', outboxErr);
+    }
+
+    // 5. Process Due Web Push Deliveries with atomic leasing and exponential backoff
+    let pushOutcome = { processed: 0, succeeded: 0, failed: 0, deactivated: 0 };
+    try {
+      pushOutcome = await processDuePushDeliveries(workerId, 50);
+    } catch (pushErr) {
+      console.warn('[Cron Notifications] Web push delivery warning:', pushErr);
+    }
+
+    return NextResponse.json({
+      success: true,
+      workerId,
+      scheduledBroadcasts: broadcastOutcome,
+      pushDeliveries: pushOutcome,
+      remindersCreated,
+      rulesFired,
+      outboxProcessed,
     });
-
-    for (const { studentId, libraryId } of activeBookings) {
-      const lastCheckin = await prisma.checkinLog.findFirst({
-        where: { studentId, libraryId },
-        orderBy: { timestamp: 'desc' },
-        select: { timestamp: true },
-      });
-
-      // If they've never checked in or haven't checked in for >1 day, calculate absence
-      const lastVisit = lastCheckin?.timestamp ?? null;
-      const absenceDays = lastVisit
-        ? Math.floor((now.getTime() - lastVisit.getTime()) / (1000 * 60 * 60 * 24))
-        : 999 // never visited
-
-      if (absenceDays >= 1) {
-        const fired = await fireRules({
-          trigger: 'ABSENT',
-          libraryId,
-          studentId,
-          context: { absence_days: absenceDays },
-        });
-        rulesFired += fired;
-      }
-    }
-
-    return NextResponse.json({ success: true, notificationsCreated, rulesFired });
   } catch (error) {
-    console.error('Expiry notifications cron failed:', error);
+    console.error('Cron notifications execution failed:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

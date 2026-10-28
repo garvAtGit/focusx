@@ -4,16 +4,22 @@ import { getSession } from "@/app/actions/auth-actions";
 import prisma from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import { getActiveLibrary } from "@/lib/dashboard-utils";
+import { hasPermission } from "@/lib/permissions";
 import HardwareSetupClient from "./HardwareSetupClient";
 
 export default async function HardwareSetupPage() {
   const session = await getSession();
-  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN')) {
-    redirect("/");
+  if (!session) {
+    redirect("/login");
   }
 
   const library = await getActiveLibrary(session);
   if (!library) redirect("/onboarding");
+
+  const canView = await hasPermission(session, library.id, 'hardware.view');
+  if (!canView) {
+    redirect("/dashboard");
+  }
 
   // Fetch current relays (hardware) for this library
   const hardware = await prisma.relay.findMany({

@@ -5,6 +5,8 @@ import { revalidatePath, updateTag } from "next/cache"
 import { SeatNaming, SeatType } from "@prisma/client"
 import { getSession } from "./auth-actions"
 import { invalidateLibraryRuntimeCache } from "@/lib/library-cache"
+import { getActiveLibrary } from "@/lib/dashboard-utils"
+import { requirePermission, hasPermission } from "@/lib/permissions"
 
 // Reasonable upper bounds to reject malformed/abusive payloads.
 const MAX_SEATS = 2000;
@@ -37,7 +39,13 @@ export async function saveSeatLayoutAndLockers(
   seatNaming: SeatNamingValue = "ALPHANUMERIC",
 ) {
   const session = await getSession();
-  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN')) throw new Error("Unauthorized");
+  if (!session) throw new Error("Unauthorized");
+
+  const library = await getActiveLibrary(session);
+  if (!library) throw new Error("Library not found");
+
+  const authCheck = await requirePermission(session, library.id, 'seats.manage');
+  if (!authCheck.authorized) throw new Error(authCheck.error);
 
   if (!Array.isArray(seats) || !Array.isArray(standaloneLockers)) {
     throw new Error("Invalid layout payload");
@@ -45,9 +53,6 @@ export async function saveSeatLayoutAndLockers(
   if (seats.length > MAX_SEATS || standaloneLockers.length > MAX_LOCKERS) {
     throw new Error("Layout is too large");
   }
-
-  const library = await prisma.library.findFirst({ where: session.role === 'ADMIN' ? {} : { librarianId: session.userId } });
-  if (!library) throw new Error("Library not found");
 
   // Filter out EMPTY seats (empty space in grid)
   const activeSeats = seats.filter(s => s && s.type !== 'EMPTY' && typeof s.id === 'string');
@@ -192,7 +197,7 @@ export async function saveSeatLayoutAndLockers(
 
 export async function getSeatLayoutAndLockers() {
   const session = await getSession();
-  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN')) {
+  if (!session) {
     return {
       libraryId: null,
       seats: [] as SeatLayoutItem[],
@@ -202,15 +207,37 @@ export async function getSeatLayoutAndLockers() {
     };
   }
 
-  const library = await prisma.library.findFirst({
-    where: session.role === 'ADMIN' ? {} : { librarianId: session.userId },
+  const library = await getActiveLibrary(session);
+  if (!library) {
+    return {
+      libraryId: null,
+      seats: [] as SeatLayoutItem[],
+      standaloneLockers: [] as StandaloneLockerLayoutItem[],
+      compactSeatMap: false,
+      seatNaming: "ALPHANUMERIC" as SeatNamingValue,
+    };
+  }
+
+  const canView = await hasPermission(session, library.id, 'seats.view');
+  if (!canView) {
+    return {
+      libraryId: null,
+      seats: [] as SeatLayoutItem[],
+      standaloneLockers: [] as StandaloneLockerLayoutItem[],
+      compactSeatMap: false,
+      seatNaming: "ALPHANUMERIC" as SeatNamingValue,
+    };
+  }
+
+  const libWithSeats = await prisma.library.findUnique({
+    where: { id: library.id },
     include: {
       seats: true,
-      standaloneLockers: true
-    }
+      standaloneLockers: true,
+    },
   });
 
-  if (!library) {
+  if (!libWithSeats) {
     return {
       libraryId: null,
       seats: [] as SeatLayoutItem[],
@@ -222,7 +249,7 @@ export async function getSeatLayoutAndLockers() {
 
   return {
     libraryId: library.id,
-    seats: library.seats.map(s => ({
+    seats: libWithSeats.seats.map((s: any) => ({
       databaseId: s.id,
       id: s.name,
       x: s.gridX,
@@ -233,7 +260,7 @@ export async function getSeatLayoutAndLockers() {
       premiumPriceDaily: s.premiumPriceDaily?.toString() || "",
       syncPremiumOffers: s.syncPremiumOffers
     })),
-    standaloneLockers: library.standaloneLockers.map(l => ({
+    standaloneLockers: libWithSeats.standaloneLockers.map((l: any) => ({
       id: l.id,
       name: l.name,
       price: l.price.toString()

@@ -16,6 +16,7 @@ import {
 import { invalidateLibraryRuntimeCache } from "@/lib/library-cache"
 import { invalidateStudentsCache } from "@/lib/student-cache"
 import { getActiveLibrary } from "@/lib/dashboard-utils"
+import { requirePermission, hasPermission } from "@/lib/permissions"
 
 function isPrismaUniqueError(error: unknown, target?: string): boolean {
   if (
@@ -93,7 +94,13 @@ export async function getStudentByPhoneOrAuthId(authId?: string, phone?: string)
 
 export async function assignUniqueIdToStudent(studentId: string) {
   const session = await getSession();
-  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN')) return { error: "Unauthorized" };
+  if (!session) return { error: "Unauthorized" };
+
+  const library = await getActiveLibrary(session);
+  if (!library) return { error: "Library not found" };
+
+  const authCheck = await requirePermission(session, library.id, 'students.edit');
+  if (!authCheck.authorized) return { error: authCheck.error };
 
   const student = await prisma.user.findUnique({ where: { id: studentId } });
   if (!student) return { error: "Student not found" };
@@ -120,15 +127,17 @@ export async function assignUniqueIdToStudent(studentId: string) {
 
 export async function approveReceptionPayment(bookingId: string, paymentMethod: string) {
   const session = await getSession();
-  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN')) return { error: "Unauthorized" };
+  if (!session) return { error: "Unauthorized" };
 
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: { library: { select: { librarianId: true } } },
   });
   if (!booking) return { error: "Invalid booking" };
-  if (session.role === "LIBRARIAN" && booking.library.librarianId !== session.userId) {
-    return { error: "Invalid booking" };
+
+  const authCheck = await requirePermission(session, booking.libraryId, 'bookings.approve');
+  if (!authCheck.authorized) {
+    return { error: authCheck.error };
   }
   if (booking.status !== 'PENDING_PAYMENT') return { error: "Booking is not pending payment" };
 
@@ -150,30 +159,37 @@ export async function approveReceptionPayment(bookingId: string, paymentMethod: 
 
 export async function revokeBooking(bookingId: string, reason?: string) {
   const session = await getSession();
-  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN')) return { error: "Unauthorized" };
-
-  const library = await prisma.library.findFirst({ where: { librarianId: session.userId } });
-  if (!library) return { error: "Library not found" };
+  if (!session) return { error: "Unauthorized" };
 
   const booking = await prisma.booking.findUnique({ where: { id: bookingId } });
-  if (!booking || booking.libraryId !== library.id) return { error: "Invalid booking" };
+  if (!booking) return { error: "Invalid booking" };
+
+  const authCheck = await requirePermission(session, booking.libraryId, 'bookings.cancel');
+  if (!authCheck.authorized) {
+    return { error: authCheck.error };
+  }
 
   const result = await revokeConfirmedBookings({
     studentId: booking.studentId,
-    libraryId: library.id,
+    libraryId: booking.libraryId,
     reason,
   });
 
-  await invalidateLibraryRuntimeCache(library.id);
+  await invalidateLibraryRuntimeCache(booking.libraryId);
   revalidatePath("/dashboard/students");
   return { success: true, needsRefund: result.needsRefund };
 }
 
 export async function addStudentProfile(formData: FormData) {
-  // Auth guard: only LIBRARIAN or ADMIN can add students
   const session = await getSession();
-  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN')) {
-    return { error: 'Unauthorized' };
+  if (!session) return { error: 'Unauthorized' };
+
+  const library = await getActiveLibrary(session);
+  if (!library) return { error: "No active library found." };
+
+  const authCheck = await requirePermission(session, library.id, 'students.create');
+  if (!authCheck.authorized) {
+    return { error: authCheck.error };
   }
 
   const name = (formData.get("name") as string)?.trim();
@@ -187,11 +203,6 @@ export async function addStudentProfile(formData: FormData) {
   if (!name) return { error: "Student name is required" };
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { error: "Invalid email address" };
   if (phone && !/^[0-9+\-\s()]{6,20}$/.test(phone)) return { error: "Invalid phone number" };
-
-  const library = await prisma.library.findFirst({ 
-    where: { librarianId: session.userId } 
-  });
-  if (!library) return { error: "No library found." };
 
   let student = null;
   
@@ -263,10 +274,23 @@ export async function addStudentProfile(formData: FormData) {
 }
 
 export async function addStudentWithBooking(formData: FormData) {
-  // Auth guard: only LIBRARIAN or ADMIN can add students with bookings
   const session = await getSession();
-  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN')) {
-    return { error: 'Unauthorized' };
+  if (!session) return { error: 'Unauthorized' };
+
+  const library = await getActiveLibrary(session);
+  if (!library) return { error: "No active library found." };
+
+  const authCheck = await requirePermission(session, library.id, 'students.create');
+  if (!authCheck.authorized) {
+    return { error: authCheck.error };
+  }
+
+  const planId = formData.get("planId") as string;
+  if (planId) {
+    const bookingAuth = await requirePermission(session, library.id, 'bookings.create');
+    if (!bookingAuth.authorized) {
+      return { error: bookingAuth.error };
+    }
   }
 
   const name = (formData.get("name") as string)?.trim();
@@ -275,7 +299,6 @@ export async function addStudentWithBooking(formData: FormData) {
   const dobStr = formData.get("dob") as string;
   const gender = formData.get("gender") as string;
   const address = formData.get("address") as string;
-  const planId = formData.get("planId") as string;
   const authId = formData.get("authId") as string;
   const startDateStr = formData.get("startDate") as string;
   const paymentMethod = formData.get("paymentMethod") as string;
@@ -285,11 +308,6 @@ export async function addStudentWithBooking(formData: FormData) {
   if (!name) return { error: "Student name is required" };
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { error: "Invalid email address" };
   if (phone && !/^[0-9+\-\s()]{6,20}$/.test(phone)) return { error: "Invalid phone number" };
-
-  const library = await prisma.library.findFirst({ 
-    where: { librarianId: session.userId } 
-  });
-  if (!library) return { error: "No library found." };
 
   // Create user (handle unique-constraint collisions gracefully)
   let student = null;
@@ -401,13 +419,13 @@ export async function addStudentWithBooking(formData: FormData) {
 
 export async function extendBookingExact(bookingId: string) {
   const session = await getSession();
-  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN')) return { error: "Unauthorized" };
-
-  const library = await prisma.library.findFirst({ where: { librarianId: session.userId } });
-  if (!library) return { error: "Library not found" };
+  if (!session) return { error: "Unauthorized" };
 
   const booking = await prisma.booking.findUnique({ where: { id: bookingId } });
-  if (!booking || booking.libraryId !== library.id) return { error: "Invalid booking" };
+  if (!booking) return { error: "Invalid booking" };
+
+  const authCheck = await requirePermission(session, booking.libraryId, 'bookings.edit');
+  if (!authCheck.authorized) return { error: authCheck.error };
 
   try {
     await extendBookingByPlan(bookingId);
@@ -421,7 +439,7 @@ export async function extendBookingExact(bookingId: string) {
     return { error: error instanceof Error ? error.message : "Operation failed" };
   }
 
-  await invalidateLibraryRuntimeCache(library.id);
+  await invalidateLibraryRuntimeCache(booking.libraryId);
   revalidatePath("/dashboard/students");
   return { success: true };
 }
@@ -438,22 +456,22 @@ export async function renewPlan(
   standaloneLockerId?: string | null
 ) {
   const session = await getSession();
-  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN')) return { error: "Unauthorized" };
-
-  const library = await prisma.library.findFirst({ where: { librarianId: session.userId } });
-  if (!library) return { error: "Library not found" };
+  if (!session) return { error: "Unauthorized" };
 
   const booking = await prisma.booking.findUnique({ 
     where: { id: bookingId },
     include: { plan: true }
   });
   
-  if (!booking || booking.libraryId !== library.id) return { error: "Invalid booking" };
+  if (!booking) return { error: "Invalid booking" };
+
+  const authCheck = await requirePermission(session, booking.libraryId, 'bookings.create');
+  if (!authCheck.authorized) return { error: authCheck.error };
 
   let targetPlan = booking.plan;
   if (newPlanId && newPlanId !== booking.planId) {
     // Scope the new plan to THIS library and only allow active plans.
-    const p = await prisma.plan.findFirst({ where: { id: newPlanId, libraryId: library.id, isActive: true } });
+    const p = await prisma.plan.findFirst({ where: { id: newPlanId, libraryId: booking.libraryId, isActive: true } });
     if (!p) return { error: "Invalid new plan" };
     targetPlan = p;
   }
@@ -494,7 +512,7 @@ export async function renewPlan(
     return { error: error instanceof Error ? error.message : "Operation failed" };
   }
 
-  await invalidateLibraryRuntimeCache(library.id);
+  await invalidateLibraryRuntimeCache(booking.libraryId);
   revalidatePath("/dashboard/students");
   return { success: true };
 }
@@ -764,16 +782,13 @@ export async function searchStudentsGlobal(query: string) {
 
 export async function updateBookingStartDate(bookingId: string, newStartDate: Date) {
   const session = await getSession();
-  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN')) {
-    return { error: 'Unauthorized' };
-  }
-
-  const library = await prisma.library.findFirst({ where: { librarianId: session.userId } });
-  if (!library) return { error: 'Library not found' };
+  if (!session) return { error: 'Unauthorized' };
 
   const booking = await prisma.booking.findUnique({ where: { id: bookingId } });
+  if (!booking) return { error: 'Invalid booking' };
 
-  if (!booking || booking.libraryId !== library.id) return { error: 'Invalid booking' };
+  const authCheck = await requirePermission(session, booking.libraryId, 'bookings.edit');
+  if (!authCheck.authorized) return { error: authCheck.error };
 
   try {
     await rescheduleBooking(bookingId, newStartDate);
@@ -787,7 +802,7 @@ export async function updateBookingStartDate(bookingId: string, newStartDate: Da
     return { error: error instanceof Error ? error.message : "Operation failed" };
   }
 
-  await invalidateLibraryRuntimeCache(library.id);
+  await invalidateLibraryRuntimeCache(booking.libraryId);
   revalidatePath('/dashboard/students');
   return { success: true };
 }
