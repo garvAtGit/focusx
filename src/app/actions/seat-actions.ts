@@ -242,3 +242,134 @@ export async function getSeatLayoutAndLockers() {
     seatNaming: library.seatNaming
   };
 }
+
+export type LockerItem = {
+  id: string;
+  name: string;
+  type: 'STANDALONE' | 'ATTACHED';
+  price: number | null;
+  seatName?: string | null;
+  isOccupied: boolean;
+  occupant?: {
+    studentId: string;
+    studentName: string;
+    studentPhone: string | null;
+    profilePhotoUrl: string | null;
+    uniqueId: string | null;
+    planName: string;
+    startTime: string;
+    endTime: string;
+    status: string;
+  } | null;
+};
+
+export async function getLockerOccupancyData(explicitLibraryId?: string) {
+  const session = await getSession();
+  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN' && session.role !== 'RECEPTIONIST')) {
+    throw new Error("Unauthorized");
+  }
+
+  let libraryId = explicitLibraryId;
+  if (!libraryId) {
+    const library = await prisma.library.findFirst({
+      where: session.role === 'ADMIN' ? {} : { librarianId: session.userId },
+      select: { id: true }
+    });
+    if (!library) throw new Error("Library not found");
+    libraryId = library.id;
+  }
+
+  const now = new Date();
+
+  const [standaloneLockers, activeBookings, activeLeases] = await Promise.all([
+    prisma.standaloneLocker.findMany({
+      where: { libraryId },
+      orderBy: { name: 'asc' }
+    }),
+    prisma.booking.findMany({
+      where: {
+        libraryId,
+        status: { in: ['CONFIRMED', 'PENDING_PAYMENT'] },
+        endTime: { gt: now },
+        standaloneLockerId: { not: null }
+      },
+      include: {
+        student: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            profilePhotoUrl: true,
+            uniqueId: true
+          }
+        },
+        plan: {
+          select: {
+            name: true
+          }
+        }
+      }
+    }),
+    prisma.resourceLease.findMany({
+      where: {
+        libraryId,
+        resourceType: 'STANDALONE_LOCKER',
+        expiresAt: { gt: now }
+      },
+      select: { resourceId: true }
+    })
+  ]);
+
+  // Natural numerical sort: L1, L2, L3, ... L10
+  standaloneLockers.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+  const leasedLockerIds = new Set(activeLeases.map(l => l.resourceId));
+  const lockers: LockerItem[] = [];
+
+  // Standalone lockers only
+  for (const sl of standaloneLockers) {
+    const booking = activeBookings.find(b => b.standaloneLockerId === sl.id);
+    const isLeased = leasedLockerIds.has(sl.id);
+    const isOccupied = Boolean(booking || isLeased);
+
+    lockers.push({
+      id: sl.id,
+      name: sl.name,
+      type: 'STANDALONE',
+      price: sl.price,
+      isOccupied,
+      occupant: booking ? {
+        studentId: booking.student.id,
+        studentName: booking.student.name,
+        studentPhone: booking.student.phone,
+        profilePhotoUrl: booking.student.profilePhotoUrl,
+        uniqueId: booking.student.uniqueId,
+        planName: booking.plan.name,
+        startTime: booking.startTime.toISOString(),
+        endTime: booking.endTime.toISOString(),
+        status: booking.status
+      } : (isLeased ? {
+        studentId: '',
+        studentName: 'Payment in Progress',
+        studentPhone: null,
+        profilePhotoUrl: null,
+        uniqueId: null,
+        planName: 'Holding Locker',
+        startTime: now.toISOString(),
+        endTime: now.toISOString(),
+        status: 'HOLDING'
+      } : null)
+    });
+  }
+
+  return {
+    libraryId,
+    lockers,
+    stats: {
+      total: lockers.length,
+      occupied: lockers.filter(l => l.isOccupied).length,
+      vacant: lockers.filter(l => !l.isOccupied).length,
+      occupancyRate: lockers.length > 0 ? Math.round((lockers.filter(l => l.isOccupied).length / lockers.length) * 100) : 0
+    }
+  };
+}

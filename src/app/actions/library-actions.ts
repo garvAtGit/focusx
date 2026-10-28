@@ -240,12 +240,21 @@ export async function updateFacilities(formData: FormData) {
     }
   }
 
+  const wifiSsid = (formData.get("wifiSsid") as string)?.trim() || null;
+  const wifiPassword = (formData.get("wifiPassword") as string)?.trim() || null;
+
   if (!openingTime) throw new Error("Opening time is required");
   if (!closingTime) throw new Error("Closing time is required");
 
   await prisma.library.update({
     where: { id },
-    data: { openingTime, closingTime, facilities }
+    data: { 
+      openingTime, 
+      closingTime, 
+      facilities,
+      wifiSsid,
+      wifiPassword
+    }
   });
 
   await invalidateLibraryRuntimeCache(id);

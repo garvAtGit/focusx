@@ -75,6 +75,7 @@ interface BookingsClientProps {
   currentChannel: 'ALL' | 'RECEPTION' | 'RAZORPAY';
   receptionStudentCount: number;
   razorpayStudentCount: number;
+  statusCounts?: Record<string, number>;
   initialQuery: string;
   initialTab: 'INTENTS' | 'REFUNDS';
 }
@@ -89,6 +90,7 @@ export function BookingsClient({
   currentChannel,
   receptionStudentCount,
   razorpayStudentCount,
+  statusCounts,
   initialQuery,
   initialTab,
 }: BookingsClientProps) {
@@ -404,20 +406,24 @@ export function BookingsClient({
                 <span className="text-[11px] font-black text-slate-400 uppercase tracking-wider whitespace-nowrap mr-1">
                   Status:
                 </span>
-                {(['ALL', 'CONFIRMED', 'AWAITING_PAYMENT', 'FAILED', 'REFUNDED'] as const).map((st) => (
-                  <button
-                    key={st}
-                    onClick={() => handleStatusSelect(st)}
-                    disabled={isPending}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-                      currentStatus === st
-                        ? 'bg-[#2781CA] text-white shadow-sm shadow-blue-500/20'
-                        : 'bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200'
-                    }`}
-                  >
-                    {st === 'ALL' ? 'All' : st}
-                  </button>
-                ))}
+                {(['ALL', 'CONFIRMED', 'AWAITING_PAYMENT', 'FAILED', 'REFUNDED'] as const).map((st) => {
+                  const count = statusCounts ? (statusCounts[st] ?? 0) : undefined;
+                  const label = st === 'ALL' ? 'All' : st;
+                  return (
+                    <button
+                      key={st}
+                      onClick={() => handleStatusSelect(st)}
+                      disabled={isPending}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+                        currentStatus === st
+                          ? 'bg-[#2781CA] text-white shadow-sm shadow-blue-500/20'
+                          : 'bg-slate-100 text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+                      }`}
+                    >
+                      {count !== undefined ? `${label} (${count})` : label}
+                    </button>
+                  );
+                })}
               </div>
 
               <div className="relative w-full sm:w-80">

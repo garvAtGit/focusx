@@ -16,13 +16,17 @@ import toast from "react-hot-toast";
 import {
   saveSeatLayoutAndLockers,
   getSeatLayoutAndLockers,
+  getLockerOccupancyData,
   type SeatLayoutItem,
   type SeatNamingValue,
   type StandaloneLockerLayoutItem,
+  type LockerItem,
 } from "@/app/actions/seat-actions";
 import LiveSeatMap, { type LiveSeat } from "@/components/LiveSeatMap";
 import { useAdminRealtimeSeats } from "@/hooks/useAdminRealtimeSeats";
 import { formatStandardDate } from "@/lib/date-utils";
+import { LockerOccupancyChart } from "@/components/dashboard/LockerOccupancyChart";
+import { StudentProfileModal } from "@/components/StudentProfileModal";
 
 type SeatBookingDetails = {
   endTime: string;
@@ -61,7 +65,30 @@ export default function SeatsManagerPage() {
   
   const [selectedSeatId, setSelectedSeatId] = useState<string | null>(null);
 
-  const [viewMode, setViewMode] = useState<'LIVE' | 'EDIT'>('LIVE');
+  const [viewMode, setViewMode] = useState<'LIVE' | 'LOCKERS' | 'EDIT'>('LIVE');
+  const [lockerData, setLockerData] = useState<{
+    lockers: LockerItem[];
+    stats: { total: number; occupied: number; vacant: number; occupancyRate: number };
+  }>({
+    lockers: [],
+    stats: { total: 0, occupied: 0, vacant: 0, occupancyRate: 0 },
+  });
+  const [isLoadingLockers, setIsLoadingLockers] = useState(false);
+  const [profileStudentId, setProfileStudentId] = useState<string | null>(null);
+
+  const fetchLockerData = async (targetLibId?: string) => {
+    const id = targetLibId || libraryId;
+    if (!id) return;
+    setIsLoadingLockers(true);
+    try {
+      const data = await getLockerOccupancyData(id);
+      setLockerData({ lockers: data.lockers, stats: data.stats });
+    } catch (err) {
+      console.error("Failed to fetch locker occupancy", err);
+    } finally {
+      setIsLoadingLockers(false);
+    }
+  };
   const [popupSeatId, setPopupSeatId] = useState<string | null>(null);
   const [popupSeatLabel, setPopupSeatLabel] = useState<string | null>(null);
   const [popupData, setPopupData] = useState<{ booking: SeatBookingDetails | null, latestCheckin: CheckinLog | null } | null>(null);
@@ -183,6 +210,7 @@ export default function SeatsManagerPage() {
             setInitialOccupied(liveData.occupiedSeatIds || []);
           }
           setSeatNaming(data.seatNaming);
+          void fetchLockerData(data.libraryId);
         }
       
         let finalRows = 5;
@@ -407,13 +435,22 @@ export default function SeatsManagerPage() {
           <div className="flex p-1 bg-muted/50 rounded-xl border border-border shadow-inner">
             <button 
               onClick={() => setViewMode('LIVE')}
-              className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'LIVE' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              className={`px-4 sm:px-5 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'LIVE' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
             >
-              Live View
+              Live Seats
+            </button>
+            <button 
+              onClick={() => {
+                setViewMode('LOCKERS');
+                void fetchLockerData();
+              }}
+              className={`px-4 sm:px-5 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'LOCKERS' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              Locker Chart
             </button>
             <button 
               onClick={() => setViewMode('EDIT')}
-              className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'EDIT' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              className={`px-4 sm:px-5 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'EDIT' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
             >
               Edit Layout
             </button>
@@ -428,6 +465,18 @@ export default function SeatsManagerPage() {
             >
               <RefreshCw className={`w-4 h-4 ${isRefreshingSeats ? 'animate-spin text-primary' : 'text-muted-foreground'}`} />
               <span>{isRefreshingSeats ? "Syncing..." : "Sync Seats"}</span>
+            </button>
+          )}
+          {viewMode === 'LOCKERS' && (
+            <button
+              type="button"
+              onClick={() => void fetchLockerData()}
+              disabled={isLoadingLockers}
+              className="px-3.5 py-2 rounded-xl text-sm font-semibold border border-border bg-card text-foreground hover:bg-muted transition-all flex items-center gap-2 shadow-sm disabled:opacity-50"
+              title="Sync locker occupancy"
+            >
+              <RefreshCw className={`w-4 h-4 ${isLoadingLockers ? 'animate-spin text-primary' : 'text-muted-foreground'}`} />
+              <span>{isLoadingLockers ? "Syncing..." : "Sync Lockers"}</span>
             </button>
           )}
         </div>
@@ -745,6 +794,19 @@ export default function SeatsManagerPage() {
       </div>
       
       </>
+      ) : viewMode === 'LOCKERS' ? (
+        <div className="bg-card rounded-3xl border border-border shadow-sm flex flex-col relative min-h-[70vh]">
+          <div className="p-6 overflow-y-auto bg-muted/10 relative h-full">
+            <LockerOccupancyChart 
+              lockers={lockerData.lockers}
+              stats={lockerData.stats}
+              isLoading={isLoadingLockers}
+              onRefresh={fetchLockerData}
+              onOpenStudentProfile={(studentId) => setProfileStudentId(studentId)}
+              onSwitchToEdit={() => setViewMode('EDIT')}
+            />
+          </div>
+        </div>
       ) : (
         <div className="bg-card rounded-3xl border border-border shadow-sm flex flex-col relative min-h-[70vh]">
           <div className="p-6 overflow-y-auto bg-muted/10 relative h-full">
@@ -981,6 +1043,12 @@ export default function SeatsManagerPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <StudentProfileModal 
+        studentId={profileStudentId} 
+        open={Boolean(profileStudentId)} 
+        onOpenChange={(open) => !open && setProfileStudentId(null)} 
+      />
     </div>
   );
 }
