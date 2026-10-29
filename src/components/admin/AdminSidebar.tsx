@@ -13,6 +13,7 @@ import {
   Cpu,
   Activity,
   ArrowUpCircle,
+  Bell,
   LogOut,
   ExternalLink,
   Menu,
@@ -62,6 +63,11 @@ const NAV_ITEMS = [
     label: 'Hardware & IoT',
     href: '/admin/machines',
     icon: Cpu,
+  },
+  {
+    label: 'Notifications',
+    href: '/admin/notifications',
+    icon: Bell,
   },
   {
     label: 'System & Outbox',
