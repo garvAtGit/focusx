@@ -66,8 +66,7 @@ async function DashboardAuthWrapper({ children }: { children: ReactNode }) {
 
   // Compute allowed navigation routes
   const allowedRoutes: string[] = [];
-  if (resolution) {
-    if (resolution.isAdmin || resolution.isOwner) {
+  if (session.role === 'ADMIN' || session.role === 'LIBRARIAN' || resolution?.isAdmin || resolution?.isOwner) {
       allowedRoutes.push(
         '/dashboard',
         '/dashboard/students',
@@ -85,7 +84,7 @@ async function DashboardAuthWrapper({ children }: { children: ReactNode }) {
         '/dashboard/settings',
         '/dashboard/rules'
       );
-    } else if (resolution.status === 'ACTIVE') {
+    } else if (resolution && resolution.status === 'ACTIVE') {
       if (resolution.permissions.length > 0) allowedRoutes.push('/dashboard');
       if (resolution.permissions.includes('students.view')) allowedRoutes.push('/dashboard/students');
       if (resolution.permissions.includes('notifications.view')) allowedRoutes.push('/dashboard/notifications');
@@ -106,7 +105,9 @@ async function DashboardAuthWrapper({ children }: { children: ReactNode }) {
       if (resolution.permissions.includes('widgets.view')) allowedRoutes.push('/dashboard/widgets');
       if (resolution.permissions.includes('settings.view')) allowedRoutes.push('/dashboard/settings');
       if (resolution.permissions.includes('rules.view')) allowedRoutes.push('/dashboard/rules');
-    }
+  } else if (session.role === 'RECEPTIONIST') {
+    // Safe fallback for legacy receptionists
+    allowedRoutes.push('/dashboard', '/dashboard/students', '/dashboard/notifications', '/dashboard/queries', '/dashboard/inquiries', '/dashboard/approvals', '/dashboard/scanner');
   }
 
   const isVisible = (href: string) => allowedRoutes.includes(href);
