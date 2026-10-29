@@ -15,15 +15,18 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import toast from "react-hot-toast";
 import { manualNotifyStudent } from "@/app/actions/rule-actions";
+import { WhatsAppIcon } from "@/components/icons/WhatsAppIcon";
+import { openWhatsAppChat, formatNotificationForWhatsApp } from "@/lib/whatsapp";
 
 interface Props {
   studentId: string;
   studentName: string;
+  studentPhone?: string | null;
 }
 
 const TEMPLATE_HINT = "Variables: {name} {phone} {library_name}";
 
-export function ManualNotifyModal({ studentId, studentName }: Props) {
+export function ManualNotifyModal({ studentId, studentName, studentPhone }: Props) {
   const [open, setOpen]           = useState(false);
   const [title, setTitle]         = useState("");
   const [message, setMessage]     = useState("");
@@ -83,7 +86,7 @@ export function ManualNotifyModal({ studentId, studentName }: Props) {
             <p className="text-xs text-muted-foreground">{TEMPLATE_HINT}</p>
           </div>
 
-          <div className="flex justify-end gap-3 pt-2">
+          <div className="flex flex-col sm:flex-row justify-end gap-2 pt-2">
             <Button
               variant="outline"
               onClick={() => setOpen(false)}
@@ -91,9 +94,23 @@ export function ManualNotifyModal({ studentId, studentName }: Props) {
             >
               Cancel
             </Button>
+            {studentPhone && (
+              <Button
+                type="button"
+                className="bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1.5 font-bold"
+                onClick={() => {
+                  const waMsg = formatNotificationForWhatsApp(title, message);
+                  openWhatsAppChat(studentPhone, waMsg);
+                  handleSend();
+                }}
+                disabled={isPending || !message.trim()}
+              >
+                <WhatsAppIcon className="w-4 h-4" /> Send & Open WhatsApp
+              </Button>
+            )}
             <Button onClick={handleSend} disabled={isPending}>
               {isPending && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
-              Send Notification
+              Send In-App Notification
             </Button>
           </div>
         </div>

@@ -28,6 +28,8 @@ import {
   cancelScheduledBroadcastAction,
 } from '@/app/actions/notification-actions';
 import { BrowserPushSettings } from '@/components/notifications/BrowserPushSettings';
+import { WhatsAppIcon } from '@/components/icons/WhatsAppIcon';
+import { openWhatsAppChat, formatNotificationForWhatsApp } from '@/lib/whatsapp';
 
 interface LibraryOption {
   id: string;
@@ -98,6 +100,7 @@ export default function LibrarianNotificationsView({
   const [sendMode, setSendMode] = useState<'NOW' | 'SCHEDULE'>('NOW');
   const [scheduledDateTime, setScheduledDateTime] = useState<string>('');
   const localTimeZone = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'UTC';
+  const [alsoSendWhatsApp, setAlsoSendWhatsApp] = useState(false);
 
   // Recipient Selection State
   const [selectedStudents, setSelectedStudents] = useState<StudentRecipient[]>([]);
@@ -258,6 +261,11 @@ export default function LibrarianNotificationsView({
               type: 'warning',
               text: `Completed with warnings: ${sentCount} succeeded, ${failedCount} failed out of ${totalTargets}.`,
             });
+          }
+
+          if (alsoSendWhatsApp && audienceMode === 'INDIVIDUAL_STUDENT' && selectedStudents[0]?.phone) {
+            const waText = formatNotificationForWhatsApp(title, message, selectedLib?.name, actionUrl);
+            openWhatsAppChat(selectedStudents[0].phone, waText);
           }
 
           setTitle('');
@@ -645,6 +653,20 @@ export default function LibrarianNotificationsView({
                           className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-background border border-border text-xs rounded-full font-medium"
                         >
                           <span className="truncate max-w-[120px]">{student.name}</span>
+                          {student.phone && (
+                            <button
+                              type="button"
+                              title={`Direct WhatsApp to ${student.name} (${student.phone})`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const waMsg = formatNotificationForWhatsApp(title, message, selectedLib?.name, actionUrl);
+                                openWhatsAppChat(student.phone, waMsg);
+                              }}
+                              className="text-emerald-600 hover:text-emerald-700 p-0.5 rounded-full hover:bg-emerald-50 transition-colors"
+                            >
+                              <WhatsAppIcon className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => removeStudent(student.id)}
@@ -716,6 +738,21 @@ export default function LibrarianNotificationsView({
                               </div>
                             </div>
                           </div>
+                          {student.phone && (
+                            <button
+                              type="button"
+                              title={`Direct WhatsApp to ${student.name} (${student.phone})`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const waMsg = formatNotificationForWhatsApp(title, message, selectedLib?.name, actionUrl);
+                                openWhatsAppChat(student.phone, waMsg);
+                              }}
+                              className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 border border-emerald-500/20 transition-colors flex items-center gap-1 text-[11px] font-semibold shrink-0"
+                            >
+                              <WhatsAppIcon className="w-3 h-3" />
+                              <span className="hidden sm:inline">WhatsApp</span>
+                            </button>
+                          )}
                         </div>
                       );
                     })
@@ -842,32 +879,105 @@ export default function LibrarianNotificationsView({
                 )}
               </div>
 
-              <button
-                type="button"
-                disabled={
-                  !title.trim() ||
-                  !message.trim() ||
-                  isPending ||
-                  (sendMode === 'SCHEDULE' && !scheduledDateTime) ||
-                  (audienceMode === 'INDIVIDUAL_STUDENT' && selectedStudents.length !== 1) ||
-                  (audienceMode === 'SELECTED_STUDENTS' && selectedStudents.length === 0) ||
-                  (audienceMode === 'ALL_LIBRARY_STUDENTS' && audienceCounts.allStudentsCount === 0) ||
-                  (audienceMode === 'CURRENTLY_CHECKED_IN' && audienceCounts.checkedInCount === 0) ||
-                  (actionUrl.trim().length > 0 && !actionUrl.trim().startsWith('/'))
-                }
-                onClick={() => setIsConfirmOpen(true)}
-                className="w-full py-3 px-4 bg-primary text-primary-foreground rounded-xl font-bold text-sm shadow hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
-              >
-                {isPending ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" /> {sendMode === 'SCHEDULE' ? 'Scheduling...' : 'Dispatching...'}
-                  </>
-                ) : (
-                  <>
-                    <Send className="w-4 h-4" /> {sendMode === 'SCHEDULE' ? 'Schedule Notification' : 'Send Notification'}
-                  </>
+              {/* Direct WhatsApp Option for Individual Student */}
+              {audienceMode === 'INDIVIDUAL_STUDENT' && selectedStudents[0]?.phone && (
+                <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-xl bg-emerald-600 text-white shadow-sm">
+                        <WhatsAppIcon className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-emerald-950 dark:text-emerald-100 flex items-center gap-1.5">
+                          Direct WhatsApp Option
+                        </div>
+                        <div className="text-[11px] text-emerald-700 dark:text-emerald-300 font-medium">
+                          {selectedStudents[0].name} ({selectedStudents[0].phone})
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={!message.trim()}
+                      onClick={() => {
+                        const waMsg = formatNotificationForWhatsApp(title, message, selectedLib?.name, actionUrl);
+                        openWhatsAppChat(selectedStudents[0].phone, waMsg);
+                      }}
+                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all flex items-center gap-1.5 disabled:opacity-50 active:scale-95 shrink-0"
+                    >
+                      <WhatsAppIcon className="w-3.5 h-3.5" />
+                      Open WhatsApp Chat
+                    </button>
+                  </div>
+
+                  <label className="flex items-center gap-2 cursor-pointer pt-1 text-xs text-foreground font-medium select-none">
+                    <input
+                      type="checkbox"
+                      checked={alsoSendWhatsApp}
+                      onChange={(e) => setAlsoSendWhatsApp(e.target.checked)}
+                      className="rounded border-input text-emerald-600 focus:ring-emerald-500 w-4 h-4"
+                    />
+                    <span>Also open WhatsApp message when sending this in-app notification</span>
+                  </label>
+                </div>
+              )}
+
+              {/* Direct WhatsApp summary for multiple selected students */}
+              {audienceMode === 'SELECTED_STUDENTS' && selectedStudents.some((s) => !!s.phone) && (
+                <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3 flex items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2 text-emerald-800 dark:text-emerald-200">
+                    <WhatsAppIcon className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>
+                      <strong>{selectedStudents.filter((s) => !!s.phone).length}</strong> of {selectedStudents.length} selected students have WhatsApp phone numbers. Click the WhatsApp icon on any student pill above to message directly.
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-col sm:flex-row gap-2.5">
+                {audienceMode === 'INDIVIDUAL_STUDENT' && selectedStudents[0]?.phone && (
+                  <button
+                    type="button"
+                    disabled={!message.trim()}
+                    onClick={() => {
+                      const waMsg = formatNotificationForWhatsApp(title, message, selectedLib?.name, actionUrl);
+                      openWhatsAppChat(selectedStudents[0].phone, waMsg);
+                    }}
+                    className="sm:w-1/2 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-sm shadow transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <WhatsAppIcon className="w-4 h-4" /> Message on WhatsApp
+                  </button>
                 )}
-              </button>
+
+                <button
+                  type="button"
+                  disabled={
+                    !title.trim() ||
+                    !message.trim() ||
+                    isPending ||
+                    (sendMode === 'SCHEDULE' && !scheduledDateTime) ||
+                    (audienceMode === 'INDIVIDUAL_STUDENT' && selectedStudents.length !== 1) ||
+                    (audienceMode === 'SELECTED_STUDENTS' && selectedStudents.length === 0) ||
+                    (audienceMode === 'ALL_LIBRARY_STUDENTS' && audienceCounts.allStudentsCount === 0) ||
+                    (audienceMode === 'CURRENTLY_CHECKED_IN' && audienceCounts.checkedInCount === 0) ||
+                    (actionUrl.trim().length > 0 && !actionUrl.trim().startsWith('/'))
+                  }
+                  onClick={() => setIsConfirmOpen(true)}
+                  className={`py-3 px-4 bg-primary text-primary-foreground rounded-xl font-bold text-sm shadow hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 ${
+                    audienceMode === 'INDIVIDUAL_STUDENT' && selectedStudents[0]?.phone ? 'sm:w-1/2' : 'w-full'
+                  }`}
+                >
+                  {isPending ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" /> {sendMode === 'SCHEDULE' ? 'Scheduling...' : 'Dispatching...'}
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4" /> {sendMode === 'SCHEDULE' ? 'Schedule Notification' : 'Send Notification'}
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1040,6 +1150,12 @@ export default function LibrarianNotificationsView({
                     : `${selectedStudents.length} Selected`}
                 </span>
               </div>
+              {alsoSendWhatsApp && audienceMode === 'INDIVIDUAL_STUDENT' && selectedStudents[0]?.phone && (
+                <div className="flex items-center gap-2 p-2 rounded-lg bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 font-semibold text-[11px] mt-2">
+                  <WhatsAppIcon className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Will also open WhatsApp chat for {selectedStudents[0].name}</span>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-2">

@@ -54,6 +54,8 @@ import { StudentProfileModal } from "@/components/StudentProfileModal"
 import { AttendanceCalendar } from "@/components/AttendanceCalendar"
 import { ManualNotifyModal } from "@/components/ManualNotifyModal"
 import { AutoActionsLog } from "@/components/AutoActionsLog"
+import { WhatsAppIcon } from "@/components/icons/WhatsAppIcon"
+import { openWhatsAppChat } from "@/lib/whatsapp"
 
 type BookingWithDetails = Prisma.BookingGetPayload<{
   include: {
@@ -1193,6 +1195,19 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                             <h3 className="font-bold text-slate-900 text-sm">{booking.student.name}</h3>
                             <div className="flex items-center gap-2 mt-0.5">
                               <span className="text-[11px] font-medium text-slate-500">{booking.student.uniqueId ? `${booking.student.uniqueId} • ` : ''}{booking.student.phone || booking.student.email}</span>
+                              {booking.student.phone && (
+                                <button
+                                  type="button"
+                                  title={`Direct WhatsApp to ${booking.student.name} (${booking.student.phone})`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openWhatsAppChat(booking.student.phone, `Hello ${booking.student.name}, regarding your library membership: `);
+                                  }}
+                                  className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 p-1 rounded-full transition-colors flex items-center gap-1"
+                                >
+                                  <WhatsAppIcon className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -1289,6 +1304,17 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                                   <DropdownMenuItem onClick={() => setProfileStudentId(booking.student.id)} className="cursor-pointer px-2 py-2 text-sm font-semibold rounded-lg hover:bg-slate-100 text-slate-700 focus:bg-slate-100 focus:text-slate-900">
                                     View Profile
                                   </DropdownMenuItem>
+
+                                  {booking.student.phone && (
+                                    <DropdownMenuItem
+                                      onClick={() => {
+                                        openWhatsAppChat(booking.student.phone, `Hello ${booking.student.name}, this is from library management.`);
+                                      }}
+                                      className="cursor-pointer px-2 py-2 text-sm font-semibold rounded-lg hover:bg-emerald-50 text-emerald-600 focus:bg-emerald-50 focus:text-emerald-700 flex items-center gap-2"
+                                    >
+                                      <WhatsAppIcon className="w-4 h-4" /> Message on WhatsApp
+                                    </DropdownMenuItem>
+                                  )}
 
                                   {/*
                                   <div className="px-2 py-1">
@@ -1518,6 +1544,17 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                                   View Profile
                                 </DropdownMenuItem>
 
+                                {booking.student.phone && (
+                                  <DropdownMenuItem
+                                    onClick={() => {
+                                      openWhatsAppChat(booking.student.phone, `Hello ${booking.student.name}, this is from library management.`);
+                                    }}
+                                    className="cursor-pointer px-2 py-2 text-sm font-semibold rounded-lg hover:bg-emerald-50 text-emerald-600 focus:bg-emerald-50 focus:text-emerald-700 flex items-center gap-2"
+                                  >
+                                    <WhatsAppIcon className="w-4 h-4" /> Message on WhatsApp
+                                  </DropdownMenuItem>
+                                )}
+
                                 {/*
                                 <div className="px-2 py-1">
                                   <ManualNotifyModal
@@ -1627,7 +1664,22 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
 
                         <div className="flex-1 relative z-10">
                           <h3 className="font-extrabold text-slate-900 text-lg leading-tight mb-1">{booking.student.name}</h3>
-                          <p className="text-sm font-medium text-slate-500 mb-6">{booking.student.phone || booking.student.email}</p>
+                          <div className="flex items-center gap-2 mb-6">
+                            <p className="text-sm font-medium text-slate-500">{booking.student.phone || booking.student.email}</p>
+                            {booking.student.phone && (
+                              <button
+                                type="button"
+                                title={`Direct WhatsApp to ${booking.student.name} (${booking.student.phone})`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openWhatsAppChat(booking.student.phone, `Hello ${booking.student.name}, regarding your library membership: `);
+                                }}
+                                className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 p-1 rounded-full transition-colors flex items-center gap-1 border border-emerald-200"
+                              >
+                                <WhatsAppIcon className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
                           
                           <div className="space-y-4">
                             <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">

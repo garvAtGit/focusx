@@ -2,12 +2,13 @@
 
 import { useState, useEffect, useRef, useCallback } from "react"
 import { 
-  MapPin, Check, Loader2, Clock, Phone, Navigation, Lock, Share, Heart,
+  MapPin, Check, Loader2, Clock, Phone, Navigation, Lock, Share, Heart, Star,
   Snowflake, Droplet, Video, Car, ShieldCheck, VolumeX, Wifi, Bath, Coffee, Plug, CheckCircle2 
 } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { LibraryPhotoGallery } from "@/components/library-photo-gallery"
 import { InquiryForm } from "./InquiryForm";
+import { ReviewsSection } from "@/components/reviews/ReviewsSection";
 import dynamic from "next/dynamic"
 import { auth } from "@/lib/firebase/clientApp"
 
@@ -168,6 +169,7 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
   const [feedbackType, setFeedbackType] = useState<"FEEDBACK" | "COMPLAINT" | null>(null);
   const [feedbackContent, setFeedbackContent] = useState("");
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+  const [libraryRating, setLibraryRating] = useState<{ avg: number; count: number } | null>(null);
 
   // Dynamic Session State
   const [dynamicState, setDynamicState] = useState({
@@ -724,6 +726,15 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
           <div>
             <h1 className="text-4xl md:text-4xl font-heading font-bold text-foreground mb-3">{library.name}</h1>
             <div className="flex flex-wrap items-center gap-3 text-sm font-medium text-muted-foreground">
+              {libraryRating && libraryRating.count > 0 && (
+                <button 
+                  onClick={() => scrollToSection('reviews-section', 'start')}
+                  className="flex items-center gap-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-400 px-2.5 py-0.5 rounded-full text-xs font-bold border border-amber-500/20 transition-colors cursor-pointer"
+                >
+                  <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-500" />
+                  {libraryRating.avg.toFixed(1)} ({libraryRating.count} review{libraryRating.count === 1 ? '' : 's'})
+                </button>
+              )}
               {(library.name === "Kripa Library" || library.name === "Gyan Vatika Library") && (
                 <span className="flex items-center gap-1 text-success bg-success/10 px-2 py-0.5 rounded text-xs border border-success/20"><Check className="w-3 h-3" /> Verified</span>
               )}
@@ -1152,6 +1163,14 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
               </div>
             </div>
           </section>
+
+          {/* Student Reviews & Ratings */}
+          <ReviewsSection 
+            libraryId={library.id} 
+            libraryName={library.name} 
+            currentUserId={dynamicState.studentId}
+            onRatingLoaded={(avg, count) => setLibraryRating({ avg, count })}
+          />
 
           <section className="mt-8 border-t border-border pt-8 feedback-section">
             <h2 className="text-2xl font-black text-foreground mb-4 font-heading flex items-center gap-2">
