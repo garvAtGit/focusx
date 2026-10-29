@@ -106,6 +106,8 @@ model Library {
   compactSeatMap    Boolean            @default(false)
   seatNaming        SeatNaming         @default(ALPHANUMERIC)
   adminNotes        String?
+  wifiSsid          String?
+  wifiPassword      String?
   bookings          Booking[]
   bookingIntents    BookingIntent[]
   checkinLogs       CheckinLog[]

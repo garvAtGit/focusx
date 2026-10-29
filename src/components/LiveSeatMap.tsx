@@ -225,11 +225,37 @@ export default function LiveSeatMap({
     );
   };
 
+  const totalSeatsCount = useMemo(() => {
+    return library.seats?.filter(s => s && s.type !== 'EMPTY' && s.type !== 'NON_RESERVABLE').length || 0;
+  }, [library.seats]);
+
+  const reservedSeatsCount = useMemo(() => {
+    return library.seats?.filter(s => {
+      if (!s || s.type === 'EMPTY' || s.type === 'NON_RESERVABLE') return false;
+      return occupiedSeatIds.includes(s.id) || Boolean(occupantData && (occupantData[s.id] || occupantData[s.name]));
+    }).length || 0;
+  }, [library.seats, occupiedSeatIds, occupantData]);
+
   return (
     <div className="bg-muted/30 border border-border rounded-2xl p-0 overflow-hidden relative">
       <div className="absolute top-2 right-2 z-10 bg-background/80 backdrop-blur-sm text-[10px] text-muted-foreground px-2 py-1 rounded-full border border-border font-bold flex items-center gap-1 shadow-xs">
         <Grid className="w-3 h-3" /> Pinch to Zoom
       </div>
+
+      {/* Bottom Right Floating Stats Card */}
+      <div className="absolute bottom-4 right-4 z-20 bg-background/90 backdrop-blur-md border border-border/80 shadow-lg rounded-2xl p-2.5 sm:p-3 flex items-center gap-3 text-xs select-none pointer-events-none">
+        <div className="flex items-center gap-2 pr-3 border-r border-border/60">
+          <span className="w-2.5 h-2.5 rounded-full bg-primary"></span>
+          <span className="text-muted-foreground font-medium">Total Seats:</span>
+          <span className="font-black text-foreground">{totalSeatsCount}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
+          <span className="text-muted-foreground font-medium">Reserved Seats:</span>
+          <span className="font-black text-foreground">{reservedSeatsCount}</span>
+        </div>
+      </div>
+
       <TransformWrapper
         initialScale={1}
         minScale={0.5}

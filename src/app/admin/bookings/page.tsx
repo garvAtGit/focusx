@@ -74,14 +74,24 @@ export default async function AdminBookingsPage(props: {
     ];
   }
 
+  const statusCountsWhere: Prisma.BookingIntentWhereInput = {};
+  if (channel === "RECEPTION") {
+    statusCountsWhere.source = { in: ["RECEPTION", "MANUAL", "RENEWAL", "HARDWARE"] };
+  } else if (channel === "RAZORPAY") {
+    statusCountsWhere.source = "RAZORPAY";
+  }
+  if (q && where.OR) {
+    statusCountsWhere.OR = where.OR;
+  }
+
   const cacheKey = q
     ? `bookings:q:${encodeURIComponent(q.toLowerCase())}:p:${page}:s:${status}:c:${channel}`
     : `bookings:p:${page}:s:${status}:c:${channel}`;
 
-  const { intents, totalCount, refundTasks, receptionStudentCount, razorpayStudentCount } = await getCachedAdminData(
+  const { intents, totalCount, refundTasks, receptionStudentCount, razorpayStudentCount, statusCounts } = await getCachedAdminData(
     cacheKey,
     async () => {
-      const [count, intents, refundTasks, receptionStudents, razorpayStudents] = await Promise.all([
+      const [count, intents, refundTasks, receptionStudents, razorpayStudents, statusGroups] = await Promise.all([
         prisma.bookingIntent.count({ where }),
         prisma.bookingIntent.findMany({
           where,
@@ -141,7 +151,26 @@ export default async function AdminBookingsPage(props: {
           select: { studentId: true },
           distinct: ["studentId"],
         }),
+        prisma.bookingIntent.groupBy({
+          by: ["status"],
+          where: statusCountsWhere,
+          _count: { _all: true },
+        }),
       ]);
+
+      const statusCounts: Record<string, number> = {
+        ALL: 0,
+        CONFIRMED: 0,
+        AWAITING_PAYMENT: 0,
+        FAILED: 0,
+        REFUNDED: 0,
+      };
+      let totalStatusCount = 0;
+      for (const group of statusGroups) {
+        statusCounts[group.status] = group._count._all;
+        totalStatusCount += group._count._all;
+      }
+      statusCounts.ALL = totalStatusCount;
 
       return {
         intents,
@@ -149,6 +178,7 @@ export default async function AdminBookingsPage(props: {
         refundTasks,
         receptionStudentCount: receptionStudents.length,
         razorpayStudentCount: razorpayStudents.length,
+        statusCounts,
       };
     },
     q ? 20 : 30
@@ -166,6 +196,7 @@ export default async function AdminBookingsPage(props: {
         currentChannel={channel}
         receptionStudentCount={receptionStudentCount}
         razorpayStudentCount={razorpayStudentCount}
+        statusCounts={statusCounts}
         initialQuery={q}
         initialTab={tab}
       />

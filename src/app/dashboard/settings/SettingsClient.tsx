@@ -429,6 +429,42 @@ function FacilitiesTab({ library }: { library: LibraryRecord }) {
           </div>
         </div>
 
+        {/* Library Wi-Fi Credentials */}
+        <div className="p-5 rounded-2xl border border-border bg-muted/20 space-y-4">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-primary/10 text-primary">
+              <Wifi className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-foreground">Library Wi-Fi Network</h3>
+              <p className="text-xs text-muted-foreground">Students with an active confirmed plan at your library will see these credentials on their dashboard.</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="wifiSsid" className="text-xs font-semibold">Wi-Fi Name (SSID)</Label>
+              <Input 
+                id="wifiSsid" 
+                name="wifiSsid" 
+                type="text" 
+                placeholder="e.g. FocusDesk_5G" 
+                defaultValue={library.wifiSsid || ""} 
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="wifiPassword" className="text-xs font-semibold">Wi-Fi Password</Label>
+              <Input 
+                id="wifiPassword" 
+                name="wifiPassword" 
+                type="text" 
+                placeholder="e.g. StudySpace@2026" 
+                defaultValue={library.wifiPassword || ""} 
+              />
+            </div>
+          </div>
+        </div>
+
         <div className="flex justify-end pt-4">
           <SaveButton isSaving={isSaving} />
         </div>

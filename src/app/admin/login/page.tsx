@@ -416,23 +416,6 @@ export default function AdminLoginPage() {
           </form>
         )}
 
-        {process.env.NODE_ENV === 'development' && (
-          <div className="mt-4">
-            <Button
-              type="button"
-              variant="outline"
-              id="dev-admin-bypass"
-              onClick={() => {
-                document.cookie = "dev_admin=true; path=/; max-age=86400; SameSite=Lax";
-                window.location.href = "/admin/machines";
-              }}
-              className="w-full h-10 border-dashed border-red-500/40 text-red-400 hover:bg-red-500/10 text-xs font-semibold cursor-pointer"
-            >
-              ⚡ Dev Bypass: Enter Hardware & Admin Dashboard
-            </Button>
-          </div>
-        )}
-
         <div className="mt-8 pt-6 border-t border-slate-800/80 text-center">
           <Link href="/" className="text-xs text-slate-500 hover:text-slate-400 transition-colors">
             Return to FocusX Public Portal
