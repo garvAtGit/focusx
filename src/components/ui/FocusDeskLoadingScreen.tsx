@@ -14,7 +14,7 @@ function buildTemplateGroup(svgText: string): THREE.Group {
   const svgData = loader.parse(svgText);
   const svgGroup = new THREE.Group();
 
-  svgData.paths.forEach((path) => {
+  svgData.paths.forEach((path: any) => {
     const hexColor = path.color?.getHex() ?? 0x2563eb;
     const isDarkShade = hexColor === 0x000000 || hexColor < 0x222222;
 
@@ -31,7 +31,7 @@ function buildTemplateGroup(svgText: string): THREE.Group {
 
     const shapes = SVGLoader.createShapes(path);
 
-    shapes.forEach((shape) => {
+    shapes.forEach((shape: any) => {
       // Real 3D Extrude Geometry with beveled edges
       const geometry = new THREE.ExtrudeGeometry(shape, {
         depth: 26,
