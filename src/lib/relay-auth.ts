@@ -5,14 +5,23 @@ import crypto from 'crypto';
  *
  * Using `===` on secrets leaks length/contents via timing. We compare SHA-256
  * digests with `timingSafeEqual` so the comparison is constant-time and
- * length-independent. Returns false if the key is missing/unconfigured.
+ * length-independent.
+ *
+ * Fails closed if RELAY_API_KEY is missing, empty, or unconfigured,
+ * logging a clear server configuration error without exposing secrets.
  */
 export function verifyRelayKey(provided: string | null | undefined): boolean {
   const expected = process.env.RELAY_API_KEY;
-  if (!expected || !provided) return false;
+  if (!expected || !expected.trim()) {
+    console.error("[Relay Auth Error] RELAY_API_KEY is not configured on the server. Failing closed.");
+    return false;
+  }
+  if (!provided || !provided.trim()) {
+    return false;
+  }
 
-  const a = crypto.createHash('sha256').update(provided).digest();
-  const b = crypto.createHash('sha256').update(expected).digest();
+  const a = crypto.createHash('sha256').update(provided.trim()).digest();
+  const b = crypto.createHash('sha256').update(expected.trim()).digest();
   try {
     return crypto.timingSafeEqual(a, b);
   } catch {

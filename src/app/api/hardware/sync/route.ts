@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { verifyRelayKey, getSnapshotSigningKey } from "@/lib/relay-auth";
+import { resolveRelay } from "@/lib/hardware-resolver";
 
 export async function GET(request: NextRequest) {
   try {
@@ -20,10 +21,8 @@ export async function GET(request: NextRequest) {
     
     const revision = parseInt(revisionParam, 10);
     
-    const relay = await prisma.relay.findFirst({
-      where: { OR: [{ bleReaderId: macAddress }, { macAddress: macAddress }] },
-      include: { library: true }
-    });
+    const relay = await resolveRelay(macAddress, { includeLibrary: true });
+    console.log('[Hardware Sync] MAC:', macAddress, '-> Relay:', relay?.id, 'Library:', relay?.library?.name);
     
     if (!relay || !relay.library) {
       return new NextResponse("Relay not found", { status: 404 });

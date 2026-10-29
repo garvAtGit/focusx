@@ -30,3 +30,33 @@ nodemcu_qr_access/
 
 # Never ship key material
 *.pem
+ 
+.env*
+.vercel
+FocusX_Scanner_Firmware_V5_DualRFID/build*
+
+
+# Never deploy local credential exports or standalone credential-bearing tooling.
+cf_key.txt
+hack.json
+push_env.js
+fast_xyz.js
+fix_final.js
+fix_final2.js
+fix_lib.js
+fix_plan.js
+fix_raw.js
+fix_relay_ids.js
+fix_sub.js
+fix_time.js
+insert_claim_pg.js
+check_db.py
+dump_key.py
+patch_db.py
+revert_db.py
+
+# Firmware is maintained separately from the web deployment.
+FocusX_Scanner_Firmware_V5_DualRFID/
+ble_only_logic/
+rfid_only_logic/
+

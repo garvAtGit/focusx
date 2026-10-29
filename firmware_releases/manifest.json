@@ -1,0 +1,25 @@
+{
+  "version": "5.1.1-ota",
+  "name": "FocusX ESP32-S3 Dual-RFID Scanner Firmware V5.1.1 (Hardened OTA Engine & Fleet Observability)",
+  "buildDate": "2026-10-26",
+  "targetChip": "ESP32-S3 rev v0.2",
+  "flashMode": "DIO",
+  "flashSpeed": "80MHz",
+  "flashSize": "8MB",
+  "partitionLayout": "dual-slot 8MB zero-displacement (app0=0x10000, spiffs=0x310000, app1=0x410000)",
+  "binary": {
+    "filename": "FocusX_Scanner_Firmware_V5_DualRFID.ino.bin",
+    "size": 1279040,
+    "sha256": "382E734AC28E133D4B120041B0A02A350DC150F4E565C47BCE9D3448CEA8BA69"
+  },
+  "capabilities": [
+    "dual-slot A/B partition OTA update",
+    "health-gated rollback commit (LittleFS, signed snapshot, dual PN532, free heap)",
+    "automatic bootloader fallback to working slot on boot panic or health check failure",
+    "SHA-256 image stream validation & 0xE9 magic byte check",
+    "durable command state machine with explicit device acknowledgement (ackCommandId)",
+    "idempotent duplicate command protection",
+    "24h command expiration purge",
+    "terminal status persistence in entry logs for durable fleet observability"
+  ]
+}

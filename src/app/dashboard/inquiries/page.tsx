@@ -7,10 +7,14 @@ import { InquiriesClient } from "./InquiriesClient";
 
 export default async function InquiriesPage() {
   const session = await getSession();
-  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN' && session.role !== 'RECEPTIONIST')) redirect("/login");
+  if (!session) redirect("/login");
 
   const library = await getActiveLibrary(session);
   if (!library) redirect("/onboarding");
+
+  const { hasPermission } = await import("@/lib/permissions");
+  const canView = await hasPermission(session, library.id, 'inquiries.view');
+  if (!canView) redirect("/dashboard");
 
   const inquiries = await prisma.inquiry.findMany({
     where: { libraryId: library.id },

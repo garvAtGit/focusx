@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server"
 import prisma from "@/lib/prisma"
 import { getSession } from "@/app/actions/auth-actions"
 import { getActiveLibrary } from "@/lib/dashboard-utils"
+import { hasPermission } from "@/lib/permissions"
 
 export async function GET(request: NextRequest) {
   const session = await getSession()
@@ -16,6 +17,11 @@ export async function GET(request: NextRequest) {
   const libraryId = activeLibrary?.id
   if (!libraryId) {
     return NextResponse.json({ error: "Library not found" }, { status: 404 })
+  }
+
+  const canViewStudents = await hasPermission(session, libraryId, "students.view")
+  if (!canViewStudents) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
 
   const query = request.nextUrl.searchParams.get("q")?.trim().slice(0, 64) ?? ""

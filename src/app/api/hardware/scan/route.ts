@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { verifyRelayKey } from "@/lib/relay-auth";
 import { processAttendanceIntent } from "@/lib/attendance-core";
+import { resolveRelay } from "@/lib/hardware-resolver";
 
 export async function POST(request: NextRequest) {
   try {
@@ -38,9 +39,8 @@ export async function POST(request: NextRequest) {
     }
 
     // 3. Resolve Relay/Door
-    const relay = await prisma.relay.findFirst({
-      where: { OR: [{ bleReaderId: readerId }, { macAddress: readerId }] }
-    });
+    const relay = await resolveRelay(readerId);
+    console.log('[Hardware Scan] Reader:', readerId, '-> Relay:', relay?.id);
 
     if (!relay) {
       // Return 200 DENY so the ESP32 handles it cleanly as a business denial, preventing infinite retry loop.

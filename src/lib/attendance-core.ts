@@ -160,6 +160,21 @@ export async function processAttendanceIntent(intent: AttendanceIntent) {
         }
       });
 
+      // Atomically trigger student notification for attendance event
+      try {
+        const { notifyAttendanceEvent } = await import("@/lib/notification-triggers");
+        await notifyAttendanceEvent({
+          checkinLogId: newCheckinLog.id,
+          studentId,
+          libraryId,
+          status: action,
+          timestamp,
+          isOfflineSync: false,
+        }, tx);
+      } catch (notifErr) {
+        console.warn("[attendance-core] Attendance notification trigger warning:", notifErr);
+      }
+
       return {
         newStatus: action,
         logId: newCheckinLog.id,

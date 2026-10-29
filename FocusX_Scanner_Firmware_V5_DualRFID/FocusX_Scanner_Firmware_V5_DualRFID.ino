@@ -30,6 +30,12 @@ QueueHandle_t bleAuthQueue = NULL;
 #include "esp_sntp.h"
 #include "esp_rom_gpio.h"
 #include <esp_task_wdt.h>
+#include <Update.h>
+#include <esp_ota_ops.h>
+#include "mbedtls/sha256.h"
+
+#define FOCUSX_FIRMWARE_VERSION "5.1.1-ota"
+
 
 // Task Watchdog Timer: 30-second timeout provides ample headroom for legitimate
 // 12-15s HTTP timeouts without false panics while guaranteeing recovery if SPI bus or TLS deadlocks.
@@ -954,6 +960,173 @@ bool installCandidateSnapshot(const String &response, String &errorMsg) {
   preferences.putString("libId", currentLibraryId);
   return true;
 }
+
+// ================= FIRMWARE OTA UPDATE ENGINE =================
+bool performOTA(const String& downloadUrl, const String& expectedSha256, size_t expectedSize) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[OTA ERROR] Cannot perform OTA: Wi-Fi disconnected.");
+    preferences.putString("lastAckErr", "ERR_WIFI_DISCONNECTED");
+    return false;
+  }
+
+  // Dual-slot 8 MB partition layout allocates 3,145,728 bytes (3.0 MB) per app slot
+  if (expectedSize > 3145728) {
+    Serial.println("[OTA ERROR] Image size exceeds target partition capacity (max 3 MB).");
+    preferences.putString("lastAckErr", "ERR_IMAGE_TOO_LARGE");
+    return false;
+  }
+
+  // URL normalization: handle relative paths or missing schemes
+  String targetUrl = downloadUrl;
+  if (targetUrl.startsWith("/")) {
+    targetUrl = String(BACKEND_BASE_URL) + targetUrl;
+  } else if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
+    targetUrl = "https://" + targetUrl;
+  }
+
+  Serial.println("[OTA] Initializing secure firmware update...");
+  Serial.println("[OTA] URL: " + targetUrl);
+  if (expectedSha256.length() > 0) Serial.println("[OTA] Target SHA-256: " + expectedSha256);
+
+  WiFiClientSecure client;
+  client.setCACert(rootCACertificate);
+  HTTPClient http;
+  
+  if (!http.begin(client, targetUrl)) {
+    Serial.println("[OTA ERROR] Failed to connect to OTA server.");
+    preferences.putString("lastAckErr", "ERR_HTTP_CONNECT_FAILED");
+    return false;
+  }
+  
+  http.addHeader("Authorization", String("Bearer ") + HARDWARE_API_KEY);
+  http.setTimeout(30000);
+
+  esp_task_wdt_reset();
+  int httpCode = http.GET();
+  esp_task_wdt_reset();
+
+  if (httpCode != 200) {
+    Serial.printf("[OTA ERROR] HTTP GET returned code: %d\n", httpCode);
+    http.end();
+    preferences.putString("lastAckErr", "ERR_HTTP_STATUS_" + String(httpCode));
+    return false;
+  }
+
+  int contentLength = http.getSize();
+  if (contentLength <= 0 || (expectedSize > 0 && (size_t)contentLength != expectedSize)) {
+    Serial.printf("[OTA ERROR] Invalid Content-Length: %d (expected %u)\n", contentLength, expectedSize);
+    http.end();
+    preferences.putString("lastAckErr", "ERR_INVALID_CONTENT_LENGTH");
+    return false;
+  }
+
+  const esp_partition_t *updatePart = esp_ota_get_next_update_partition(NULL);
+  if (!updatePart) {
+    Serial.println("[OTA ERROR] No valid inactive OTA partition found in partition table.");
+    http.end();
+    preferences.putString("lastAckErr", "ERR_NO_OTA_PARTITION");
+    return false;
+  }
+  if ((size_t)contentLength > updatePart->size) {
+    Serial.printf("[OTA ERROR] Image size (%u B) exceeds target partition capacity (%u B)\n", contentLength, updatePart->size);
+    http.end();
+    preferences.putString("lastAckErr", "ERR_PARTITION_TOO_SMALL");
+    return false;
+  }
+
+  Serial.printf("[OTA] Target partition: %s (Address: 0x%06X, Size: %u KB)\n", 
+    updatePart->label, updatePart->address, updatePart->size / 1024);
+
+  if (!Update.begin(contentLength, U_FLASH)) {
+    Serial.printf("[OTA ERROR] Update.begin failed. Error code: %d\n", Update.getError());
+    http.end();
+    preferences.putString("lastAckErr", "ERR_UPDATE_BEGIN");
+    return false;
+  }
+
+  mbedtls_sha256_context sha_ctx;
+  mbedtls_sha256_init(&sha_ctx);
+  mbedtls_sha256_starts(&sha_ctx, 0);
+
+  WiFiClient *stream = http.getStreamPtr();
+  uint8_t buff[1024];
+  size_t totalBytesWritten = 0;
+  unsigned long lastProgressTime = millis();
+
+  while (http.connected() && (totalBytesWritten < (size_t)contentLength)) {
+    esp_task_wdt_reset();
+    size_t sizeAvailable = stream->available();
+    if (sizeAvailable) {
+      size_t bytesToRead = (sizeAvailable > sizeof(buff)) ? sizeof(buff) : sizeAvailable;
+      int bytesRead = stream->readBytes(buff, bytesToRead);
+      if (bytesRead > 0) {
+        // Initial chunk magic byte verification (ESP32 image magic is 0xE9)
+        if (totalBytesWritten == 0 && buff[0] != 0xE9) {
+          Serial.printf("[OTA ERROR] Invalid image header magic: 0x%02X (expected 0xE9)\n", buff[0]);
+          Update.abort();
+          mbedtls_sha256_free(&sha_ctx);
+          http.end();
+          preferences.putString("lastAckErr", "ERR_INVALID_MAGIC_BYTE");
+          return false;
+        }
+
+        mbedtls_sha256_update(&sha_ctx, buff, bytesRead);
+        size_t bytesWritten = Update.write(buff, bytesRead);
+        if (bytesWritten != (size_t)bytesRead) {
+          Serial.printf("[OTA ERROR] Write fault. Read %d, wrote %u\n", bytesRead, bytesWritten);
+          Update.abort();
+          mbedtls_sha256_free(&sha_ctx);
+          http.end();
+          preferences.putString("lastAckErr", "ERR_FLASH_WRITE_FAULT");
+          return false;
+        }
+        totalBytesWritten += bytesWritten;
+        if (millis() - lastProgressTime > 1500) {
+          lastProgressTime = millis();
+          Serial.printf("[OTA PROGRESS] %u / %d bytes (%u%%)\n", 
+            totalBytesWritten, contentLength, (totalBytesWritten * 100) / contentLength);
+        }
+      }
+    } else {
+      vTaskDelay(pdMS_TO_TICKS(10));
+    }
+  }
+
+  unsigned char computedHash[32];
+  mbedtls_sha256_finish(&sha_ctx, computedHash);
+  mbedtls_sha256_free(&sha_ctx);
+
+  char computedHex[65];
+  for (int i = 0; i < 32; i++) {
+    sprintf(computedHex + (i * 2), "%02x", computedHash[i]);
+  }
+  computedHex[64] = 0;
+
+  if (expectedSha256.length() == 64 && !expectedSha256.equalsIgnoreCase(computedHex)) {
+    Serial.printf("[OTA ERROR] Cryptographic SHA-256 verification failed!\n  Expected: %s\n  Computed: %s\n", 
+      expectedSha256.c_str(), computedHex);
+    Update.abort();
+    http.end();
+    preferences.putString("lastAckErr", "ERR_SHA256_MISMATCH");
+    return false;
+  }
+
+  if (!Update.end(true)) {
+    Serial.printf("[OTA ERROR] Update.end failed. Error: %d\n", Update.getError());
+    http.end();
+    preferences.putString("lastAckErr", "ERR_UPDATE_END");
+    return false;
+  }
+
+  Serial.println("[OTA SUCCESS] Firmware downloaded, verified, and written to inactive partition!");
+  Serial.printf("[OTA] SHA-256 verified: %s\n", computedHex);
+  Serial.println("[OTA] Restarting into new firmware image in 2 seconds...");
+  http.end();
+  delay(2000);
+  ESP.restart();
+  return true;
+}
+
 void syncSnapshot(bool force = false) {
   if (WiFi.status() != WL_CONNECTED) return;
   if (!force && (millis() - lastSyncAttemptMs < syncBackoffIntervalMs)) return;
@@ -1033,6 +1206,17 @@ void sendHeartbeat() {
     doc["currentAuthRevision"] = currentAuthRevision;
     doc["snapshotIsValid"] = snapshotIsValid;
     doc["clockState"] = clockState;
+    doc["firmwareVersion"] = FOCUSX_FIRMWARE_VERSION;
+    String lastAckCmd = preferences.getString("lastAckCmd", "");
+    String lastAckStat = preferences.getString("lastAckStat", "");
+    String lastAckErr = preferences.getString("lastAckErr", "NONE");
+    if (lastAckCmd.length() > 0) {
+      doc["ackCommandId"] = lastAckCmd;
+      doc["ackStatus"] = lastAckStat;
+      doc["ackError"] = lastAckErr;
+    }
+    const esp_partition_t *curP = esp_ota_get_running_partition();
+    doc["runningPartition"] = curP ? curP->label : "app0";
     doc["freeBytes"] = LittleFS.totalBytes() - LittleFS.usedBytes();
     doc["pendingEvents"] = pendingEvents.size();
     
@@ -1046,7 +1230,7 @@ void sendHeartbeat() {
     isSystemOnline = (code == 200);
     if (code == 200) {
        String res = http.getString();
-       StaticJsonDocument<256> resDoc;
+       DynamicJsonDocument resDoc(1024);
        if (!deserializeJson(resDoc, res)) {
           if (resDoc.containsKey("serverTimeUnix")) {
              uint32_t sTime = resDoc["serverTimeUnix"];
@@ -1056,6 +1240,64 @@ void sendHeartbeat() {
                 lastNtpSyncMs = millis();
                 updateClockState();
                 Serial.println("[TIME] Synced via Heartbeat serverTimeUnix: " + String(sTime) + " (clockState=" + String((int)clockState) + ")");
+             }
+          }
+          // Durable command processing with idempotency guard
+          if (resDoc.containsKey("command") && !resDoc["command"].isNull()) {
+             JsonObject cmd = resDoc["command"];
+             String cmdId = cmd["cmdId"].as<String>();
+             String action = cmd["action"].as<String>();
+             String currentAckCmd = preferences.getString("lastAckCmd", "");
+
+             String currentAckStat = preferences.getString("lastAckStat", "");
+             if (cmdId == currentAckCmd && (currentAckStat == "SUCCESS" || currentAckStat == "DOWNLOADING" || currentAckStat == "INSTALLING")) {
+                // Idempotency: command was already executed or is actively executing
+             } else {
+                Serial.println("[CMD] Processing durable command " + cmdId + " (" + action + ")");
+                if (action == "OTA") {
+                   String otaUrl = cmd["args"]["url"].as<String>();
+                   String otaSha = cmd["args"]["sha256"].as<String>();
+                   size_t otaSz = cmd["args"]["size"] | 0;
+                   preferences.putString("lastAckCmd", cmdId);
+                   preferences.putString("lastAckStat", "DOWNLOADING");
+                   preferences.putString("lastAckErr", "NONE");
+                   bool otaOk = performOTA(otaUrl, otaSha, otaSz);
+                   if (!otaOk) {
+                      preferences.putString("lastAckStat", "FAILED");
+                      if (preferences.getString("lastAckErr", "NONE") == "NONE") {
+                         preferences.putString("lastAckErr", "ERR_OTA_DOWNLOAD_OR_VERIFY");
+                      }
+                   }
+                } else if (action == "REBOOT") {
+                   preferences.putString("lastAckCmd", cmdId);
+                   preferences.putString("lastAckStat", "SUCCESS");
+                   Serial.println("[CMD] Remote reboot requested. Restarting in 500ms...");
+                   delay(500);
+                   ESP.restart();
+                } else if (action == "SYNC_SNAPSHOT") {
+                   preferences.putString("lastAckCmd", cmdId);
+                   preferences.putString("lastAckStat", "SUCCESS");
+                   Serial.println("[CMD] Remote snapshot sync requested.");
+                   syncSnapshot(true);
+                }
+             }
+          } else if (resDoc.containsKey("pendingCommand") && !resDoc["pendingCommand"].isNull()) {
+             // Fallback for legacy plain-string commands
+             String pCmd = resDoc["pendingCommand"].as<String>();
+             if (pCmd.startsWith("OTA:")) {
+                int c1 = pCmd.indexOf(':', 4);
+                int c2 = pCmd.indexOf(':', c1 + 1);
+                if (c1 > 0) {
+                   String otaUrl = pCmd.substring(4, c1);
+                   String otaSha = (c2 > 0) ? pCmd.substring(c1 + 1, c2) : pCmd.substring(c1 + 1);
+                   size_t otaSz = (c2 > 0) ? pCmd.substring(c2 + 1).toInt() : 0;
+                   performOTA(otaUrl, otaSha, otaSz);
+                }
+             } else if (pCmd == "REBOOT") {
+                delay(500);
+                ESP.restart();
+             } else if (pCmd == "SYNC_SNAPSHOT") {
+                syncSnapshot(true);
              }
           }
           uint32_t svrRev = resDoc["serverAuthRevision"];
@@ -1360,7 +1602,6 @@ void sendHardwarePing() {
       if (isoTime != "") {
         WiFiClientSecure client;
         client.setInsecure();
-
         // 1. PRIMARY: Direct Supabase Realtime PATCH (Zero Vercel CPU / Invocations!)
         bool directSuccess = false;
         HTTPClient patchHttp;
@@ -1897,7 +2138,40 @@ void doAuth(String uid, String scanType, bool isExit) {
   }
 
   if (isAllowed) {
-    // Near-zero latency instant actuation
+    // 1. Durability First: Construct event and commit to journal BEFORE physical unlock
+    ScanEvent e;
+    currentSeqNo++;
+    e.seqNo = currentSeqNo;
+    e.eventId = String(READER_ID) + "-" + String(bootCount) + "-" + String(currentSeqNo);
+    e.scanType = scanType;
+    e.payload = uid;
+    e.timestampMs = millis();
+    e.timestampUnix = nowUnix;
+    e.isExit = isExit;
+    e.authRevision = currentAuthRevision;
+    e.offlineDecision = true;
+
+    if (!appendToJournal(e)) {
+      Serial.println("[FAIL CLOSED] Journal append failed. Denying gate unlock.");
+      setLEDsColor(255, 0, 0);
+      if (isExit) setRFID2StripColor(255, 0, 0);
+      lcd.clear(); lcd.setCursor(0,0); lcd.print("JOURNAL FAIL");
+      lcd.setCursor(0,1); lcd.print("FAIL CLOSED");
+      playDeniedChime();
+      delay(2000);
+      resetToIdle();
+      return;
+    }
+
+    portENTER_CRITICAL(&queueMutex);
+    if (pendingEvents.size() < 500 && !hasMoreOnFlash) {
+      pendingEvents.push_back(e);
+    } else {
+      hasMoreOnFlash = true;
+    }
+    portEXIT_CRITICAL(&queueMutex);
+
+    // 2. Physical Actuation & Feedback (only after journal persistence is confirmed)
     isGateOpen = true;
     gateOpenStartTime = millis();
     hasDoorOpenedDuringGrace = false;
@@ -1933,29 +2207,6 @@ void doAuth(String uid, String scanType, bool isExit) {
 
     if (highestTrustedTime > 0) {
        preferences.putUInt("highTime", highestTrustedTime);
-    }
-
-    // Journal event creation and append
-    ScanEvent e;
-    currentSeqNo++;
-    e.seqNo = currentSeqNo;
-    e.eventId = String(READER_ID) + "-" + String(bootCount) + "-" + String(currentSeqNo);
-    e.scanType = scanType;
-    e.payload = uid;
-    e.timestampMs = millis();
-    e.timestampUnix = nowUnix;
-    e.isExit = isExit;
-    e.authRevision = currentAuthRevision;
-    e.offlineDecision = true;
-
-    if (appendToJournal(e)) {
-      portENTER_CRITICAL(&queueMutex);
-      if (pendingEvents.size() < 500 && !hasMoreOnFlash) {
-        pendingEvents.push_back(e);
-      } else {
-        hasMoreOnFlash = true;
-      }
-      portEXIT_CRITICAL(&queueMutex);
     }
   } else {
     setLEDsColor(255, 0, 0);
@@ -2010,10 +2261,6 @@ void triggerAlarm() {
   safeNoTone();
   resetToIdle();
 
-  // Initialize Task Watchdog Timer (TWDT) for 30-second timeout
-  esp_task_wdt_init(TWDT_TIMEOUT_S, true);
-  esp_task_wdt_add(NULL); // Register Core 1 loopTask
-  Serial.println("[WDT] Task Watchdog Timer initialized (30s timeout) and registered to Core 1 loopTask");
 }
 
 void triggerDoorLeftOpenAlarm() {
@@ -2036,6 +2283,7 @@ void triggerDoorLeftOpenAlarm() {
   }
   safeNoTone();
   resetToIdle();
+
 }
 
 // ================= SETUP =================
@@ -2061,6 +2309,9 @@ void setup() {
   bootCount++;
   preferences.putUInt("bootCount", bootCount);
   initJournal();
+
+
+
 
   
     highestTrustedTime = preferences.getUInt("highTime", 0);
@@ -2254,6 +2505,12 @@ void setup() {
   // Cloud Queues
   authRequestQueue = xQueueCreate(10, sizeof(AuthRequest));
   authResponseQueue = xQueueCreate(10, sizeof(AuthResponse));
+
+  // Initialize Task Watchdog Timer (TWDT) with 30-second timeout BEFORE spawning worker tasks
+  esp_task_wdt_init(TWDT_TIMEOUT_S, true);
+  esp_task_wdt_add(NULL); // Register Core 1 loopTask
+  Serial.println("[WDT] Task Watchdog Timer initialized (30s timeout) and registered to Core 1 loopTask");
+
   xTaskCreatePinnedToCore(httpWorkerTask, "HTTP", 32768, NULL, 1, NULL, 0);
 
   // (PN532 SPI readers were initialized at Stage 6b before Wi-Fi provisioning)
@@ -2278,6 +2535,51 @@ void setup() {
   delay(1200);
 
   resetToIdle();
+
+  // ================= HEALTH VERIFICATION & OTA ROLLBACK GATE =================
+  const esp_partition_t *runningPart = esp_ota_get_running_partition();
+  if (runningPart != NULL) {
+    esp_ota_img_states_t ota_state;
+    if (esp_ota_get_state_partition(runningPart, &ota_state) == ESP_OK) {
+      if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+        Serial.println("[OTA] First boot on new partition detected (PENDING_VERIFY).");
+        Serial.println("[OTA] Evaluating health preconditions before committing image...");
+        
+        bool fsHealthy = (LittleFS.totalBytes() > 0);
+        bool snapHealthy = (snapshotIsValid && currentAuthRevision > 0);
+        bool readersHealthy = (nfc1Available && nfc2Available);
+        bool memHealthy = (ESP.getFreeHeap() > 40000);
+
+        Serial.printf("[OTA HEALTH] LittleFS: %s | Snapshot: %s (Rev %u) | Readers: %s | FreeHeap: %u B\n",
+          fsHealthy ? "PASS" : "FAIL",
+          snapHealthy ? "PASS" : "FAIL", currentAuthRevision,
+          readersHealthy ? "PASS (Dual PN532)" : "FAIL",
+          ESP.getFreeHeap());
+
+        if (fsHealthy && snapHealthy && readersHealthy && memHealthy) {
+          Serial.println("[OTA SUCCESS] All operational health checks passed. Marking application VALID.");
+          esp_ota_mark_app_valid_cancel_rollback();
+          preferences.putString("lastAckStat", "SUCCESS");
+          preferences.putString("lastAckErr", "NONE");
+          Serial.println("[OTA] Image permanently committed. Rollback cancelled.");
+        } else {
+          String errCat = "ERR_UNKNOWN";
+          if (!fsHealthy) errCat = "ERR_FS";
+          else if (!snapHealthy) errCat = "ERR_SNAPSHOT";
+          else if (!readersHealthy) errCat = "ERR_READERS";
+          else if (!memHealthy) errCat = "ERR_HEAP";
+          preferences.putString("lastAckStat", "FAILED");
+          preferences.putString("lastAckErr", errCat);
+          Serial.printf("[OTA ROLLBACK TRIGGERED] Health check failed (%s)! Rolling back to previous partition...\n", errCat.c_str());
+          delay(1000);
+          esp_ota_mark_app_invalid_rollback_and_reboot();
+        }
+      } else {
+        Serial.printf("[BOOT] Running partition: %s (Offset: 0x%06X, Size: %u KB, State: %d, Version: %s)\n", 
+          runningPart->label, runningPart->address, runningPart->size / 1024, (int)ota_state, FOCUSX_FIRMWARE_VERSION);
+      }
+    }
+  }
 }
 
 // ================= SYSTEM HEALTH & DIAGNOSTICS =================
@@ -2361,7 +2663,7 @@ void handleSerialCommands() {
     } else if (line == "CMD:STATUS") {
       updateClockState();
       String s = "STATUS: rev=" + String(currentAuthRevision) + " nvsRev=" + String(preferences.getUInt("authRev", 0)) +
-                 " valid=" + String(snapshotIsValid ? 1 : 0) +
+                 " ver=" + String(FOCUSX_FIRMWARE_VERSION) + " valid=" + String(snapshotIsValid ? 1 : 0) +
                  " slot=" + activeSlot +
                  " readerId=" + READER_ID +
                  " libId=" + currentLibraryId +
@@ -2422,6 +2724,26 @@ void handleSerialCommands() {
       } else {
         Serial.println("ERR:BAD_ARGS");
       }
+    } else if (line.startsWith("CMD:OTA ")) {
+      String rest = line.substring(8);
+      int sp1 = rest.indexOf(' ');
+      int sp2 = rest.indexOf(' ', sp1 + 1);
+      if (sp1 > 0) {
+        String url = rest.substring(0, sp1);
+        String sha = (sp2 > 0) ? rest.substring(sp1 + 1, sp2) : rest.substring(sp1 + 1);
+        size_t sz = (sp2 > 0) ? rest.substring(sp2 + 1).toInt() : 0;
+        Serial.println("OK:OTA_INITIATED");
+        performOTA(url, sha, sz);
+      } else {
+        Serial.println("ERR:BAD_ARGS Usage: CMD:OTA <url> <sha256> [size]");
+      }
+    } else if (line == "CMD:OTA_STATUS") {
+      const esp_partition_t *rp = esp_ota_get_running_partition();
+      const esp_partition_t *nextp = esp_ota_get_next_update_partition(NULL);
+      Serial.printf("OTA_STATUS: version=%s running=%s(0x%06X) next=%s(0x%06X)\n",
+        FOCUSX_FIRMWARE_VERSION,
+        rp ? rp->label : "unknown", rp ? rp->address : 0,
+        nextp ? nextp->label : "unknown", nextp ? nextp->address : 0);
     } else if (line == "CMD:JOURNAL_DUMP") {
       Serial.println("===JOURNAL_START===");
       if (LittleFS.exists("/journal.txt")) {

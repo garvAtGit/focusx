@@ -154,7 +154,8 @@ export async function middleware(request: NextRequest) {
   const isProtected = 
     pathname.startsWith('/dashboard') || 
     pathname.startsWith('/student') || 
-    pathname.startsWith('/onboarding') || 
+    pathname.startsWith('/onboarding') ||
+    pathname.startsWith('/notifications') || 
     (pathname.startsWith('/admin') && !pathname.startsWith('/admin/login'));
 
   const isDevAdmin = process.env.NODE_ENV === 'development' && request.cookies.get('dev_admin')?.value === 'true';
