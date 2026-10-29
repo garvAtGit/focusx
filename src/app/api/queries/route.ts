@@ -9,13 +9,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { libraryId, type, content } = await req.json();
+    const { libraryId, type, content, rating } = await req.json();
 
     if (!libraryId || !type || !content) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    if (type !== 'FEEDBACK' && type !== 'COMPLAINT') {
+    if (type !== 'FEEDBACK' && type !== 'COMPLAINT' && type !== 'REVIEW') {
       return NextResponse.json({ error: 'Invalid query type' }, { status: 400 });
     }
 
@@ -24,6 +24,7 @@ export async function POST(req: Request) {
         libraryId,
         studentId: session.userId,
         type,
+        rating: typeof rating === 'number' ? Math.max(1, Math.min(5, Math.round(rating))) : null,
         content
       }
     });
