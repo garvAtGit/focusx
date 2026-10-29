@@ -7,6 +7,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { sendNotification } from "@/app/actions/notification-actions"
+import { WhatsAppIcon } from "@/components/icons/WhatsAppIcon";
+import { openWhatsAppChat } from "@/lib/whatsapp";
 
 interface DashboardQuery {
   id: string;
@@ -17,6 +19,7 @@ interface DashboardQuery {
   createdAt: Date;
   student: {
     name: string;
+    phone?: string | null;
   };
 }
 
@@ -94,6 +97,19 @@ export function QueriesClient({ queries }: { queries: DashboardQuery[] }) {
               <button onClick={() => handleReplyClick(query)} className="flex-1 sm:flex-none bg-background border border-border text-foreground hover:bg-muted font-semibold px-4 py-2 rounded-lg text-sm transition-colors text-center inline-block">
                 Reply
               </button>
+              {query.student?.phone && (
+                <button
+                  type="button"
+                  title="Direct WhatsApp Message"
+                  onClick={() => {
+                    const waText = `Hello ${query.student.name}, regarding your feedback/query:\n"${query.content.slice(0, 80)}..."\n\n`;
+                    openWhatsAppChat(query.student.phone, waText);
+                  }}
+                  className="flex-1 sm:flex-none bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 hover:bg-emerald-500/20 font-semibold px-3 py-2 rounded-lg text-sm transition-colors text-center inline-flex items-center justify-center gap-1.5"
+                >
+                  <WhatsAppIcon className="w-3.5 h-3.5" /> WhatsApp
+                </button>
+              )}
             </div>
           </div>
         ))}
@@ -114,10 +130,24 @@ export function QueriesClient({ queries }: { queries: DashboardQuery[] }) {
               className="min-h-[120px]"
             />
           </div>
-          <DialogFooter>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button variant="outline" onClick={() => setReplyOpen(false)}>Cancel</Button>
+            {replyingTo?.student?.phone && (
+              <Button
+                type="button"
+                className="bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1.5 font-bold"
+                onClick={async () => {
+                  const waText = `*Reply to your Query/Feedback:*\n\n${replyMessage}\n\n— Sent via FocusX`;
+                  openWhatsAppChat(replyingTo.student.phone, waText);
+                  await submitReply();
+                }}
+                disabled={sending || !replyMessage.trim()}
+              >
+                <WhatsAppIcon className="w-4 h-4" /> Reply & Open WhatsApp
+              </Button>
+            )}
             <Button onClick={submitReply} disabled={sending || !replyMessage.trim()}>
-              {sending ? "Sending..." : "Send Reply"}
+              {sending ? "Sending..." : "Send In-App Notification"}
             </Button>
           </DialogFooter>
         </DialogContent>
