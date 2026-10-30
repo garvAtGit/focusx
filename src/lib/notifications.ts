@@ -1,3 +1,4 @@
+import prisma from "@/lib/prisma";
 import type { Notification, NotificationBroadcast, Prisma, PrismaClient } from "@prisma/client";
 import crypto from "crypto";
 import {
@@ -9,10 +10,7 @@ import {
 } from "./web-push";
 
 function getDb(client?: PrismaClient | Prisma.TransactionClient): PrismaClient | Prisma.TransactionClient {
-  if (client) return client;
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const prismaModule = require("@/lib/prisma");
-  return (prismaModule.default || prismaModule.prisma) as PrismaClient;
+  return client || prisma;
 }
 
 import {
