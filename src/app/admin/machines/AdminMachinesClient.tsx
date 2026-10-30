@@ -200,6 +200,8 @@ export function AdminMachinesClient({
           toast.success("Live Peek stream ended");
         }
       } else {
+        // Automatically exit timeline mode so user immediately sees the real-time live stream
+        setTimelineRelayId(null);
         const res = await fetch("/api/hardware/debug-session", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -208,7 +210,7 @@ export function AdminMachinesClient({
         if (res.ok) {
           setLivePeekRelayId(relayId);
           setLivePeekRemainingSec(300);
-          toast.success("5-Minute Live Peek activated! Sub-second LCD stream active.");
+          toast.success("5-Minute Live Peek activated! Showing live stream.");
         } else {
           toast.error("Failed to start Live Peek session");
         }
@@ -1103,18 +1105,27 @@ export function AdminMachinesClient({
                                         {!isTimelineMode && (() => {
                                           const screenTs = relay.lastScreenUpdatedAt ? new Date(relay.lastScreenUpdatedAt).getTime() : 0;
                                           const isStale = !screenTs || (Date.now() - screenTs > 90000);
+                                          const isRecentPacket = screenTs && (Date.now() - screenTs < 12000);
                                           return (
                                             <span
                                               className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-bold ${
                                                 isLiveStreaming
-                                                  ? "bg-cyan-950/90 text-cyan-300 border border-cyan-700"
+                                                  ? isRecentPacket
+                                                    ? "bg-cyan-950/90 text-cyan-300 border border-cyan-700 animate-pulse"
+                                                    : "bg-amber-950/90 text-amber-300 border border-amber-700"
                                                   : isStale
                                                   ? "bg-amber-950/80 text-amber-400 border border-amber-800/70"
                                                   : "bg-emerald-950/80 text-emerald-400 border border-emerald-800/70"
                                               }`}
                                             >
                                               <Clock className="w-2.5 h-2.5" />
-                                              {isLiveStreaming ? "Realtime Stream" : isStale ? "Mirror Stale (>90s)" : "Mirror Live"}
+                                              {isLiveStreaming
+                                                ? isRecentPacket
+                                                  ? "Streaming Live"
+                                                  : "Connecting..."
+                                                : isStale
+                                                ? "Mirror Stale (>90s)"
+                                                : "Mirror Live"}
                                             </span>
                                           );
                                         })()}
