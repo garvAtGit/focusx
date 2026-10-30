@@ -249,3 +249,8 @@ body.scroll-down .search-bar-sticky {
   animation: flicker 0.4s infinite ease-in-out alternate;
   transform-origin: bottom center;
 }
+
+/* Hide floating Google reCAPTCHA badge overlaying login UI */
+.grecaptcha-badge {
+  visibility: hidden !important;
+}

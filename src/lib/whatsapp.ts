@@ -1,5 +1,5 @@
 /**
- * Formats a phone number for WhatsApp wa.me links.
+ * Formats a phone number for WhatsApp wa.me / api.whatsapp.com links.
  * Handles Indian numbers (+91, leading 0, 10-digit without country code) and international numbers.
  */
 export function formatWhatsAppPhone(phone: string | null | undefined): string | null {
@@ -22,22 +22,55 @@ export function formatWhatsAppPhone(phone: string | null | undefined): string | 
 }
 
 /**
- * Returns the full https://wa.me/ URL with optional URL-encoded text.
+ * Returns the full WhatsApp direct chat URL with optional pre-filled text.
+ * Uses api.whatsapp.com/send which routes directly to the single chat thread
+ * on both WhatsApp Web and native mobile/desktop apps.
  */
 export function getWhatsAppUrl(phone: string | null | undefined, text?: string): string | null {
   const formatted = formatWhatsAppPhone(phone);
   if (!formatted) return null;
   const encodedText = text ? `?text=${encodeURIComponent(text)}` : '';
-  return `https://wa.me/${formatted}${encodedText}`;
+  return `https://api.whatsapp.com/send?phone=${formatted}${encodedText}`;
 }
 
 /**
- * Opens a WhatsApp chat directly in a new tab.
+ * Opens a WhatsApp chat directly for that person.
+ *
+ * To open ONLY that person's direct chat without the left sidebar (conversation list):
+ * We launch a centered compact window (560px x 760px).
+ * Because WhatsApp Web is responsive, when the viewport width is below 750px,
+ * it completely collapses and hides the left sidebar, showing ONLY that student's single chat!
  */
-export function openWhatsAppChat(phone: string | null | undefined, text?: string): boolean {
+export function openWhatsAppChat(
+  phone: string | null | undefined, 
+  text?: string, 
+  asCompactPopup: boolean = true
+): boolean {
   const url = getWhatsAppUrl(phone, text);
   if (!url) return false;
+
   if (typeof window !== 'undefined') {
+    // If on a desktop/laptop browser, open as a compact focused popup window
+    // to hide WhatsApp's sidebar and show ONLY that student's chat.
+    if (asCompactPopup && window.innerWidth >= 640) {
+      const width = 560;
+      const height = 760;
+      const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - width) / 2));
+      const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - height) / 2));
+      
+      const popup = window.open(
+        url,
+        `wa_direct_${formatWhatsAppPhone(phone)}`,
+        `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no,location=no,status=no,scrollbars=yes,resizable=yes`
+      );
+
+      if (popup) {
+        popup.focus();
+        return true;
+      }
+    }
+
+    // Fallback for mobile devices or if popup was blocked
     window.open(url, '_blank', 'noopener,noreferrer');
     return true;
   }
@@ -78,4 +111,3 @@ export function formatNotificationForWhatsApp(
 
   return parts.join('\n\n');
 }
-

@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { sendNotification } from "@/app/actions/notification-actions"
 import { WhatsAppIcon } from "@/components/icons/WhatsAppIcon";
 import { openWhatsAppChat } from "@/lib/whatsapp";
+import { WhatsAppMessageModal } from "@/components/whatsapp/WhatsAppMessageModal";
 
 interface DashboardQuery {
   id: string;
@@ -28,6 +29,12 @@ export function QueriesClient({ queries }: { queries: DashboardQuery[] }) {
   const [replyingTo, setReplyingTo] = useState<DashboardQuery | null>(null);
   const [replyMessage, setReplyMessage] = useState("");
   const [sending, setSending] = useState(false);
+  const [whatsAppModalData, setWhatsAppModalData] = useState<{
+    isOpen: boolean;
+    name: string;
+    phone: string;
+    initialMessage?: string;
+  } | null>(null);
 
   const handleReplyClick = (query: DashboardQuery) => {
     setReplyingTo(query);
@@ -100,10 +107,14 @@ export function QueriesClient({ queries }: { queries: DashboardQuery[] }) {
               {query.student?.phone && (
                 <button
                   type="button"
-                  title="Direct WhatsApp Message"
+                  title="Message on WhatsApp"
                   onClick={() => {
-                    const waText = `Hello ${query.student.name}, regarding your feedback/query:\n"${query.content.slice(0, 80)}..."\n\n`;
-                    openWhatsAppChat(query.student.phone, waText);
+                    setWhatsAppModalData({
+                      isOpen: true,
+                      name: query.student.name,
+                      phone: query.student.phone!,
+                      initialMessage: `Hello ${query.student.name}, regarding your ${query.type.toLowerCase()}: "${query.content.slice(0, 80)}..."\n\n`,
+                    });
                   }}
                   className="flex-1 sm:flex-none bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 hover:bg-emerald-500/20 font-semibold px-3 py-2 rounded-lg text-sm transition-colors text-center inline-flex items-center justify-center gap-1.5"
                 >
@@ -152,6 +163,16 @@ export function QueriesClient({ queries }: { queries: DashboardQuery[] }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {whatsAppModalData && (
+        <WhatsAppMessageModal
+          open={whatsAppModalData.isOpen}
+          onOpenChange={(open) => setWhatsAppModalData((prev) => (prev ? { ...prev, isOpen: open } : null))}
+          recipientName={whatsAppModalData.name}
+          recipientPhone={whatsAppModalData.phone}
+          initialMessage={whatsAppModalData.initialMessage}
+        />
+      )}
     </>
   )
 }
