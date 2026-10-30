@@ -345,24 +345,25 @@ export default function LoginPage() {
         className="w-full max-w-md bg-card border border-border/80 rounded-2xl p-7 md:p-8 shadow-sm backdrop-blur-sm relative z-10"
       >
         {/* FocusX logo at top left of the card in the middle */}
-        <div className="flex items-center gap-2.5 mb-6">
+        <div className="flex items-center gap-2 mb-6">
           <Link href="/" className="inline-flex items-center gap-2 group">
             <Image 
               src="/final-logo.svg" 
               alt="FocusX Logo" 
-              width={34} 
-              height={34} 
+              width={32} 
+              height={32} 
               className="object-contain transition-transform duration-200 group-hover:scale-105" 
               priority
             />
-            <span className="text-xl font-heading font-bold text-foreground tracking-tight">
+            <span className="text-lg font-heading font-bold text-foreground tracking-tight">
               Focus<span className="text-primary">X</span>
             </span>
           </Link>
         </div>
 
-        <div className="mb-6">
-          <h1 className="text-2xl font-heading font-bold text-foreground mb-1">Welcome</h1>
+        {/* Welcome and Sign in lines */}
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-heading font-bold text-primary mb-2">Welcome</h1>
           <p className="text-sm text-muted-foreground">Sign in or create an account</p>
         </div>
 
