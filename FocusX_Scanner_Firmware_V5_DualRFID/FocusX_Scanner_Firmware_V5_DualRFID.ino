@@ -36,6 +36,7 @@ QueueHandle_t bleAuthQueue = NULL;
 #include "FocusX_Diagnostics.h"
 
 FocusXDiagnostics DiagSubsystem;
+static unsigned long liveDebugUntilMs = 0; // Ephemeral 5-minute live peek stream state
 
 #define FOCUSX_FIRMWARE_VERSION "5.1.2-ota"
 
@@ -1315,6 +1316,12 @@ void sendHeartbeat() {
        String res = http.getString();
        DynamicJsonDocument resDoc(1024);
        if (!deserializeJson(resDoc, res)) {
+          if (resDoc.containsKey("liveDebug") && resDoc["liveDebug"].as<bool>() == true) {
+             uint32_t rem = resDoc.containsKey("liveDebugRemainingSec") ? resDoc["liveDebugRemainingSec"].as<uint32_t>() : 300;
+             liveDebugUntilMs = millis() + (rem * 1000);
+          } else if (resDoc.containsKey("liveDebug") && resDoc["liveDebug"].as<bool>() == false) {
+             liveDebugUntilMs = 0;
+          }
           if (resDoc.containsKey("serverTimeUnix")) {
              uint32_t sTime = resDoc["serverTimeUnix"];
              if (sTime > 1700000000 && clockState != CLOCK_SYNCED) {
@@ -1547,7 +1554,8 @@ void httpWorkerTask(void *pvParameters) {
       }
     }
 
-    if (millis() - lastHeartbeatMs >= 120000 || lastHeartbeatMs == 0) {
+    unsigned long hbInterval = (liveDebugUntilMs > millis()) ? 2500 : 120000;
+    if (millis() - lastHeartbeatMs >= hbInterval || lastHeartbeatMs == 0) {
       lastHeartbeatMs = millis();
       esp_task_wdt_reset();
       sendHeartbeat();

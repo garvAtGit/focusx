@@ -26,7 +26,16 @@ import {
   RefreshCw,
   X,
   Clock,
+  History,
+  Eye,
+  ArrowLeft,
+  ArrowRight,
+  RadioTower,
+  Play,
+  Square,
+  Sparkles,
 } from "lucide-react";
+import { translateDiagnosticEvent } from "@/lib/diagnostic-dictionary";
 import { createClient } from "@supabase/supabase-js";
 import toast from "react-hot-toast";
 
@@ -100,6 +109,132 @@ export function AdminMachinesClient({
   const [diagLogs, setDiagLogs] = useState<any[]>([]);
   const [isLoadingDiag, setIsLoadingDiag] = useState(false);
   const [diagFilter, setDiagFilter] = useState<string>("ALL");
+
+  // Screen Timeline State (Scrubbable with Keyboard)
+  const [timelineRelayId, setTimelineRelayId] = useState<string | null>(null);
+  const [screenHistoryMap, setScreenHistoryMap] = useState<Record<string, Array<{
+    id: string;
+    line0: string;
+    line1: string;
+    backlight: number;
+    trigger: string;
+    timestamp: string;
+  }>>>({});
+  const [historyIndex, setHistoryIndex] = useState<number>(0);
+  const [isLoadingTimeline, setIsLoadingTimeline] = useState<boolean>(false);
+
+  // 5-Minute "Live Peek" Ephemeral Stream State
+  const [livePeekRelayId, setLivePeekRelayId] = useState<string | null>(null);
+  const [livePeekRemainingSec, setLivePeekRemainingSec] = useState<number>(0);
+  const [isStartingLivePeek, setIsStartingLivePeek] = useState<boolean>(false);
+
+  const openTimeline = async (relayId: string) => {
+    setTimelineRelayId(relayId);
+    setHistoryIndex(0);
+    setIsLoadingTimeline(true);
+    try {
+      const res = await fetch(`/api/hardware/screen-history?relayId=${relayId}&limit=60`);
+      if (res.ok) {
+        const data = await res.json();
+        setScreenHistoryMap((prev) => ({
+          ...prev,
+          [relayId]: data.history || [],
+        }));
+        setHistoryIndex(0);
+      } else {
+        toast.error("Failed to load screen history");
+      }
+    } catch {
+      toast.error("Network error loading screen history");
+    } finally {
+      setIsLoadingTimeline(false);
+    }
+  };
+
+  const closeTimeline = () => {
+    setTimelineRelayId(null);
+    setHistoryIndex(0);
+  };
+
+  // Keyboard navigation for Timeline Scrubbing (Left Arrow = Older, Right Arrow = Newer, Esc = Close)
+  useEffect(() => {
+    if (!timelineRelayId) return;
+    const history = screenHistoryMap[timelineRelayId] || [];
+    if (history.length === 0) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (["INPUT", "TEXTAREA"].includes((e.target as HTMLElement)?.tagName)) {
+        return;
+      }
+
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        setHistoryIndex((prev) => Math.min(history.length - 1, prev + 1));
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        setHistoryIndex((prev) => Math.max(0, prev - 1));
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        closeTimeline();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [timelineRelayId, screenHistoryMap]);
+
+  // Live Peek Toggle Handler
+  const toggleLivePeek = async (relayId: string) => {
+    const isCurrentlyActive = livePeekRelayId === relayId && livePeekRemainingSec > 0;
+    setIsStartingLivePeek(true);
+    try {
+      if (isCurrentlyActive) {
+        const res = await fetch("/api/hardware/debug-session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ relayId, action: "STOP" }),
+        });
+        if (res.ok) {
+          setLivePeekRelayId(null);
+          setLivePeekRemainingSec(0);
+          toast.success("Live Peek stream ended");
+        }
+      } else {
+        const res = await fetch("/api/hardware/debug-session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ relayId, action: "START", durationSec: 300 }),
+        });
+        if (res.ok) {
+          setLivePeekRelayId(relayId);
+          setLivePeekRemainingSec(300);
+          toast.success("5-Minute Live Peek activated! Sub-second LCD stream active.");
+        } else {
+          toast.error("Failed to start Live Peek session");
+        }
+      }
+    } catch {
+      toast.error("Error communicating with debug session API");
+    } finally {
+      setIsStartingLivePeek(false);
+    }
+  };
+
+  // Timer countdown for Live Peek
+  useEffect(() => {
+    if (!livePeekRelayId || livePeekRemainingSec <= 0) return;
+    const interval = setInterval(() => {
+      setLivePeekRemainingSec((prev) => {
+        if (prev <= 1) {
+          setLivePeekRelayId(null);
+          toast("5-minute Live Peek session ended.", { icon: "⏱️" });
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [livePeekRelayId, livePeekRemainingSec]);
 
   const openDiagModal = async (relay: RelayData) => {
     setActiveDiagRelay(relay);
@@ -875,69 +1010,235 @@ export function AdminMachinesClient({
                             {/* FocusX Virtual 16x2 LCD Mirror & Diagnostics Subsystem Bar */}
                             <div className="mt-5 pt-4 border-t border-slate-100 grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
                               {/* Left: Virtual 16x2 LCD Mirror */}
-                              <div className="lg:col-span-7 bg-slate-950 p-4 rounded-2xl border border-slate-800 shadow-inner flex flex-col justify-between">
-                                <div className="flex items-center justify-between text-[11px] font-sans font-bold text-slate-400 mb-2 pb-1.5 border-b border-slate-800">
-                                  <div className="flex items-center gap-2">
-                                    <Monitor className="w-3.5 h-3.5 text-[#39e58c]" />
-                                    <span className="text-slate-200">Virtual 16x2 LCD Mirror</span>
-                                    <span
-                                      className={`px-2 py-0.5 rounded-full text-[9px] font-mono uppercase tracking-wider ${
-                                        (relay.lastScreenBacklight ?? 1) > 0
-                                          ? "bg-emerald-950 text-emerald-300 border border-emerald-800"
-                                          : "bg-slate-900 text-slate-500 border border-slate-800"
+                              {(() => {
+                                const isTimelineMode = timelineRelayId === relay.id;
+                                const isLiveStreaming = livePeekRelayId === relay.id && livePeekRemainingSec > 0;
+                                const history = screenHistoryMap[relay.id] || [];
+                                const currentFrame = isTimelineMode && history.length > 0 ? history[historyIndex] : null;
+
+                                const displayLine0 = isTimelineMode
+                                  ? (currentFrame?.line0 || "NO DATA")
+                                  : (relay.lastScreenLine0 || "FOCUSX READY");
+
+                                const displayLine1 = isTimelineMode
+                                  ? (currentFrame?.line1 || "")
+                                  : (relay.lastScreenLine1 || "TAP RFID / BLE");
+
+                                const displayBacklight = isTimelineMode
+                                  ? (currentFrame?.backlight ?? 1)
+                                  : (relay.lastScreenBacklight ?? 1);
+
+                                return (
+                                  <div className={`lg:col-span-7 bg-slate-950 p-4 rounded-2xl border transition-all duration-300 shadow-inner flex flex-col justify-between ${
+                                    isLiveStreaming
+                                      ? "border-cyan-500/80 shadow-[0_0_25px_rgba(6,182,212,0.25)] ring-2 ring-cyan-500/30"
+                                      : isTimelineMode
+                                      ? "border-amber-500/80 shadow-[0_0_25px_rgba(245,158,11,0.2)] ring-2 ring-amber-500/30"
+                                      : "border-slate-800"
+                                  }`}>
+                                    {/* Mirror Header */}
+                                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-sans font-bold text-slate-400 mb-2 pb-2 border-b border-slate-800">
+                                      <div className="flex items-center gap-2">
+                                        <Monitor className={`w-3.5 h-3.5 ${isLiveStreaming ? "text-cyan-400 animate-pulse" : isTimelineMode ? "text-amber-400" : "text-[#39e58c]"}`} />
+                                        <span className="text-slate-200">
+                                          {isTimelineMode ? "Screen Appearance Timeline" : "Virtual 16x2 LCD Mirror"}
+                                        </span>
+                                        <span
+                                          className={`px-2 py-0.5 rounded-full text-[9px] font-mono uppercase tracking-wider ${
+                                            displayBacklight > 0
+                                              ? isTimelineMode
+                                                ? "bg-amber-950 text-amber-300 border border-amber-800"
+                                                : "bg-emerald-950 text-emerald-300 border border-emerald-800"
+                                              : "bg-slate-900 text-slate-500 border border-slate-800"
+                                          }`}
+                                        >
+                                          BL: {displayBacklight > 0 ? "ON" : "OFF"}
+                                        </span>
+                                      </div>
+
+                                      {/* Mode Status Badges & Quick Action Controls */}
+                                      <div className="flex items-center gap-1.5">
+                                        {/* 5-Min Live Peek Toggle Button */}
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleLivePeek(relay.id)}
+                                          disabled={isStartingLivePeek}
+                                          className={`px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1.5 transition-all shadow-xs ${
+                                            isLiveStreaming
+                                              ? "bg-rose-950/90 text-rose-300 border border-rose-700 animate-pulse hover:bg-rose-900"
+                                              : "bg-cyan-950/70 hover:bg-cyan-900/90 text-cyan-300 border border-cyan-800 active:scale-95"
+                                          }`}
+                                          title="Activate 5-minute accelerated real-time LCD streaming (Core 0 only, zero storage bloat)"
+                                        >
+                                          {isLiveStreaming ? (
+                                            <>
+                                              <Square className="w-2.5 h-2.5 fill-rose-300 text-rose-300" />
+                                              <span>Stop Peek ({Math.floor(livePeekRemainingSec / 60)}:{(livePeekRemainingSec % 60).toString().padStart(2, "0")})</span>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <RadioTower className="w-2.5 h-2.5 text-cyan-400" />
+                                              <span>Live Peek (5 Min)</span>
+                                            </>
+                                          )}
+                                        </button>
+
+                                        {/* Timeline Mode Toggle Button */}
+                                        <button
+                                          type="button"
+                                          onClick={() => (isTimelineMode ? closeTimeline() : openTimeline(relay.id))}
+                                          disabled={isLoadingTimeline}
+                                          className={`px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1.5 transition-all shadow-xs ${
+                                            isTimelineMode
+                                              ? "bg-amber-950/90 text-amber-300 border border-amber-700 hover:bg-amber-900"
+                                              : "bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 active:scale-95"
+                                          }`}
+                                          title="Scrub historical screen frames with keyboard arrow keys"
+                                        >
+                                          <History className={`w-2.5 h-2.5 ${isLoadingTimeline ? "animate-spin" : "text-amber-400"}`} />
+                                          <span>{isTimelineMode ? "Exit Timeline" : "Timeline"}</span>
+                                        </button>
+
+                                        {/* Live Stale Check Badge */}
+                                        {!isTimelineMode && (() => {
+                                          const screenTs = relay.lastScreenUpdatedAt ? new Date(relay.lastScreenUpdatedAt).getTime() : 0;
+                                          const isStale = !screenTs || (Date.now() - screenTs > 90000);
+                                          return (
+                                            <span
+                                              className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-bold ${
+                                                isLiveStreaming
+                                                  ? "bg-cyan-950/90 text-cyan-300 border border-cyan-700"
+                                                  : isStale
+                                                  ? "bg-amber-950/80 text-amber-400 border border-amber-800/70"
+                                                  : "bg-emerald-950/80 text-emerald-400 border border-emerald-800/70"
+                                              }`}
+                                            >
+                                              <Clock className="w-2.5 h-2.5" />
+                                              {isLiveStreaming ? "Realtime Stream" : isStale ? "Mirror Stale (>90s)" : "Mirror Live"}
+                                            </span>
+                                          );
+                                        })()}
+                                      </div>
+                                    </div>
+
+                                    {/* Monospace 16x2 Character Matrix */}
+                                    <div
+                                      className={`p-3.5 rounded-xl border font-mono tracking-widest text-[13px] leading-relaxed select-all transition-all duration-300 ${
+                                        displayBacklight > 0
+                                          ? isTimelineMode
+                                            ? "bg-[#291e0a] text-amber-300 border-amber-800 shadow-[0_0_15px_rgba(245,158,11,0.2)]"
+                                            : isLiveStreaming
+                                            ? "bg-[#06202a] text-cyan-300 border-cyan-700 shadow-[0_0_20px_rgba(6,182,212,0.3)]"
+                                            : "bg-[#0c2b1e] text-[#39e58c] border-[#1b5e3f] shadow-[0_0_15px_rgba(57,229,140,0.15)]"
+                                          : "bg-[#14171a] text-slate-500 border-slate-800"
                                       }`}
                                     >
-                                      Backlight: {(relay.lastScreenBacklight ?? 1) > 0 ? "ON" : "OFF"}
-                                    </span>
-                                  </div>
+                                      <div className="font-bold whitespace-pre font-mono">
+                                        {displayLine0.padEnd(16, " ").slice(0, 16)}
+                                      </div>
+                                      <div className="font-bold whitespace-pre font-mono">
+                                        {displayLine1.padEnd(16, " ").slice(0, 16)}
+                                      </div>
+                                    </div>
 
-                                  {/* Stale Check (>90 seconds) */}
-                                  {(() => {
-                                    const screenTs = relay.lastScreenUpdatedAt ? new Date(relay.lastScreenUpdatedAt).getTime() : 0;
-                                    const isStale = !screenTs || (Date.now() - screenTs > 90000);
-                                    return (
-                                      <span
-                                        className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-bold ${
-                                          isStale
-                                            ? "bg-amber-950/80 text-amber-400 border border-amber-800/70"
-                                            : "bg-emerald-950/80 text-emerald-400 border border-emerald-800/70"
-                                        }`}
-                                      >
-                                        <Clock className="w-2.5 h-2.5" />
-                                        {isStale ? "Mirror Stale (>90s)" : "Mirror Live"}
-                                      </span>
-                                    );
-                                  })()}
-                                </div>
+                                    {/* Interactive Scrubber Controls (Timeline Mode) */}
+                                    {isTimelineMode ? (
+                                      <div className="mt-3 pt-3 border-t border-slate-800/90 flex flex-col gap-2.5">
+                                        {/* Scrubber Bar & Step Buttons */}
+                                        <div className="flex items-center justify-between gap-3">
+                                          <button
+                                            type="button"
+                                            onClick={() => setHistoryIndex((prev) => Math.min(Math.max(0, history.length - 1), prev + 1))}
+                                            disabled={historyIndex >= history.length - 1}
+                                            className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:opacity-30 text-amber-300 text-xs font-bold flex items-center gap-1 border border-slate-800 transition-colors"
+                                            title="Step back in time (Left Arrow ◄)"
+                                          >
+                                            <ArrowLeft className="w-3.5 h-3.5" />
+                                            <span>Older</span>
+                                          </button>
 
-                                {/* Monospace 16x2 Character Matrix */}
-                                <div
-                                  className={`p-3 rounded-xl border font-mono tracking-widest text-[13px] leading-relaxed select-all transition-all duration-300 ${
-                                    (relay.lastScreenBacklight ?? 1) > 0
-                                      ? "bg-[#0c2b1e] text-[#39e58c] border-[#1b5e3f] shadow-[0_0_15px_rgba(57,229,140,0.15)]"
-                                      : "bg-[#14171a] text-slate-500 border-slate-800"
-                                  }`}
-                                >
-                                  <div className="font-bold whitespace-pre font-mono">
-                                    {(relay.lastScreenLine0 || "FOCUSX READY").padEnd(16, " ").slice(0, 16)}
-                                  </div>
-                                  <div className="font-bold whitespace-pre font-mono">
-                                    {(relay.lastScreenLine1 || "TAP RFID / BLE").padEnd(16, " ").slice(0, 16)}
-                                  </div>
-                                </div>
+                                          <div className="flex-1 flex flex-col items-center gap-1">
+                                            <input
+                                              type="range"
+                                              min={0}
+                                              max={Math.max(0, history.length - 1)}
+                                              value={historyIndex}
+                                              onChange={(e) => setHistoryIndex(Number(e.target.value))}
+                                              className="w-full accent-amber-400 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+                                            />
+                                            <span className="text-[10px] font-mono text-slate-400">
+                                              Frame {history.length > 0 ? history.length - historyIndex : 0} of {history.length}
+                                            </span>
+                                          </div>
 
-                                <div className="mt-2 flex items-center justify-between text-[10px] text-slate-500 font-sans">
-                                  <span>Matrix: 16 Cols x 2 Rows</span>
-                                  <span>
-                                    Updated:{" "}
-                                    {relay.lastScreenUpdatedAt
-                                      ? new Date(relay.lastScreenUpdatedAt).toLocaleTimeString("en-IN", {
-                                          timeZone: "Asia/Kolkata",
-                                        })
-                                      : "Waiting for heartbeat..."}
-                                  </span>
-                                </div>
-                              </div>
+                                          <button
+                                            type="button"
+                                            onClick={() => setHistoryIndex((prev) => Math.max(0, prev - 1))}
+                                            disabled={historyIndex <= 0}
+                                            className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:opacity-30 text-amber-300 text-xs font-bold flex items-center gap-1 border border-slate-800 transition-colors"
+                                            title="Step forward in time (Right Arrow ►)"
+                                          >
+                                            <span>Newer</span>
+                                            <ArrowRight className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
+
+                                        {/* Timestamp & Trigger Metadata */}
+                                        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] bg-slate-900/80 px-3 py-1.5 rounded-xl border border-slate-800">
+                                          <div className="flex items-center gap-1.5 text-amber-300 font-mono">
+                                            <Clock className="w-3 h-3 text-amber-400" />
+                                            <span>
+                                              {currentFrame?.timestamp
+                                                ? new Date(currentFrame.timestamp).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })
+                                                : "No historical records"}
+                                            </span>
+                                          </div>
+                                          <div className="flex items-center gap-2">
+                                            <span className="px-2 py-0.5 rounded-md bg-amber-950/80 text-amber-300 border border-amber-800/80 text-[10px] font-mono font-bold">
+                                              Trigger: {currentFrame?.trigger || "SNAPSHOT"}
+                                            </span>
+                                            <button
+                                              type="button"
+                                              onClick={closeTimeline}
+                                              className="text-[10px] text-slate-400 hover:text-white underline font-bold"
+                                            >
+                                              Return to Live
+                                            </button>
+                                          </div>
+                                        </div>
+
+                                        {/* Keyboard Binding Helper */}
+                                        <div className="text-[10px] text-slate-400 text-center font-sans bg-slate-900/40 py-1 px-2 rounded-lg border border-slate-800/50">
+                                          ⌨️ <span className="font-bold text-amber-300">Keyboard Controls Active:</span> Use <kbd className="px-1.5 py-0.5 bg-slate-800 rounded text-slate-200">◄ Left</kbd> and <kbd className="px-1.5 py-0.5 bg-slate-800 rounded text-slate-200">Right ►</kbd> arrow keys to scrub screens | <kbd className="px-1.5 py-0.5 bg-slate-800 rounded text-slate-200">Esc</kbd> to exit
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      /* Live Mirror Footer */
+                                      <div className="mt-2 flex items-center justify-between text-[10px] text-slate-500 font-sans">
+                                        <span>Matrix: 16 Cols x 2 Rows</span>
+                                        <div className="flex items-center gap-3">
+                                          <span>
+                                            Updated:{" "}
+                                            {relay.lastScreenUpdatedAt
+                                              ? new Date(relay.lastScreenUpdatedAt).toLocaleTimeString("en-IN", {
+                                                  timeZone: "Asia/Kolkata",
+                                                })
+                                              : "Waiting for heartbeat..."}
+                                          </span>
+                                          <button
+                                            type="button"
+                                            onClick={() => openTimeline(relay.id)}
+                                            className="text-amber-400 hover:text-amber-300 flex items-center gap-1 font-bold underline transition-colors"
+                                          >
+                                            <History className="w-3 h-3" />
+                                            Timeline History
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
 
                               {/* Right: Diagnostics Telemetry & Logs Drawer Trigger */}
                               <div className="lg:col-span-5 bg-slate-50 p-4 rounded-2xl border border-slate-200/80 flex flex-col justify-between">
@@ -1102,34 +1403,55 @@ export function AdminMachinesClient({
                         ? "bg-amber-100 text-amber-800 border-amber-300"
                         : "bg-sky-100 text-sky-800 border-sky-300";
 
+                    const meta = translateDiagnosticEvent(log.eventCode, log.severity, log.param1, log.param2, log.detail);
+
                     return (
                       <div
                         key={log.id}
-                        className="p-3.5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs hover:border-slate-300 transition-all text-xs"
+                        className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-2xs hover:border-slate-300 transition-all text-xs"
                       >
-                        <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
-                          <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${sevColor}`}>
                               {sev}
                             </span>
-                            <span className="font-mono font-bold text-slate-700">Code #{log.eventCode}</span>
-                            <span className="font-mono text-[11px] text-slate-400">{log.eventId}</span>
+                            <h4 className="font-bold text-slate-900 text-sm">{meta.title}</h4>
+                            <span className="px-2 py-0.5 rounded-md text-[9px] font-mono font-bold uppercase bg-slate-100 text-slate-600 border border-slate-200">
+                              {meta.category}
+                            </span>
+                            <span className="font-mono text-[10px] text-slate-400">Code #{log.eventCode}</span>
                           </div>
-                          <div className="text-[11px] text-slate-400 font-mono">
+                          <div className="text-[11px] text-slate-400 font-mono flex items-center gap-1.5">
+                            <Clock className="w-3 h-3 text-slate-400" />
                             {new Date(log.timestamp).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}
                           </div>
                         </div>
 
-                        {log.detail && (
-                          <div className="font-semibold text-slate-800 mb-1">
-                            {log.detail}
-                          </div>
-                        )}
+                        <p className="text-slate-700 font-medium text-xs leading-relaxed mb-3">
+                          {meta.explanation}
+                        </p>
 
-                        <div className="flex flex-wrap items-center gap-4 text-[11px] text-slate-500 font-mono pt-1 border-t border-slate-100">
-                          <span>Uptime: {Math.floor(Number(log.uptimeMs) / 1000)}s</span>
-                          {log.param1 !== null && <span>Param1: {log.param1}</span>}
-                          {log.param2 !== null && <span>Param2: {log.param2}</span>}
+                        <div className="flex flex-wrap items-center gap-2.5 text-[11px] pt-2.5 border-t border-slate-100">
+                          {meta.param1Label && meta.param1Formatted && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 text-slate-700 border border-slate-200 font-medium">
+                              <span className="font-bold text-slate-500">{meta.param1Label}:</span>
+                              <span className="font-mono font-bold text-slate-900">{meta.param1Formatted}</span>
+                            </span>
+                          )}
+                          {meta.param2Label && meta.param2Formatted && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 text-slate-700 border border-slate-200 font-medium">
+                              <span className="font-bold text-slate-500">{meta.param2Label}:</span>
+                              <span className="font-mono font-bold text-slate-900">{meta.param2Formatted}</span>
+                            </span>
+                          )}
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-50 text-slate-500 border border-slate-200 font-mono text-[10px]">
+                            Uptime: {Math.floor(Number(log.uptimeMs) / 1000)}s
+                          </span>
+                          {meta.recommendedAction && (
+                            <span className="ml-auto text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                              Tip: {meta.recommendedAction}
+                            </span>
+                          )}
                         </div>
                       </div>
                     );

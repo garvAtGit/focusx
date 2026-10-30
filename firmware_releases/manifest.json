@@ -1,6 +1,6 @@
 {
   "version": "5.1.2-ota",
-  "name": "FocusX ESP32-S3 Dual-RFID Scanner Firmware V5.1.2 (Isolated Fault Diagnostics Subsystem & Virtual 16x2 LCD Mirror)",
+  "name": "FocusX ESP32-S3 Dual-RFID Scanner Firmware V5.1.2 (Isolated Fault Diagnostics Subsystem, Virtual 16x2 LCD Mirror & Live Peek Stream)",
   "buildDate": "2026-10-30",
   "targetChip": "ESP32-S3 rev v0.2",
   "flashMode": "DIO",
@@ -9,14 +9,15 @@
   "partitionLayout": "dual-slot 8MB zero-displacement (app0=0x10000, spiffs=0x310000, app1=0x410000)",
   "binary": {
     "filename": "FocusX_Scanner_Firmware_V5_DualRFID.ino.bin",
-    "size": 1284592,
-    "sha256": "CA45112EC4C6C86960ADD2DDF7859062CC9EACE7A406FB54E316D98C55B73990"
+    "size": 1268592,
+    "sha256": "AC85C5327FC9C5F6A100F8C781B2C9849503F4030583C61FCD38B83DD77B5B59"
   },
   "capabilities": [
     "isolated offline-first fault diagnostics subsystem",
     "zero-allocation 64-entry priority ring buffer",
     "crc32-guarded persistent critical fault journal",
     "virtual 16x2 LCD screen memory mirror & backlight shadowing",
+    "ephemeral 5-minute live peek accelerated sub-second screen streaming",
     "heartbeat screen telemetry & diagnostic summary streaming",
     "dual-slot A/B partition OTA update",
     "health-gated rollback commit (LittleFS, signed snapshot, dual PN532, free heap)",

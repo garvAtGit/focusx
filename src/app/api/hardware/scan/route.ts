@@ -164,6 +164,32 @@ export async function POST(request: NextRequest) {
       offlineDecision
     });
 
+    // Capture screen appearance for this scan event into timeline
+    try {
+      const line0Text = result.success ? `ALLOW: ${intendedAction === 'CHECK_IN' ? 'IN' : 'OUT'}` : "ACCESS DENIED";
+      let denyMsg = "ACCESS DENIED";
+      if (!result.success) {
+        if (result.code === "NO_ACTIVE_PLAN") denyMsg = "NO ACTIVE PLAN";
+        if (result.code === "ALREADY_CHECKED_IN") denyMsg = "ALREADY IN";
+        if (result.code === "ALREADY_CHECKED_OUT") denyMsg = "ALREADY OUT";
+        if (result.code === "ALREADY_PROCESSED_DENIED") denyMsg = "ACCESS DENIED";
+      }
+      const line1Text = result.success ? (result.message || "PROCEED") : denyMsg;
+
+      await prisma.deviceScreenHistory.create({
+        data: {
+          relayId: relay.id,
+          line0: line0Text.slice(0, 32),
+          line1: line1Text.slice(0, 32),
+          backlight: 1,
+          trigger: `SCAN_${scanType.toUpperCase()}_${result.success ? "ALLOW" : "DENY"}`,
+          timestamp: hardwareTimestamp || new Date(),
+        },
+      });
+    } catch (screenErr) {
+      console.error("[Screen History Scan Error]:", screenErr);
+    }
+
     // 7. Format response matching ESP32 contract perfectly
     if (result.success) {
       let msg = "PROCEED";

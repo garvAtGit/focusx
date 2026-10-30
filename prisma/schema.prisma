@@ -349,7 +349,9 @@ model Relay {
   diagDroppedCount    Int?         @default(0)
   lastDiagAckAt       DateTime?
   resetReason         String?
+  liveDebugUntil      DateTime?
   diagnosticLogs      DeviceDiagnosticLog[]
+  screenHistory       DeviceScreenHistory[]
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   logs        CheckinLog[]
@@ -376,6 +378,19 @@ model DeviceDiagnosticLog {
   @@index([relayId, timestamp])
   @@index([severity, timestamp])
   @@index([eventCode])
+}
+
+model DeviceScreenHistory {
+  id        String   @id @default(uuid())
+  relayId   String
+  line0     String
+  line1     String
+  backlight Int      @default(1)
+  trigger   String?
+  timestamp DateTime @default(now())
+  relay     Relay    @relation(fields: [relayId], references: [id], onDelete: Cascade)
+
+  @@index([relayId, timestamp])
 }
 
 model CheckinLog {

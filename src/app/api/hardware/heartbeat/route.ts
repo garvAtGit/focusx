@@ -106,6 +106,24 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Durable Screen History capture on state transition
+    if (screenChanged && (line0 !== undefined || line1 !== undefined)) {
+      try {
+        await prisma.deviceScreenHistory.create({
+          data: {
+            relayId: relay.id,
+            line0: (line0 ?? (relay as any).lastScreenLine0 ?? "").slice(0, 32),
+            line1: (line1 ?? (relay as any).lastScreenLine1 ?? "").slice(0, 32),
+            backlight: backlight ?? (relay as any).lastScreenBacklight ?? 1,
+            trigger: statusPayload.screenTrigger ? String(statusPayload.screenTrigger).slice(0, 50) : "STATE_CHANGE",
+            timestamp: new Date(now),
+          },
+        });
+      } catch (histErr) {
+        console.error("[Screen History Write Error]:", histErr);
+      }
+    }
+
     // Realtime broadcast for virtual screen mirror and diagnostic stats
     if ((line0 !== undefined || line1 !== undefined || qDepth !== undefined) && supabaseServer) {
       try {
@@ -278,6 +296,9 @@ export async function POST(request: NextRequest) {
       };
     }
 
+    const liveDebugActive = Boolean(relay.liveDebugUntil && relay.liveDebugUntil.getTime() > now);
+    const liveDebugRemainingSec = liveDebugActive ? Math.max(0, Math.floor((relay.liveDebugUntil!.getTime() - now) / 1000)) : 0;
+
     return NextResponse.json({
       success: true,
       serverTimeUnix: Math.floor(Date.now() / 1000),
@@ -286,6 +307,8 @@ export async function POST(request: NextRequest) {
       command: commandToSend,
       pendingCommand: legacyCommandString,
       ota: otaResponse,
+      liveDebug: liveDebugActive,
+      liveDebugRemainingSec,
     });
 
   } catch (error) {

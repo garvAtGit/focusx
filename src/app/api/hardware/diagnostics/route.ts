@@ -5,6 +5,8 @@ import { resolveRelay } from "@/lib/hardware-resolver";
 import { verifyAdminAuth } from "@/lib/admin-auth-guard";
 import { supabaseServer } from "@/lib/supabase-server";
 
+export const dynamic = "force-dynamic";
+
 const VALID_SEVERITIES = new Set(["INFO", "WARN", "ERROR", "CRITICAL", "FATAL"]);
 const MAX_BATCH_SIZE = 50;
 const MAX_DETAIL_LEN = 255;

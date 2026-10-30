@@ -60,7 +60,8 @@ export async function POST(req: Request) {
     // Broadcast to real-time channel for admin dashboard
     try {
       const { supabaseServer } = await import('@/lib/supabase-server');
-      await supabaseServer.channel('admin-hardware-diagnostics').send({
+      if (supabaseServer) {
+        await supabaseServer.channel('admin-hardware-diagnostics').send({
         type: 'broadcast',
         event: 'hardware_status',
         payload: {
@@ -71,6 +72,7 @@ export async function POST(req: Request) {
           status: 'ONLINE',
         },
       });
+      }
     } catch (realtimeErr) {
       // Best effort broadcast
     }
