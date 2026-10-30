@@ -54,32 +54,6 @@ export default function LoginPage() {
   const timerRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      if (window.recaptchaVerifier) {
-        try {
-          window.recaptchaVerifier.clear();
-        } catch {}
-      }
-      
-      try {
-        const verifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-          size: 'invisible',
-          callback: () => {
-            // reCAPTCHA solved
-          },
-        });
-        window.recaptchaVerifier = verifier;
-
-        // Pre-warm and pre-render the reCAPTCHA widget immediately in the background
-        // so token negotiation is already done before the user clicks "Send OTP".
-        verifier.render().catch((err) => {
-          console.warn("reCAPTCHA pre-warm non-fatal notice:", err);
-        });
-      } catch (err) {
-        console.warn("reCAPTCHA initialization warning:", err);
-      }
-    }
-
     return () => {
       if (window.recaptchaVerifier) {
         try {
@@ -356,29 +330,12 @@ export default function LoginPage() {
 
   return (
     <div className="relative min-h-screen flex items-center justify-center bg-background px-4 py-12 overflow-hidden selection:bg-primary/20 selection:text-primary">
-      {/* Top Left FocusX Brand Header */}
-      <header className="absolute top-6 left-6 md:top-8 md:left-8 z-20">
-        <Link 
-          href="/" 
-          className="inline-flex items-center gap-2.5 group transition-transform active:scale-95"
-        >
-          <Image 
-            src="/final-logo.svg" 
-            alt="FocusX Logo" 
-            width={36} 
-            height={36} 
-            className="object-contain transition-transform duration-200 group-hover:scale-105" 
-            priority
-          />
-          <span className="text-xl font-heading font-bold text-foreground tracking-tight">
-            Focus<span className="text-primary">X</span>
-          </span>
-        </Link>
-      </header>
-
       {/* Ambient subtle decorative background glows */}
       <div className="pointer-events-none absolute -top-32 -left-32 w-80 h-80 bg-primary/5 rounded-full blur-3xl" />
       <div className="pointer-events-none absolute -bottom-32 -right-32 w-80 h-80 bg-emerald-500/5 rounded-full blur-3xl" />
+
+      {/* Invisible reCAPTCHA container hidden off-screen */}
+      <div id="recaptcha-container" className="hidden" aria-hidden="true" />
 
       {/* Card with subtle professional animation */}
       <motion.div 
@@ -387,12 +344,27 @@ export default function LoginPage() {
         transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
         className="w-full max-w-md bg-card border border-border/80 rounded-2xl p-7 md:p-8 shadow-sm backdrop-blur-sm relative z-10"
       >
-        <div className="text-center mb-6">
-          <h1 className="text-2xl md:text-3xl font-heading font-bold text-foreground mb-1.5">Welcome</h1>
-          <p className="text-sm text-muted-foreground">Sign in or create an account</p>
+        {/* FocusX logo at top left of the card in the middle */}
+        <div className="flex items-center gap-2.5 mb-6">
+          <Link href="/" className="inline-flex items-center gap-2 group">
+            <Image 
+              src="/final-logo.svg" 
+              alt="FocusX Logo" 
+              width={34} 
+              height={34} 
+              className="object-contain transition-transform duration-200 group-hover:scale-105" 
+              priority
+            />
+            <span className="text-xl font-heading font-bold text-foreground tracking-tight">
+              Focus<span className="text-primary">X</span>
+            </span>
+          </Link>
         </div>
 
-        <div id="recaptcha-container" className="mb-2 flex justify-center"></div>
+        <div className="mb-6">
+          <h1 className="text-2xl font-heading font-bold text-foreground mb-1">Welcome</h1>
+          <p className="text-sm text-muted-foreground">Sign in or create an account</p>
+        </div>
 
         <AnimatePresence mode="wait">
           {step === 'PHONE' && (
