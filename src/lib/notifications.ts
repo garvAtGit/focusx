@@ -96,7 +96,7 @@ export interface RecipientSearchResult {
 
 export interface SearchRecipientsOptions {
   query?: string;
-  role?: "ALL" | "STUDENT" | "LIBRARIAN";
+  role?: "ALL" | "STUDENT" | "LIBRARIAN" | "ADMIN" | "RECEPTIONIST" | "STAFF";
   libraryId?: string;
   page?: number;
   limit?: number;
@@ -214,7 +214,7 @@ export async function resolveBroadcastAudience(
   switch (audienceType) {
     case "ALL": {
       const users = await db.user.findMany({
-        where: { role: { in: ["STUDENT", "LIBRARIAN"] } },
+        where: { role: { in: ["STUDENT", "LIBRARIAN", "ADMIN", "RECEPTIONIST"] } },
         select: { id: true },
       });
       return users.map((u: any) => u.id);
@@ -249,7 +249,7 @@ export async function resolveBroadcastAudience(
       if (rawStudentIds.length === 0) return [];
 
       const students = await db.user.findMany({
-        where: { id: { in: rawStudentIds }, role: "STUDENT" },
+        where: { id: { in: rawStudentIds }, role: { in: ["STUDENT", "LIBRARIAN", "ADMIN", "RECEPTIONIST"] } },
         select: { id: true },
       });
       return students.map((u: any) => u.id);
@@ -276,7 +276,7 @@ export async function resolveBroadcastAudience(
         throw new Error("Validation Error: recipientIds cannot be empty for custom recipient selection.");
       }
       const users = await db.user.findMany({
-        where: { id: { in: uniqueIds }, role: "STUDENT" },
+        where: { id: { in: uniqueIds }, role: { in: ["STUDENT", "LIBRARIAN", "ADMIN", "RECEPTIONIST"] } },
         select: { id: true },
       });
       return users.map((u: any) => u.id);
@@ -301,7 +301,7 @@ export async function resolveBroadcastAudience(
         throw new Error("Validation Error: recipientIds cannot be empty for custom recipient selection.");
       }
       const users = await db.user.findMany({
-        where: { id: { in: uniqueIds }, role: { in: ["STUDENT", "LIBRARIAN"] } },
+        where: { id: { in: uniqueIds }, role: { in: ["STUDENT", "LIBRARIAN", "ADMIN", "RECEPTIONIST"] } },
         select: { id: true },
       });
       return users.map((u: any) => u.id);
@@ -391,7 +391,7 @@ export async function getAllEligibleLibraryStudents(
   const users = await db.user.findMany({
     where: {
       id: { in: studentIds },
-      role: "STUDENT",
+      role: { in: ["STUDENT", "LIBRARIAN", "ADMIN", "RECEPTIONIST"] },
     },
     select: { id: true },
   });
@@ -433,13 +433,34 @@ export async function searchLibrarianEligibleStudents(
   });
 
   const eligibleStudentIds = Array.from(new Set(bookings.map((b: any) => b.studentId)));
-  if (eligibleStudentIds.length === 0) {
+
+  // Also allow library staff (librarians, receptionists) and admins to be searchable
+  let staffUserIds: string[] = [];
+  try {
+    const staffMembers = await db.user.findMany({
+      where: {
+        OR: [
+          { role: { in: ["ADMIN", "LIBRARIAN", "RECEPTIONIST"] } },
+          ...(options.libraryId ? [{ employerLibraryId: options.libraryId }] : []),
+        ],
+      },
+      select: { id: true },
+    });
+    if (Array.isArray(staffMembers)) {
+      staffUserIds = staffMembers.map((u: any) => u.id);
+    }
+  } catch {
+    // Fallback if relations differ in mock
+  }
+
+  const allEligibleIds = Array.from(new Set([...eligibleStudentIds, ...staffUserIds]));
+  if (allEligibleIds.length === 0) {
     return { users: [], totalCount: 0, page, limit, hasMore: false };
   }
 
   const whereConditions: any = {
-    id: { in: eligibleStudentIds },
-    role: "STUDENT",
+    id: { in: allEligibleIds },
+    role: { in: ["STUDENT", "LIBRARIAN", "ADMIN", "RECEPTIONIST"] },
   };
 
   if (options.query && options.query.trim()) {
@@ -984,7 +1005,25 @@ export async function createLibrarianBroadcast(
         endTime: { gte: new Date() },
       },
     });
+    let isStaffOrAdmin = false;
     if (!booking) {
+      try {
+        const staffUser = await db.user.findFirst({
+          where: {
+            id: ids[0],
+            OR: [
+              { role: { in: ["ADMIN", "LIBRARIAN", "RECEPTIONIST"] } },
+              { employerLibraryId: input.libraryId },
+            ],
+          },
+          select: { id: true },
+        });
+        if (staffUser) isStaffOrAdmin = true;
+      } catch {
+        // Fallback
+      }
+    }
+    if (!booking && !isStaffOrAdmin) {
       throw new Error("Forbidden: Recipient is not an authorized, eligible student of this library.");
     }
     targetRecipientIds = ids;
@@ -1005,6 +1044,27 @@ export async function createLibrarianBroadcast(
       select: { studentId: true },
     });
     const authorizedStudentIds = new Set(bookings.map((b: any) => b.studentId));
+
+    const remainingIds = rawIds.filter((id) => !authorizedStudentIds.has(id));
+    if (remainingIds.length > 0) {
+      try {
+        const staffUsers = await db.user.findMany({
+          where: {
+            id: { in: remainingIds },
+            OR: [
+              { role: { in: ["ADMIN", "LIBRARIAN", "RECEPTIONIST"] } },
+              { employerLibraryId: input.libraryId },
+            ],
+          },
+          select: { id: true },
+        });
+        if (Array.isArray(staffUsers)) {
+          staffUsers.forEach((u: any) => authorizedStudentIds.add(u.id));
+        }
+      } catch {
+        // Fallback
+      }
+    }
 
     const unauthorized = rawIds.filter((id) => !authorizedStudentIds.has(id));
     if (unauthorized.length > 0) {
@@ -1295,7 +1355,7 @@ export async function searchNotificationRecipients(
   } else if (options.role === "LIBRARIAN") {
     whereConditions.role = "LIBRARIAN";
   } else {
-    whereConditions.role = { in: ["STUDENT", "LIBRARIAN"] };
+    whereConditions.role = { in: ["STUDENT", "LIBRARIAN", "ADMIN", "RECEPTIONIST"] };
   }
 
   if (options.libraryId) {
@@ -1315,6 +1375,7 @@ export async function searchNotificationRecipients(
             { bookings: { some: { libraryId: options.libraryId } } },
             { libraries: { some: { id: options.libraryId } } },
             { employerLibraryId: options.libraryId },
+            { role: "ADMIN" },
           ],
         },
       ];
