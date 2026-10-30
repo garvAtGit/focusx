@@ -1,6 +1,9 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import Image from 'next/image'
+import Link from 'next/link'
+import { motion, AnimatePresence } from 'framer-motion'
 import {
   RecaptchaVerifier,
   signInWithPhoneNumber,
@@ -18,7 +21,7 @@ import {
   InputOTPGroup,
   InputOTPSlot,
 } from "@/components/ui/input-otp"
-import { Loader2, Smartphone, Sparkles } from 'lucide-react'
+import { Loader2, Smartphone, ArrowLeft } from 'lucide-react'
 import { WhatsAppIcon } from '@/components/icons/WhatsAppIcon'
 import { syncUserOnSignup, checkUserExists, getPostLoginRedirect } from '@/app/actions/auth-actions'
 import toast from 'react-hot-toast'
@@ -352,222 +355,247 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4">
-      <div className="w-full max-w-md bg-card border border-border rounded-xl p-8 shadow-sm">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-heading font-bold text-primary mb-2">Welcome</h1>
-          <p className="text-muted-foreground">Sign in or create an account</p>
+    <div className="relative min-h-screen flex items-center justify-center bg-background px-4 py-12 overflow-hidden selection:bg-primary/20 selection:text-primary">
+      {/* Top Left FocusX Brand Header */}
+      <header className="absolute top-6 left-6 md:top-8 md:left-8 z-20">
+        <Link 
+          href="/" 
+          className="inline-flex items-center gap-2.5 group transition-transform active:scale-95"
+        >
+          <Image 
+            src="/final-logo.svg" 
+            alt="FocusX Logo" 
+            width={36} 
+            height={36} 
+            className="object-contain transition-transform duration-200 group-hover:scale-105" 
+            priority
+          />
+          <span className="text-xl font-heading font-bold text-foreground tracking-tight">
+            Focus<span className="text-primary">X</span>
+          </span>
+        </Link>
+      </header>
+
+      {/* Ambient subtle decorative background glows */}
+      <div className="pointer-events-none absolute -top-32 -left-32 w-80 h-80 bg-primary/5 rounded-full blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-32 -right-32 w-80 h-80 bg-emerald-500/5 rounded-full blur-3xl" />
+
+      {/* Card with subtle professional animation */}
+      <motion.div 
+        initial={{ opacity: 0, y: 16, scale: 0.99 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+        className="w-full max-w-md bg-card border border-border/80 rounded-2xl p-7 md:p-8 shadow-sm backdrop-blur-sm relative z-10"
+      >
+        <div className="text-center mb-6">
+          <h1 className="text-2xl md:text-3xl font-heading font-bold text-foreground mb-1.5">Welcome</h1>
+          <p className="text-sm text-muted-foreground">Sign in or create an account</p>
         </div>
 
-        <div id="recaptcha-container" className="mb-4 flex justify-center"></div>
+        <div id="recaptcha-container" className="mb-2 flex justify-center"></div>
 
-        {step === 'PHONE' && (
-          <form onSubmit={handleSendOtp} className="space-y-5">
-            <div className="space-y-2">
-              <Label htmlFor="phone">Student Contact Number</Label>
-              <div className="flex">
-                <div className="flex items-center justify-center bg-muted text-muted-foreground border border-border border-r-0 rounded-l-md px-3 font-medium">
-                  +91
-                </div>
-                <Input 
-                  id="phone" 
-                  type="tel" 
-                  value={phone}
-                  onChange={(e) => {
-                    const val = e.target.value.replace(/\D/g, '');
-                    if (val.length <= 10) setPhone(val);
-                  }}
-                  placeholder="9999999999" 
-                  className="rounded-l-none text-base"
-                  required 
-                  autoFocus
-                />
-              </div>
-            </div>
-
-            {/* OTP Channel Selector: WhatsApp (1-2s fast) vs SMS */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs text-muted-foreground uppercase font-semibold tracking-wider">
-                  Deliver OTP Via
-                </Label>
-                <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
-                  <Sparkles className="w-3 h-3" /> WhatsApp recommended
-                </span>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setOtpChannel('WHATSAPP')}
-                  className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg border text-sm font-medium transition-all ${
-                    otpChannel === 'WHATSAPP'
-                      ? 'border-emerald-500 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 ring-2 ring-emerald-500/30 font-semibold shadow-sm'
-                      : 'border-border bg-background hover:bg-muted text-muted-foreground'
-                  }`}
-                >
-                  <WhatsAppIcon className="w-4 h-4 text-[#25D366]" />
-                  <span>WhatsApp</span>
-                  <span className="text-[10px] bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 rounded font-bold">1-2s</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setOtpChannel('SMS')}
-                  className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg border text-sm font-medium transition-all ${
-                    otpChannel === 'SMS'
-                      ? 'border-primary bg-primary/10 text-primary ring-2 ring-primary/30 font-semibold shadow-sm'
-                      : 'border-border bg-background hover:bg-muted text-muted-foreground'
-                  }`}
-                >
-                  <Smartphone className="w-4 h-4" />
-                  <span>SMS</span>
-                </button>
-              </div>
-            </div>
-
-            <Button 
-              type="submit" 
-              className={`w-full h-11 ${
-                otpChannel === 'WHATSAPP'
-                  ? 'bg-[#25D366] hover:bg-[#20ba59] text-white font-semibold'
-                  : ''
-              }`} 
-              disabled={loading || phone.length !== 10}
+        <AnimatePresence mode="wait">
+          {step === 'PHONE' && (
+            <motion.div
+              key="step-phone"
+              initial={{ opacity: 0, x: -8 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 8 }}
+              transition={{ duration: 0.2 }}
             >
-              {loading ? (
-                <Loader2 className="w-5 h-5 animate-spin mr-2" />
-              ) : otpChannel === 'WHATSAPP' ? (
-                <WhatsAppIcon className="w-4 h-4 mr-2" />
-              ) : null}
-              {loading
-                ? "Sending..."
-                : otpChannel === 'WHATSAPP'
-                  ? "Send OTP via WhatsApp"
-                  : "Send OTP via SMS"}
-            </Button>
-          </form>
-        )}
-
-        {step === 'OTP' && (
-          <form ref={otpFormRef} onSubmit={handleVerifyOtp} className="space-y-6">
-            <div className="space-y-2 text-center">
-              <Label htmlFor="otp" className="text-sm font-medium">
-                Enter the 6-digit code sent via {otpChannel === 'WHATSAPP' ? 'WhatsApp' : 'SMS'} to{' '}
-                <span className="font-semibold text-foreground">+91 {phone}</span>
-              </Label>
-
-              {previewOtp && (
-                <div 
-                  onClick={() => setOtp(previewOtp)} 
-                  className="cursor-pointer mx-auto my-2 inline-flex items-center gap-1.5 text-xs bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 px-2.5 py-1 rounded-full font-mono hover:bg-emerald-100 dark:hover:bg-emerald-900 transition-colors"
-                  title="Click to auto-fill sandbox OTP"
-                >
-                  <span>⚡ Sandbox OTP: <strong>{previewOtp}</strong> (click to fill)</span>
+              <form onSubmit={handleSendOtp} className="space-y-5">
+                <div className="space-y-2">
+                  <Label htmlFor="phone">Student Contact Number</Label>
+                  <div className="flex">
+                    <div className="flex items-center justify-center bg-muted text-muted-foreground border border-border border-r-0 rounded-l-md px-3 font-medium">
+                      +91
+                    </div>
+                    <Input 
+                      id="phone" 
+                      type="tel" 
+                      value={phone}
+                      onChange={(e) => {
+                        const val = e.target.value.replace(/\D/g, '');
+                        if (val.length <= 10) setPhone(val);
+                      }}
+                      placeholder="9999999999" 
+                      className="rounded-l-none text-base"
+                      required 
+                      autoFocus
+                    />
+                  </div>
                 </div>
-              )}
 
-              <div className="flex justify-center pt-1">
-                <InputOTP 
-                  id="otp" 
-                  maxLength={6} 
-                  value={otp}
-                  onChange={(val) => setOtp(val)}
-                  autoFocus
+                {/* Primary Button: WhatsApp OTP by default */}
+                <Button 
+                  type="submit" 
+                  className="w-full h-11 bg-[#25D366] hover:bg-[#20ba59] text-white font-semibold transition-all shadow-sm hover:shadow active:scale-[0.99]" 
+                  disabled={loading || phone.length !== 10}
                 >
-                  <InputOTPGroup>
-                    <InputOTPSlot index={0} className="w-12 h-14 text-xl" />
-                    <InputOTPSlot index={1} className="w-12 h-14 text-xl" />
-                    <InputOTPSlot index={2} className="w-12 h-14 text-xl" />
-                    <InputOTPSlot index={3} className="w-12 h-14 text-xl" />
-                    <InputOTPSlot index={4} className="w-12 h-14 text-xl" />
-                    <InputOTPSlot index={5} className="w-12 h-14 text-xl" />
-                  </InputOTPGroup>
-                </InputOTP>
-              </div>
-            </div>
-
-            <Button type="submit" className="w-full h-11" disabled={loading || otp.length !== 6}>
-              {loading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : null}
-              {loading ? "Verifying..." : "Verify & Continue"}
-            </Button>
-
-            <div className="flex flex-col space-y-3 text-center pt-2">
-              <button 
-                type="button" 
-                onClick={() => resendTimer === 0 ? sendOtp(otpChannel) : undefined}
-                disabled={resendTimer > 0 || loading}
-                className={`text-sm ${resendTimer > 0 ? 'text-muted-foreground cursor-not-allowed' : 'text-primary hover:underline font-medium'}`}
-              >
-                {resendTimer > 0 
-                  ? `Resend via ${otpChannel === 'WHATSAPP' ? 'WhatsApp' : 'SMS'} in ${resendTimer}s` 
-                  : `Resend via ${otpChannel === 'WHATSAPP' ? 'WhatsApp' : 'SMS'}`}
-              </button>
-
-              {/* Cross-channel fallback */}
-              <div className="pt-2 border-t border-border/60">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const fallbackChannel = otpChannel === 'WHATSAPP' ? 'SMS' : 'WHATSAPP';
-                    sendOtp(fallbackChannel);
-                  }}
-                  disabled={loading}
-                  className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center justify-center gap-1.5 transition-colors"
-                >
-                  <span>Didn&apos;t receive code?</span>
-                  {otpChannel === 'WHATSAPP' ? (
-                    <span className="text-primary font-semibold hover:underline inline-flex items-center gap-1">
-                      <Smartphone className="w-3.5 h-3.5" /> Send via SMS instead
-                    </span>
+                  {loading && otpChannel === 'WHATSAPP' ? (
+                    <Loader2 className="w-5 h-5 animate-spin mr-2" />
                   ) : (
-                    <span className="text-emerald-600 dark:text-emerald-400 font-semibold hover:underline inline-flex items-center gap-1">
-                      <WhatsAppIcon className="w-3.5 h-3.5 text-[#25D366]" /> Send via WhatsApp instead
-                    </span>
+                    <WhatsAppIcon className="w-4 h-4 mr-2" />
                   )}
-                </button>
-              </div>
-              
-              <button 
-                type="button" 
-                onClick={() => {
-                  setStep('PHONE');
-                  setOtp('');
-                  setResendTimer(0);
-                  setPreviewOtp(null);
-                }}
-                className="text-xs text-muted-foreground hover:text-foreground pt-1"
-              >
-                Change phone number
-              </button>
-            </div>
-          </form>
-        )}
+                  {loading && otpChannel === 'WHATSAPP' ? "Sending code..." : "Send OTP via WhatsApp"}
+                </Button>
 
-        {step === 'NAME' && (
-          <form onSubmit={handleSaveName} className="space-y-6">
-            <div className="space-y-2 text-center">
-              <Label htmlFor="name" className="text-lg">What should we call you?</Label>
-              <p className="text-sm text-muted-foreground pb-2">Looks like you&apos;re new here!</p>
-              <Input 
-                id="name" 
-                type="text" 
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Enter your name" 
-                className="text-center h-12 text-lg"
-                required 
-                autoFocus
-              />
-            </div>
+                {/* Below button: click option to send through SMS */}
+                <div className="text-center pt-1">
+                  <button
+                    type="button"
+                    onClick={() => sendOtp('SMS')}
+                    disabled={loading || phone.length !== 10}
+                    className="text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed group inline-flex items-center gap-1.5"
+                  >
+                    <span>Prefer SMS?</span>
+                    <span className="font-semibold text-primary underline underline-offset-2 group-hover:text-primary/80 inline-flex items-center gap-1">
+                      <Smartphone className="w-3.5 h-3.5" /> Send code via SMS
+                    </span>
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          )}
 
-            <Button type="submit" className="w-full h-11" disabled={loading || !name.trim()}>
-              {loading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : null}
-              {loading ? "Saving..." : "Continue"}
-            </Button>
-          </form>
-        )}
-      </div>
+          {step === 'OTP' && (
+            <motion.div
+              key="step-otp"
+              initial={{ opacity: 0, x: -8 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 8 }}
+              transition={{ duration: 0.2 }}
+            >
+              <form ref={otpFormRef} onSubmit={handleVerifyOtp} className="space-y-6">
+                <div className="space-y-2 text-center">
+                  <Label htmlFor="otp" className="text-sm font-medium">
+                    Enter the 6-digit code sent via {otpChannel === 'WHATSAPP' ? 'WhatsApp' : 'SMS'} to{' '}
+                    <span className="font-semibold text-foreground">+91 {phone}</span>
+                  </Label>
+
+                  {previewOtp && (
+                    <motion.div 
+                      initial={{ scale: 0.9, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      onClick={() => setOtp(previewOtp)} 
+                      className="cursor-pointer mx-auto my-2 inline-flex items-center gap-1.5 text-xs bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 px-3 py-1 rounded-full font-mono hover:bg-emerald-100 dark:hover:bg-emerald-900 transition-colors shadow-xs"
+                      title="Click to auto-fill sandbox OTP"
+                    >
+                      <span>⚡ Sandbox OTP: <strong>{previewOtp}</strong> (click to fill)</span>
+                    </motion.div>
+                  )}
+
+                  <div className="flex justify-center pt-1">
+                    <InputOTP 
+                      id="otp" 
+                      maxLength={6} 
+                      value={otp}
+                      onChange={(val) => setOtp(val)}
+                      autoFocus
+                    >
+                      <InputOTPGroup>
+                        <InputOTPSlot index={0} className="w-12 h-14 text-xl" />
+                        <InputOTPSlot index={1} className="w-12 h-14 text-xl" />
+                        <InputOTPSlot index={2} className="w-12 h-14 text-xl" />
+                        <InputOTPSlot index={3} className="w-12 h-14 text-xl" />
+                        <InputOTPSlot index={4} className="w-12 h-14 text-xl" />
+                        <InputOTPSlot index={5} className="w-12 h-14 text-xl" />
+                      </InputOTPGroup>
+                    </InputOTP>
+                  </div>
+                </div>
+
+                <Button type="submit" className="w-full h-11" disabled={loading || otp.length !== 6}>
+                  {loading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : null}
+                  {loading ? "Verifying..." : "Verify & Continue"}
+                </Button>
+
+                <div className="flex flex-col space-y-3 text-center pt-2">
+                  <button 
+                    type="button" 
+                    onClick={() => resendTimer === 0 ? sendOtp(otpChannel) : undefined}
+                    disabled={resendTimer > 0 || loading}
+                    className={`text-sm ${resendTimer > 0 ? 'text-muted-foreground cursor-not-allowed' : 'text-primary hover:underline font-medium'}`}
+                  >
+                    {resendTimer > 0 
+                      ? `Resend via ${otpChannel === 'WHATSAPP' ? 'WhatsApp' : 'SMS'} in ${resendTimer}s` 
+                      : `Resend via ${otpChannel === 'WHATSAPP' ? 'WhatsApp' : 'SMS'}`}
+                  </button>
+
+                  {/* Cross-channel fallback */}
+                  <div className="pt-2 border-t border-border/60">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const fallbackChannel = otpChannel === 'WHATSAPP' ? 'SMS' : 'WHATSAPP';
+                        sendOtp(fallbackChannel);
+                      }}
+                      disabled={loading}
+                      className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                      <span>Didn&apos;t receive code?</span>
+                      {otpChannel === 'WHATSAPP' ? (
+                        <span className="text-primary font-semibold hover:underline inline-flex items-center gap-1">
+                          <Smartphone className="w-3.5 h-3.5" /> Send via SMS instead
+                        </span>
+                      ) : (
+                        <span className="text-emerald-600 dark:text-emerald-400 font-semibold hover:underline inline-flex items-center gap-1">
+                          <WhatsAppIcon className="w-3.5 h-3.5 text-[#25D366]" /> Send via WhatsApp instead
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                  
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      setStep('PHONE');
+                      setOtp('');
+                      setResendTimer(0);
+                      setPreviewOtp(null);
+                    }}
+                    className="text-xs text-muted-foreground hover:text-foreground pt-1 inline-flex items-center justify-center gap-1"
+                  >
+                    <ArrowLeft className="w-3 h-3" /> Change phone number
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          )}
+
+          {step === 'NAME' && (
+            <motion.div
+              key="step-name"
+              initial={{ opacity: 0, x: -8 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 8 }}
+              transition={{ duration: 0.2 }}
+            >
+              <form onSubmit={handleSaveName} className="space-y-6">
+                <div className="space-y-2 text-center">
+                  <Label htmlFor="name" className="text-lg">What should we call you?</Label>
+                  <p className="text-sm text-muted-foreground pb-2">Looks like you&apos;re new here!</p>
+                  <Input 
+                    id="name" 
+                    type="text" 
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Enter your name" 
+                    className="text-center h-12 text-lg"
+                    required 
+                    autoFocus
+                  />
+                </div>
+
+                <Button type="submit" className="w-full h-11" disabled={loading || !name.trim()}>
+                  {loading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : null}
+                  {loading ? "Saving..." : "Continue"}
+                </Button>
+              </form>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
     </div>
   )
 }

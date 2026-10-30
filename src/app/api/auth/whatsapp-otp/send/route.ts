@@ -44,3 +44,4 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Failed to dispatch WhatsApp OTP' }, { status: 500 });
   }
 }
+
