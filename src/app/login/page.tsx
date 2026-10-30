@@ -399,10 +399,10 @@ export default function LoginPage() {
                   </div>
                 </div>
 
-                {/* Primary Button: WhatsApp OTP by default */}
+                {/* Primary Button: WhatsApp OTP by default (matching classic blue) */}
                 <Button 
                   type="submit" 
-                  className="w-full h-11 bg-[#25D366] hover:bg-[#20ba59] text-white font-semibold transition-all shadow-sm hover:shadow active:scale-[0.99]" 
+                  className="w-full h-11 font-semibold" 
                   disabled={loading || phone.length !== 10}
                 >
                   {loading && otpChannel === 'WHATSAPP' ? (
@@ -413,18 +413,16 @@ export default function LoginPage() {
                   {loading && otpChannel === 'WHATSAPP' ? "Sending code..." : "Send OTP via WhatsApp"}
                 </Button>
 
-                {/* Below button: click option to send through SMS */}
+                {/* Below button: send through SMS option */}
                 <div className="text-center pt-1">
                   <button
                     type="button"
                     onClick={() => sendOtp('SMS')}
                     disabled={loading || phone.length !== 10}
-                    className="text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed group inline-flex items-center gap-1.5"
+                    className="text-xs text-primary font-medium hover:underline transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
                   >
-                    <span>Prefer SMS?</span>
-                    <span className="font-semibold text-primary underline underline-offset-2 group-hover:text-primary/80 inline-flex items-center gap-1">
-                      <Smartphone className="w-3.5 h-3.5" /> Send code via SMS
-                    </span>
+                    <Smartphone className="w-3.5 h-3.5" />
+                    <span>Send code via SMS</span>
                   </button>
                 </div>
               </form>
