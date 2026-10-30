@@ -56,6 +56,7 @@ import { ManualNotifyModal } from "@/components/ManualNotifyModal"
 import { AutoActionsLog } from "@/components/AutoActionsLog"
 import { WhatsAppIcon } from "@/components/icons/WhatsAppIcon"
 import { openWhatsAppChat } from "@/lib/whatsapp"
+import { WhatsAppMessageModal } from "@/components/whatsapp/WhatsAppMessageModal"
 
 type BookingWithDetails = Prisma.BookingGetPayload<{
   include: {
@@ -254,6 +255,14 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
   const [rfidTagInput, setRfidTagInput] = useState("");
   const [rfidQrPayload, setRfidQrPayload] = useState<string | null>(null);
   const [rfidLoading, setRfidLoading] = useState(false);
+
+  // WhatsApp Message Modal State
+  const [whatsAppModalData, setWhatsAppModalData] = useState<{
+    isOpen: boolean;
+    name: string;
+    phone: string;
+    initialMessage?: string;
+  } | null>(null);
 
   // OTP Verification States
   const [step, setStep] = useState<1 | 2>(1)
@@ -1198,10 +1207,15 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                               {booking.student.phone && (
                                 <button
                                   type="button"
-                                  title={`Direct WhatsApp to ${booking.student.name} (${booking.student.phone})`}
+                                  title={`Message ${booking.student.name} on WhatsApp`}
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    openWhatsAppChat(booking.student.phone, `Hello ${booking.student.name}, regarding your library membership: `);
+                                    setWhatsAppModalData({
+                                      isOpen: true,
+                                      name: booking.student.name,
+                                      phone: booking.student.phone!,
+                                      initialMessage: `Hello ${booking.student.name}, regarding your library membership: `,
+                                    });
                                   }}
                                   className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 p-1 rounded-full transition-colors flex items-center gap-1"
                                 >
@@ -1308,7 +1322,12 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                                   {booking.student.phone && (
                                     <DropdownMenuItem
                                       onClick={() => {
-                                        openWhatsAppChat(booking.student.phone, `Hello ${booking.student.name}, this is from library management.`);
+                                        setWhatsAppModalData({
+                                          isOpen: true,
+                                          name: booking.student.name,
+                                          phone: booking.student.phone!,
+                                          initialMessage: `Hello ${booking.student.name}, this is from library management. `,
+                                        });
                                       }}
                                       className="cursor-pointer px-2 py-2 text-sm font-semibold rounded-lg hover:bg-emerald-50 text-emerald-600 focus:bg-emerald-50 focus:text-emerald-700 flex items-center gap-2"
                                     >
@@ -1547,7 +1566,12 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                                 {booking.student.phone && (
                                   <DropdownMenuItem
                                     onClick={() => {
-                                      openWhatsAppChat(booking.student.phone, `Hello ${booking.student.name}, this is from library management.`);
+                                      setWhatsAppModalData({
+                                        isOpen: true,
+                                        name: booking.student.name,
+                                        phone: booking.student.phone!,
+                                        initialMessage: `Hello ${booking.student.name}, this is from library management. `,
+                                      });
                                     }}
                                     className="cursor-pointer px-2 py-2 text-sm font-semibold rounded-lg hover:bg-emerald-50 text-emerald-600 focus:bg-emerald-50 focus:text-emerald-700 flex items-center gap-2"
                                   >
@@ -1669,10 +1693,15 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                             {booking.student.phone && (
                               <button
                                 type="button"
-                                title={`Direct WhatsApp to ${booking.student.name} (${booking.student.phone})`}
+                                title={`Message ${booking.student.name} on WhatsApp`}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  openWhatsAppChat(booking.student.phone, `Hello ${booking.student.name}, regarding your library membership: `);
+                                  setWhatsAppModalData({
+                                    isOpen: true,
+                                    name: booking.student.name,
+                                    phone: booking.student.phone!,
+                                    initialMessage: `Hello ${booking.student.name}, regarding your library membership: `,
+                                  });
                                 }}
                                 className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 p-1 rounded-full transition-colors flex items-center gap-1 border border-emerald-200"
                               >
@@ -2402,6 +2431,17 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
           )}
         </DialogContent>
       </Dialog>
+
+      {whatsAppModalData && (
+        <WhatsAppMessageModal
+          open={whatsAppModalData.isOpen}
+          onOpenChange={(open) => setWhatsAppModalData((prev) => (prev ? { ...prev, isOpen: open } : null))}
+          recipientName={whatsAppModalData.name}
+          recipientPhone={whatsAppModalData.phone}
+          initialMessage={whatsAppModalData.initialMessage}
+          libraryName={bookings[0]?.plan?.name ? undefined : undefined}
+        />
+      )}
     </>
   )
 }
