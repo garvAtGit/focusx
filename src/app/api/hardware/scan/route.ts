@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { verifyRelayKey } from "@/lib/relay-auth";
 import { processAttendanceIntent } from "@/lib/attendance-core";
 import { resolveRelay } from "@/lib/hardware-resolver";
+import { supabaseServer } from "@/lib/supabase-server";
 
 export async function POST(request: NextRequest) {
   try {
@@ -49,11 +50,57 @@ export async function POST(request: NextRequest) {
 
     const libraryId = relay.libraryId;
 
-    // Touch relay active timestamps non-blockingly
+    // Touch relay active timestamps and update authentic hardware screen if attached
+    const screenObj = body.screen;
+    const hasScreen = screenObj && (screenObj.line0 !== undefined || screenObj.line1 !== undefined);
+    const line0 = hasScreen ? String(screenObj.line0 || "").slice(0, 32) : undefined;
+    const line1 = hasScreen ? String(screenObj.line1 || "").slice(0, 32) : undefined;
+    const backlight = hasScreen ? (typeof screenObj.backlight === "number" ? screenObj.backlight : 1) : undefined;
+    const now = new Date();
+
     prisma.relay.update({
       where: { id: relay.id },
-      data: { lastSeenAt: new Date(), lastSync: new Date(), status: "ONLINE" },
+      data: {
+        lastSeenAt: now,
+        lastSync: now,
+        status: "ONLINE",
+        ...(hasScreen ? {
+          lastScreenLine0: line0,
+          lastScreenLine1: line1,
+          lastScreenBacklight: backlight,
+          lastScreenUpdatedAt: now,
+        } : {})
+      },
     }).catch(() => {});
+
+    if (hasScreen) {
+      // Record authentic hardware screen transition (never synthetic)
+      prisma.deviceScreenHistory.create({
+        data: {
+          relayId: relay.id,
+          line0: line0 || "",
+          line1: line1 || "",
+          backlight: backlight ?? 1,
+          trigger: `SCAN_${scanType.toUpperCase()}`,
+          timestamp: now,
+        }
+      }).catch(() => {});
+
+      // Broadcast authentic screen to dashboard mirror
+      if (supabaseServer) {
+        supabaseServer.channel("admin-hardware-diagnostics").send({
+          type: "broadcast",
+          event: "screen_mirror",
+          payload: {
+            relayId: relay.id,
+            line0,
+            line1,
+            backlight,
+            updatedAt: now.toISOString(),
+          }
+        }).catch(() => {});
+      }
+    }
 
     // 4. Resolve Student ID
     let studentId: string | null = null;
@@ -164,31 +211,7 @@ export async function POST(request: NextRequest) {
       offlineDecision
     });
 
-    // Capture screen appearance for this scan event into timeline
-    try {
-      const line0Text = result.success ? `ALLOW: ${intendedAction === 'CHECK_IN' ? 'IN' : 'OUT'}` : "ACCESS DENIED";
-      let denyMsg = "ACCESS DENIED";
-      if (!result.success) {
-        if (result.code === "NO_ACTIVE_PLAN") denyMsg = "NO ACTIVE PLAN";
-        if (result.code === "ALREADY_CHECKED_IN") denyMsg = "ALREADY IN";
-        if (result.code === "ALREADY_CHECKED_OUT") denyMsg = "ALREADY OUT";
-        if (result.code === "ALREADY_PROCESSED_DENIED") denyMsg = "ACCESS DENIED";
-      }
-      const line1Text = result.success ? (result.message || "PROCEED") : denyMsg;
 
-      await prisma.deviceScreenHistory.create({
-        data: {
-          relayId: relay.id,
-          line0: line0Text.slice(0, 32),
-          line1: line1Text.slice(0, 32),
-          backlight: 1,
-          trigger: `SCAN_${scanType.toUpperCase()}_${result.success ? "ALLOW" : "DENY"}`,
-          timestamp: hardwareTimestamp || new Date(),
-        },
-      });
-    } catch (screenErr) {
-      console.error("[Screen History Scan Error]:", screenErr);
-    }
 
     // 7. Format response matching ESP32 contract perfectly
     if (result.success) {

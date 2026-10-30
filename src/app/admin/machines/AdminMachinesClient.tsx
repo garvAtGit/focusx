@@ -238,6 +238,45 @@ export function AdminMachinesClient({
     return () => clearInterval(interval);
   }, [livePeekRelayId, livePeekRemainingSec]);
 
+  // Fast poller fallback during active Live Peek (2.0s interval) to guarantee stream updates
+  useEffect(() => {
+    if (!livePeekRelayId || livePeekRemainingSec <= 0) return;
+
+    let isMounted = true;
+    const pollInterval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/hardware/screen-history?relayId=${livePeekRelayId}&limit=1`);
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && data.liveScreen) {
+            setLiveRelays((prev) => {
+              const current = prev[livePeekRelayId];
+              return {
+                ...prev,
+                [livePeekRelayId]: {
+                  ...(current || ({} as RelayData)),
+                  lastScreenLine0: data.liveScreen.line0,
+                  lastScreenLine1: data.liveScreen.line1,
+                  lastScreenBacklight: data.liveScreen.backlight,
+                  lastScreenUpdatedAt: data.liveScreen.updatedAt,
+                  lastSeenAt: data.liveScreen.lastSeenAt || current?.lastSeenAt,
+                  status: data.liveScreen.status || current?.status,
+                },
+              };
+            });
+          }
+        }
+      } catch {
+        // Polling error non-fatal
+      }
+    }, 2000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(pollInterval);
+    };
+  }, [livePeekRelayId, livePeekRemainingSec]);
+
   const openDiagModal = async (relay: RelayData) => {
     setActiveDiagRelay(relay);
     setIsLoadingDiag(true);
@@ -1173,13 +1212,18 @@ export function AdminMachinesClient({
                                               type="range"
                                               min={0}
                                               max={Math.max(0, history.length - 1)}
-                                              value={historyIndex}
-                                              onChange={(e) => setHistoryIndex(Number(e.target.value))}
+                                              value={Math.max(0, history.length - 1 - historyIndex)}
+                                              onChange={(e) => setHistoryIndex(Math.max(0, history.length - 1 - Number(e.target.value)))}
                                               className="w-full accent-amber-400 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
                                             />
-                                            <span className="text-[10px] font-mono text-slate-400">
-                                              Frame {history.length > 0 ? history.length - historyIndex : 0} of {history.length}
-                                            </span>
+                                            <div className="flex items-center justify-between w-full text-[10px] font-mono text-slate-400">
+                                              <span>Older ◄</span>
+                                              <span className="font-bold text-amber-300">
+                                                Frame {history.length > 0 ? history.length - historyIndex : 0} of {history.length}
+                                                {historyIndex === 0 ? " (Latest)" : ""}
+                                              </span>
+                                              <span>► Newer</span>
+                                            </div>
                                           </div>
 
                                           <button

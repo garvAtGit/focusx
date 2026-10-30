@@ -38,7 +38,7 @@ QueueHandle_t bleAuthQueue = NULL;
 FocusXDiagnostics DiagSubsystem;
 static unsigned long liveDebugUntilMs = 0; // Ephemeral 5-minute live peek stream state
 
-#define FOCUSX_FIRMWARE_VERSION "5.1.2-ota"
+#define FOCUSX_FIRMWARE_VERSION "5.1.3-ota"
 
 
 // Task Watchdog Timer: 30-second timeout provides ample headroom for legitimate
@@ -1369,12 +1369,32 @@ void sendHeartbeat() {
                    preferences.putString("lastAckStat", "SUCCESS");
                    Serial.println("[CMD] Remote snapshot sync requested.");
                    syncSnapshot(true);
+                } else if (action == "OPEN_IN" || action == "open_in") {
+                   preferences.putString("lastAckCmd", cmdId);
+                   preferences.putString("lastAckStat", "SUCCESS");
+                   Serial.println("[CMD] Remote gate OPEN_IN executed.");
+                   executeDirectUnlock(false);
+                } else if (action == "OPEN_OUT" || action == "open_out") {
+                   preferences.putString("lastAckCmd", cmdId);
+                   preferences.putString("lastAckStat", "SUCCESS");
+                   Serial.println("[CMD] Remote gate OPEN_OUT executed.");
+                   executeDirectUnlock(true);
                 }
              }
           } else if (resDoc.containsKey("pendingCommand") && !resDoc["pendingCommand"].isNull()) {
              // Fallback for legacy plain-string commands
              String pCmd = resDoc["pendingCommand"].as<String>();
-             if (pCmd.startsWith("OTA:")) {
+             if (pCmd == "open_in" || pCmd == "OPEN_IN") {
+                Serial.println("[CMD] Legacy remote gate open_in executed.");
+                preferences.putString("lastAckCmd", "legacy");
+                preferences.putString("lastAckStat", "SUCCESS");
+                executeDirectUnlock(false);
+             } else if (pCmd == "open_out" || pCmd == "OPEN_OUT") {
+                Serial.println("[CMD] Legacy remote gate open_out executed.");
+                preferences.putString("lastAckCmd", "legacy");
+                preferences.putString("lastAckStat", "SUCCESS");
+                executeDirectUnlock(true);
+             } else if (pCmd.startsWith("OTA:")) {
                 int c1 = pCmd.indexOf(':', 4);
                 int c2 = pCmd.indexOf(':', c1 + 1);
                 if (c1 > 0) {
@@ -1627,7 +1647,7 @@ void httpWorkerTask(void *pvParameters) {
         http.addHeader("Authorization", authHeader);
         http.setTimeout(12000);
 
-        StaticJsonDocument<512> reqDoc;
+        StaticJsonDocument<768> reqDoc;
         reqDoc["eventId"] = currentEvent.eventId;
         reqDoc["readerId"] = READER_ID.c_str();
         reqDoc["scanType"] = currentEvent.scanType;
@@ -1636,6 +1656,16 @@ void httpWorkerTask(void *pvParameters) {
         reqDoc["authRevision"] = currentEvent.authRevision;
         reqDoc["offlineDecision"] = currentEvent.offlineDecision ? "ALLOW" : "DENY";
         reqDoc["isExit"] = currentEvent.isExit;
+
+        // Virtual 16x2 LCD mirror hardware state
+        char sc0[17], sc1[17];
+        uint8_t scBl = 1;
+        uint32_t scAgeMs = 0;
+        lcd.getShadow(sc0, sc1, scBl, scAgeMs);
+        JsonObject screenObj = reqDoc.createNestedObject("screen");
+        screenObj["line0"] = sc0;
+        screenObj["line1"] = sc1;
+        screenObj["backlight"] = scBl;
         
         String requestBody;
         serializeJson(reqDoc, requestBody);

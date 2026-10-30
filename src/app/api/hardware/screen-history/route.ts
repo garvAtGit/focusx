@@ -42,23 +42,46 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "relayId or deviceId is required" }, { status: 400 });
     }
 
-    const history = await prisma.deviceScreenHistory.findMany({
-      where: { relayId: targetRelayId },
-      orderBy: { timestamp: "desc" },
-      take: limit,
-      select: {
-        id: true,
-        line0: true,
-        line1: true,
-        backlight: true,
-        trigger: true,
-        timestamp: true,
-      },
-    });
+    const [history, relay] = await Promise.all([
+      prisma.deviceScreenHistory.findMany({
+        where: { relayId: targetRelayId },
+        orderBy: { timestamp: "desc" },
+        take: limit,
+        select: {
+          id: true,
+          line0: true,
+          line1: true,
+          backlight: true,
+          trigger: true,
+          timestamp: true,
+        },
+      }),
+      prisma.relay.findUnique({
+        where: { id: targetRelayId },
+        select: {
+          id: true,
+          lastScreenLine0: true,
+          lastScreenLine1: true,
+          lastScreenBacklight: true,
+          lastScreenUpdatedAt: true,
+          status: true,
+          lastSeenAt: true,
+          liveDebugUntil: true,
+        },
+      }),
+    ]);
 
     return NextResponse.json({
       success: true,
       relayId: targetRelayId,
+      liveScreen: relay ? {
+        line0: relay.lastScreenLine0,
+        line1: relay.lastScreenLine1,
+        backlight: relay.lastScreenBacklight,
+        updatedAt: relay.lastScreenUpdatedAt,
+        lastSeenAt: relay.lastSeenAt,
+        status: relay.status,
+      } : null,
       history,
     });
   } catch (error) {
