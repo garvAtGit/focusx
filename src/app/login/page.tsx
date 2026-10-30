@@ -598,17 +598,6 @@ export default function LoginPage() {
             )}
           </AnimatePresence>
         </motion.div>
-
-        {/* Social Proof Trust Badges */}
-        <div className="mt-6 flex flex-wrap items-center justify-center gap-3 text-xs text-slate-400 select-none">
-          <span className="inline-flex items-center gap-1">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" /> 256-bit Secure
-          </span>
-          <span>•</span>
-          <span>Instant 1-2s OTP</span>
-          <span>•</span>
-          <span>50+ Study Libraries</span>
-        </div>
       </main>
 
       {/* Footer */}
