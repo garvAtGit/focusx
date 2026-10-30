@@ -64,7 +64,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
   const studentName = student?.name || "Student";
   const studentId = student?.uniqueId || "FD-000000";
   const studentPhoto = student?.profilePhotoUrl || 'https://images.unsplash.com/photo-1507842217343-583bb7270b66?q=80&w=2000&auto=format&fit=crop';
-  const streak = student?.currentStreak || 0;
+  // Streak is computed below based on Winter Arc check-in sessions
   // Daily target in hours (dynamic from DB pledge.leagueHours e.g. 6, 8, 10, 12, 24)
   const dailyTargetHours = pledge?.leagueHours || (pledge?.targetHours && pledge.targetHours <= 24 ? pledge.targetHours : 8);
   // Season/Monthly target in hours (dynamic from DB pledge.targetHours e.g. 150, 200, 250, 300)
@@ -86,6 +86,9 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
 
   const toISTDisplayDate = (d: Date | string | number) =>
     new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Asia/Kolkata' }).format(new Date(d));
+
+  const toISTFullDate = (d: Date | string | number) =>
+    new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'long', day: 'numeric', timeZone: 'Asia/Kolkata' }).format(new Date(d));
 
   const toISTTimeStr = (d: Date | string | number) =>
     new Intl.DateTimeFormat('en-IN', {
@@ -230,19 +233,21 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
   }
 
   const ARC_START_KEY = '2026-10-06';
+  const ARC_END_KEY = '2026-11-06';
+  const TOTAL_ARC_DAYS = 32; // Oct 6 to Nov 6 inclusive
 
   const getArcDayNumber = (dateKey: string) => {
     const start = new Date('2026-10-06T00:00:00+05:30').getTime();
     const current = new Date(`${dateKey}T00:00:00+05:30`).getTime();
     const diffDays = Math.round((current - start) / (24 * 60 * 60 * 1000));
-    return Math.max(1, diffDays + 1);
+    return Math.min(TOTAL_ARC_DAYS, Math.max(1, diffDays + 1));
   };
 
-  // Group sessions by the IST date of check-in (scoped to Winter Arc start date)
+  // Group sessions by the IST date of check-in (scoped strictly to Winter Arc window: Oct 6 to Nov 6)
   const groupedByDate: Record<string, SessionItem[]> = {};
   for (const s of builtSessions) {
     const dateKey = toISTDateStr(s.inTime);
-    if (dateKey < ARC_START_KEY) continue; // Filter out old pre-challenge logs
+    if (dateKey < ARC_START_KEY || dateKey > ARC_END_KEY) continue; // Filter strictly to challenge dates
     if (!groupedByDate[dateKey]) groupedByDate[dateKey] = [];
     groupedByDate[dateKey].push(s);
   }
@@ -267,20 +272,55 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
     }
   }
 
-  // Compute Arc Total hours (since Oct 6 start)
+  // Compute Arc Total hours (strictly within Oct 6 to Nov 6 challenge period)
   let arcTotalMinutes = 0;
   for (const s of builtSessions) {
-    if (toISTDateStr(s.inTime) >= ARC_START_KEY) {
+    const dKey = toISTDateStr(s.inTime);
+    if (dKey >= ARC_START_KEY && dKey <= ARC_END_KEY) {
       arcTotalMinutes += s.durationMinutes;
     }
   }
   const monthlyHours = Math.floor(arcTotalMinutes / 60);
+  const arcSeasonProgressPercent = Math.min(100, Math.floor((monthlyHours / seasonTargetHours) * 100));
 
   const focusStr = `${Math.floor(todaysFocusMinutes / 60)}h ${todaysFocusMinutes % 60}m`;
   const progressPercent = Math.min(100, Math.floor((todaysFocusMinutes / (dailyTargetHours * 60)) * 100));
 
   // Build ledger items (sorted newest first)
   const sortedDateKeys = Object.keys(groupedByDate).sort((a, b) => b.localeCompare(a));
+  const totalActiveDays = sortedDateKeys.length;
+  const activeDatesSet = new Set(sortedDateKeys);
+
+  // Compute consecutive days streak within the Winter Arc window up to today (with yesterday grace)
+  const yesterdayDate = new Date(nowTime);
+  yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+  const yesterdayIST = toISTDateStr(yesterdayDate);
+
+  let consecutiveStreak = 0;
+  let walkerDate: Date | null = null;
+
+  if (activeDatesSet.has(todayIST)) {
+    walkerDate = new Date(nowTime);
+  } else if (activeDatesSet.has(yesterdayIST)) {
+    walkerDate = yesterdayDate;
+  }
+
+  if (walkerDate) {
+    const temp = new Date(walkerDate);
+    while (true) {
+      const dKey = toISTDateStr(temp);
+      if (dKey < ARC_START_KEY) break;
+      if (activeDatesSet.has(dKey)) {
+        consecutiveStreak++;
+        temp.setDate(temp.getDate() - 1);
+      } else {
+        break;
+      }
+    }
+  }
+
+  // Challenge streak reflects student's active days in Winter Arc (or consecutive streak / DB streak if higher)
+  const streak = Math.max(totalActiveDays, consecutiveStreak, student?.currentStreak || 0);
   const allLedgerLogs = sortedDateKeys.map((dateKey) => {
     const daySessions = groupedByDate[dateKey];
     const totalMs = daySessions.reduce((sum, s) => sum + s.durationMs, 0);
@@ -353,6 +393,14 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
             <div className="text-right flex flex-col items-end">
               <span className={`${inter.className} text-[9px] uppercase tracking-[0.2em] text-[#8c7c6c] mb-1`}>Streak</span>
               <span className={`${playfair.className} text-2xl font-bold text-[#d9a05b] drop-shadow-[0_0_8px_rgba(217,160,91,0.4)]`}>{streak}</span>
+              <span className={`${inter.className} text-[8px] text-[#8c7c6c] tracking-wider mt-0.5`}>
+                {totalActiveDays} of {TOTAL_ARC_DAYS} Days
+              </span>
+              {consecutiveStreak > 1 && (
+                <span className={`${inter.className} text-[8px] text-[#d9a05b] tracking-wider mt-0.5`}>
+                  🔥 {consecutiveStreak}d streak
+                </span>
+              )}
             </div>
           </div>
 
@@ -412,7 +460,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
               <h2 className={`${playfair.className} text-xl text-[#f5ecd8]`}>Winter Arc</h2>
             </div>
             <span className={`${inter.className} text-[9px] uppercase tracking-[0.2em] text-[#93c5fd] border border-[#93c5fd]/30 bg-[#93c5fd]/10 px-2 py-1`}>
-              Active
+              Oct 6 – Nov 6
             </span>
           </div>
 
@@ -438,7 +486,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
           </div>
 
           <div className="flex justify-between items-center text-[11px] text-[#8c7c6c]">
-            <span className={`${inter.className} uppercase tracking-wider`}>Monthly Arc: {monthlyHours} / {seasonTargetHours} hrs</span>
+            <span className={`${inter.className} uppercase tracking-wider`}>Season Arc: {monthlyHours} / {seasonTargetHours} hrs ({arcSeasonProgressPercent}%)</span>
             <span className={`${playfair.className} italic text-[#d9a05b]`}>The hearth is lit.</span>
           </div>
         </motion.div>
@@ -450,9 +498,14 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
           transition={{ delay: 0.12 }}
           className="border border-[#4a3b32] bg-[#140f0c]/85 backdrop-blur-xl p-6 relative rounded-sm"
         >
-          <div className="flex items-center gap-3 mb-6 border-b border-[#362b24] pb-4">
-            <ScrollText size={18} className="text-[#b5a796]" />
-            <h2 className={`${playfair.className} text-xl text-[#f5ecd8]`}>The Arc Ledger</h2>
+          <div className="flex items-center justify-between mb-6 border-b border-[#362b24] pb-4">
+            <div className="flex items-center gap-3">
+              <ScrollText size={18} className="text-[#b5a796]" />
+              <h2 className={`${playfair.className} text-xl text-[#f5ecd8]`}>The Arc Ledger</h2>
+            </div>
+            <span className={`${inter.className} text-[10px] tracking-widest text-[#a39687] uppercase`}>
+              {allLedgerLogs.length} of {TOTAL_ARC_DAYS} Days Active
+            </span>
           </div>
 
           <div className="space-y-4">
@@ -577,14 +630,14 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
           <div className="mb-6">
             <h2 className={`${playfair.className} text-2xl text-[#f5ecd8] mb-1`}>Top Scholars</h2>
             <div className="flex items-center gap-1 text-[#b5a796] cursor-pointer">
-              <span className={`${inter.className} text-xs tracking-wide`}>Shanti Library</span>
+              <span className={`${inter.className} text-xs tracking-wide`}>{activeBooking?.library?.name || "FocusX"}</span>
               <ChevronDown size={14} />
             </div>
           </div>
 
           {/* Tabs */}
           <div className="flex w-full mb-8 border-b border-[#362b24]">
-            {['Today', 'This Week', 'This Month'].map((tab) => (
+            {['Today', 'This Week', 'Winter Arc'].map((tab) => (
               <button 
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -610,7 +663,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
               else if (topScholars) {
                 if (activeTab === 'Today') scholarsToRender = topScholars.today || [];
                 else if (activeTab === 'This Week') scholarsToRender = topScholars.week || [];
-                else if (activeTab === 'This Month') scholarsToRender = topScholars.month || [];
+                else if (activeTab === 'Winter Arc' || activeTab === 'This Month') scholarsToRender = topScholars.month || [];
               }
               return scholarsToRender;
             })().map((scholar: any, i: number) => (
@@ -659,18 +712,12 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
           className="border border-[#4a3b32] bg-[#140f0c]/85 backdrop-blur-xl p-5 flex justify-between items-center rounded-sm"
         >
           <span className={`${playfair.className} text-lg text-[#f5ecd8]`}>
-            Fri, October 2
+            {toISTFullDate(nowTime)}
           </span>
           <div className="flex items-center gap-3">
-            <button className="w-6 h-6 border border-[#362b24] flex items-center justify-center hover:bg-[#1a1410] transition-colors rounded-sm text-[#b5a796]">
-              <ChevronLeft size={12} />
-            </button>
             <span className={`${inter.className} text-[10px] tracking-widest text-[#a39687] uppercase`}>
-              Oct 2026
+              Day {getArcDayNumber(todayIST)} of {TOTAL_ARC_DAYS}
             </span>
-            <button className="w-6 h-6 border border-[#362b24] flex items-center justify-center hover:bg-[#1a1410] transition-colors rounded-sm text-[#b5a796]">
-              <ChevronRight size={12} />
-            </button>
           </div>
         </motion.div>
 

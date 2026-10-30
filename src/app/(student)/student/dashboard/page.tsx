@@ -41,11 +41,11 @@ export default async function StudentDashboardPage() {
     if (hasPledged) {
 const todayStart = startOfDayIST(new Date());
       const weekStart = subDays(todayStart, 6); // 7-day rolling window
-      const monthStart = startOfMonth(new Date());
-      const fetchStart = weekStart < monthStart ? weekStart : monthStart;
+      const arcStart = new Date('2026-10-06T00:00:00+05:30');
+      const arcEnd = new Date('2026-11-06T23:59:59+05:30');
       
       const allMonthLogs = await prisma.checkinLog.findMany({
-where: { timestamp: { gte: fetchStart } },
+        where: { timestamp: { gte: arcStart, lte: arcEnd } },
         include: { student: { select: { name: true, profilePhotoUrl: true } } }
       });
 
@@ -94,9 +94,18 @@ where: { timestamp: { gte: fetchStart } },
           }));
       };
 
-      topScholars.month = getTop(allMonthLogs.filter(l => new Date(l.timestamp) >= monthStart));
-      topScholars.week = getTop(allMonthLogs.filter(l => new Date(l.timestamp) >= weekStart));
-      topScholars.today = getTop(allMonthLogs.filter(l => new Date(l.timestamp) >= todayStart));
+      topScholars.month = getTop(allMonthLogs.filter(l => {
+        const t = new Date(l.timestamp);
+        return t >= arcStart && t <= arcEnd;
+      }));
+      topScholars.week = getTop(allMonthLogs.filter(l => {
+        const t = new Date(l.timestamp);
+        return t >= weekStart && t <= arcEnd;
+      }));
+      topScholars.today = getTop(allMonthLogs.filter(l => {
+        const t = new Date(l.timestamp);
+        return t >= todayStart && t <= arcEnd;
+      }));
     }
   }
 
@@ -120,7 +129,7 @@ where: { timestamp: { gte: fetchStart } },
     prisma.checkinLog.findMany({
       where: { 
         studentId: session.userId,
-        timestamp: { gte: new Date(new Date().setDate(now.getDate() - 35)) }
+        timestamp: { gte: new Date('2026-10-01T00:00:00+05:30') }
       },
       orderBy: { timestamp: 'asc' }
     })
@@ -138,7 +147,8 @@ where: { timestamp: { gte: fetchStart } },
       }
     }
     
-    const isCheckedIn = recentLogs.length > 0 && recentLogs[recentLogs.length - 1].status === 'CHECK_IN' && recentLogs[recentLogs.length - 1].libraryId === libraryId;
+    const lastLog = recentLogs[recentLogs.length - 1];
+    const isCheckedIn = !!lastLog && lastLog.status === 'CHECK_IN' && (!libraryId || lastLog.libraryId === libraryId);
 
     return <CozyWinterDashboard 
       student={student} 
