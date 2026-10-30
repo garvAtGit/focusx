@@ -20,6 +20,12 @@ import {
   ChevronUp,
   Layers,
   Zap,
+  Monitor,
+  Activity,
+  Terminal,
+  RefreshCw,
+  X,
+  Clock,
 } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
 import toast from "react-hot-toast";
@@ -37,6 +43,15 @@ type RelayData = {
   lastSync: Date | string;
   lastSeenAt: Date | string | null;
   pendingCommand: string | null;
+  firmwareVersion?: string | null;
+  lastScreenLine0?: string | null;
+  lastScreenLine1?: string | null;
+  lastScreenBacklight?: number | null;
+  lastScreenUpdatedAt?: Date | string | null;
+  diagQueueDepth?: number | null;
+  diagDroppedCount?: number | null;
+  lastDiagAckAt?: Date | string | null;
+  resetReason?: string | null;
   createdAt: Date | string;
 };
 
@@ -81,6 +96,28 @@ export function AdminMachinesClient({
   });
   const [isSendingCmd, setIsSendingCmd] = useState<string | null>(null);
   const [expandedLibraries, setExpandedLibraries] = useState<Record<string, boolean>>({});
+  const [activeDiagRelay, setActiveDiagRelay] = useState<RelayData | null>(null);
+  const [diagLogs, setDiagLogs] = useState<any[]>([]);
+  const [isLoadingDiag, setIsLoadingDiag] = useState(false);
+  const [diagFilter, setDiagFilter] = useState<string>("ALL");
+
+  const openDiagModal = async (relay: RelayData) => {
+    setActiveDiagRelay(relay);
+    setIsLoadingDiag(true);
+    try {
+      const res = await fetch(`/api/hardware/diagnostics?relayId=${relay.id}&limit=50`);
+      if (res.ok) {
+        const data = await res.json();
+        setDiagLogs(data.logs || []);
+      } else {
+        toast.error("Failed to load diagnostic logs");
+      }
+    } catch {
+      toast.error("Network error loading diagnostics");
+    } finally {
+      setIsLoadingDiag(false);
+    }
+  };
 
   useEffect(() => {
     if (!supabaseUrl || !supabaseKey) return;
@@ -130,6 +167,27 @@ export function AdminMachinesClient({
           }
         }
       )
+      .on("broadcast", { event: "screen_mirror" }, (msg: any) => {
+        const p = msg?.payload;
+        if (p?.relayId) {
+          setLiveRelays((prev) => {
+            const current = prev[p.relayId];
+            return {
+              ...prev,
+              [p.relayId]: {
+                ...(current || ({} as RelayData)),
+                lastScreenLine0: p.line0,
+                lastScreenLine1: p.line1,
+                lastScreenBacklight: p.backlight,
+                lastScreenUpdatedAt: p.updatedAt,
+                diagQueueDepth: p.diagQueueDepth,
+                diagDroppedCount: p.diagDroppedCount,
+                resetReason: p.resetReason,
+              },
+            };
+          });
+        }
+      })
       .subscribe();
 
     return () => {
@@ -813,6 +871,134 @@ export function AdminMachinesClient({
                               {/* WiFi RSSI */}
                               {renderRssi(modules.rssi)}
                             </div>
+
+                            {/* FocusX Virtual 16x2 LCD Mirror & Diagnostics Subsystem Bar */}
+                            <div className="mt-5 pt-4 border-t border-slate-100 grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
+                              {/* Left: Virtual 16x2 LCD Mirror */}
+                              <div className="lg:col-span-7 bg-slate-950 p-4 rounded-2xl border border-slate-800 shadow-inner flex flex-col justify-between">
+                                <div className="flex items-center justify-between text-[11px] font-sans font-bold text-slate-400 mb-2 pb-1.5 border-b border-slate-800">
+                                  <div className="flex items-center gap-2">
+                                    <Monitor className="w-3.5 h-3.5 text-[#39e58c]" />
+                                    <span className="text-slate-200">Virtual 16x2 LCD Mirror</span>
+                                    <span
+                                      className={`px-2 py-0.5 rounded-full text-[9px] font-mono uppercase tracking-wider ${
+                                        (relay.lastScreenBacklight ?? 1) > 0
+                                          ? "bg-emerald-950 text-emerald-300 border border-emerald-800"
+                                          : "bg-slate-900 text-slate-500 border border-slate-800"
+                                      }`}
+                                    >
+                                      Backlight: {(relay.lastScreenBacklight ?? 1) > 0 ? "ON" : "OFF"}
+                                    </span>
+                                  </div>
+
+                                  {/* Stale Check (>90 seconds) */}
+                                  {(() => {
+                                    const screenTs = relay.lastScreenUpdatedAt ? new Date(relay.lastScreenUpdatedAt).getTime() : 0;
+                                    const isStale = !screenTs || (Date.now() - screenTs > 90000);
+                                    return (
+                                      <span
+                                        className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-bold ${
+                                          isStale
+                                            ? "bg-amber-950/80 text-amber-400 border border-amber-800/70"
+                                            : "bg-emerald-950/80 text-emerald-400 border border-emerald-800/70"
+                                        }`}
+                                      >
+                                        <Clock className="w-2.5 h-2.5" />
+                                        {isStale ? "Mirror Stale (>90s)" : "Mirror Live"}
+                                      </span>
+                                    );
+                                  })()}
+                                </div>
+
+                                {/* Monospace 16x2 Character Matrix */}
+                                <div
+                                  className={`p-3 rounded-xl border font-mono tracking-widest text-[13px] leading-relaxed select-all transition-all duration-300 ${
+                                    (relay.lastScreenBacklight ?? 1) > 0
+                                      ? "bg-[#0c2b1e] text-[#39e58c] border-[#1b5e3f] shadow-[0_0_15px_rgba(57,229,140,0.15)]"
+                                      : "bg-[#14171a] text-slate-500 border-slate-800"
+                                  }`}
+                                >
+                                  <div className="font-bold whitespace-pre font-mono">
+                                    {(relay.lastScreenLine0 || "FOCUSX READY").padEnd(16, " ").slice(0, 16)}
+                                  </div>
+                                  <div className="font-bold whitespace-pre font-mono">
+                                    {(relay.lastScreenLine1 || "TAP RFID / BLE").padEnd(16, " ").slice(0, 16)}
+                                  </div>
+                                </div>
+
+                                <div className="mt-2 flex items-center justify-between text-[10px] text-slate-500 font-sans">
+                                  <span>Matrix: 16 Cols x 2 Rows</span>
+                                  <span>
+                                    Updated:{" "}
+                                    {relay.lastScreenUpdatedAt
+                                      ? new Date(relay.lastScreenUpdatedAt).toLocaleTimeString("en-IN", {
+                                          timeZone: "Asia/Kolkata",
+                                        })
+                                      : "Waiting for heartbeat..."}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Right: Diagnostics Telemetry & Logs Drawer Trigger */}
+                              <div className="lg:col-span-5 bg-slate-50 p-4 rounded-2xl border border-slate-200/80 flex flex-col justify-between">
+                                <div>
+                                  <div className="flex items-center justify-between mb-2">
+                                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                                      <Activity className="w-3.5 h-3.5 text-[#2781CA]" />
+                                      Fault Diagnostics Subsystem
+                                    </span>
+                                    <span className="text-[10px] font-mono font-bold text-slate-400">
+                                      {relay.firmwareVersion || "v5.1.1-ota"}
+                                    </span>
+                                  </div>
+
+                                  <div className="grid grid-cols-2 gap-2 text-xs font-medium my-2">
+                                    <div className="p-2 rounded-xl bg-white border border-slate-200/70 shadow-2xs">
+                                      <span className="text-[10px] text-slate-400 block font-bold uppercase">Reset Reason</span>
+                                      <span className="font-mono font-bold text-slate-800 truncate block text-[11px]" title={relay.resetReason || "POWERON_RESET"}>
+                                        {relay.resetReason || "POWERON_RESET"}
+                                      </span>
+                                    </div>
+
+                                    <div className="p-2 rounded-xl bg-white border border-slate-200/70 shadow-2xs">
+                                      <span className="text-[10px] text-slate-400 block font-bold uppercase">Ring Buffer</span>
+                                      <span className="font-mono font-bold text-slate-800 block text-[11px]">
+                                        {relay.diagQueueDepth ?? 0} / 64 events
+                                      </span>
+                                    </div>
+
+                                    <div className="p-2 rounded-xl bg-white border border-slate-200/70 shadow-2xs">
+                                      <span className="text-[10px] text-slate-400 block font-bold uppercase">Dropped Faults</span>
+                                      <span
+                                        className={`font-mono font-bold block text-[11px] ${
+                                          (relay.diagDroppedCount ?? 0) > 0 ? "text-rose-600 font-black" : "text-emerald-700"
+                                        }`}
+                                      >
+                                        {relay.diagDroppedCount ?? 0} dropped
+                                      </span>
+                                    </div>
+
+                                    <div className="p-2 rounded-xl bg-white border border-slate-200/70 shadow-2xs">
+                                      <span className="text-[10px] text-slate-400 block font-bold uppercase">Last Ingest ACK</span>
+                                      <span className="font-mono text-slate-600 block text-[10px]">
+                                        {relay.lastDiagAckAt
+                                          ? new Date(relay.lastDiagAckAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })
+                                          : "Never"}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => openDiagModal(relay)}
+                                  className="w-full mt-2 py-2 px-3 rounded-xl bg-[#2781CA]/10 hover:bg-[#2781CA]/20 text-[#2781CA] border border-[#2781CA]/30 text-xs font-bold flex items-center justify-center gap-2 transition-all active:scale-98 shadow-xs"
+                                >
+                                  <Terminal className="w-3.5 h-3.5" />
+                                  <span>View Remote Fault Audit Logs</span>
+                                </button>
+                              </div>
+                            </div>
                           </div>
                         );
                       })
@@ -824,6 +1010,147 @@ export function AdminMachinesClient({
           })
         )}
       </div>
+
+      {/* Diagnostics Fault Audit Modal */}
+      {activeDiagRelay && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-4xl w-full max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-[#2781CA]/10 text-[#2781CA] border border-[#2781CA]/20 flex items-center justify-center">
+                  <Terminal className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-slate-900 text-lg">
+                    Device Fault Diagnostics & Remote Audit
+                  </h3>
+                  <p className="text-xs font-medium text-slate-500">
+                    Relay ID: <span className="font-mono text-slate-700">{activeDiagRelay.id}</span> | MAC:{" "}
+                    <span className="font-mono text-slate-700">{activeDiagRelay.macAddress || "N/A"}</span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => openDiagModal(activeDiagRelay)}
+                  disabled={isLoadingDiag}
+                  className="p-2 rounded-xl text-slate-500 hover:text-slate-900 hover:bg-slate-100 border border-slate-200 transition-colors"
+                  title="Refresh Logs"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isLoadingDiag ? "animate-spin" : ""}`} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveDiagRelay(null)}
+                  className="p-2 rounded-xl text-slate-500 hover:text-slate-900 hover:bg-slate-100 border border-slate-200 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Filter Tabs */}
+            <div className="px-6 py-3 border-b border-slate-100 bg-white flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-400 mr-2 uppercase tracking-wider">Severity:</span>
+              {["ALL", "CRITICAL", "ERROR", "WARN", "INFO"].map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setDiagFilter(tab)}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                    diagFilter === tab
+                      ? "bg-slate-900 text-white"
+                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  }`}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
+
+            {/* Logs List Container */}
+            <div className="p-6 overflow-y-auto flex-1 space-y-2.5 bg-slate-50/30">
+              {isLoadingDiag ? (
+                <div className="py-16 text-center text-slate-400 flex flex-col items-center gap-2">
+                  <RefreshCw className="w-6 h-6 animate-spin text-[#2781CA]" />
+                  <span className="text-xs font-bold">Querying server diagnostic ingestion records...</span>
+                </div>
+              ) : diagLogs.filter((l) => diagFilter === "ALL" || l.severity === diagFilter).length === 0 ? (
+                <div className="py-16 text-center text-slate-500 bg-white rounded-2xl border border-dashed border-slate-200">
+                  <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
+                  <p className="text-sm font-bold text-slate-800">No matching fault events found</p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    The isolated diagnostics subsystem reports zero unacknowledged faults for this filter.
+                  </p>
+                </div>
+              ) : (
+                diagLogs
+                  .filter((l) => diagFilter === "ALL" || l.severity === diagFilter)
+                  .map((log) => {
+                    const sev = log.severity;
+                    const sevColor =
+                      sev === "FATAL"
+                        ? "bg-rose-100 text-rose-900 border-rose-300"
+                        : sev === "CRITICAL"
+                        ? "bg-red-100 text-red-800 border-red-300"
+                        : sev === "ERROR"
+                        ? "bg-orange-100 text-orange-800 border-orange-300"
+                        : sev === "WARN"
+                        ? "bg-amber-100 text-amber-800 border-amber-300"
+                        : "bg-sky-100 text-sky-800 border-sky-300";
+
+                    return (
+                      <div
+                        key={log.id}
+                        className="p-3.5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs hover:border-slate-300 transition-all text-xs"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${sevColor}`}>
+                              {sev}
+                            </span>
+                            <span className="font-mono font-bold text-slate-700">Code #{log.eventCode}</span>
+                            <span className="font-mono text-[11px] text-slate-400">{log.eventId}</span>
+                          </div>
+                          <div className="text-[11px] text-slate-400 font-mono">
+                            {new Date(log.timestamp).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}
+                          </div>
+                        </div>
+
+                        {log.detail && (
+                          <div className="font-semibold text-slate-800 mb-1">
+                            {log.detail}
+                          </div>
+                        )}
+
+                        <div className="flex flex-wrap items-center gap-4 text-[11px] text-slate-500 font-mono pt-1 border-t border-slate-100">
+                          <span>Uptime: {Math.floor(Number(log.uptimeMs) / 1000)}s</span>
+                          {log.param1 !== null && <span>Param1: {log.param1}</span>}
+                          {log.param2 !== null && <span>Param2: {log.param2}</span>}
+                        </div>
+                      </div>
+                    );
+                  })
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-100 bg-white flex justify-between items-center text-xs text-slate-400">
+              <span>Diagnostics isolated from attendance decision critical path</span>
+              <button
+                type="button"
+                onClick={() => setActiveDiagRelay(null)}
+                className="px-4 py-2 rounded-xl bg-slate-900 text-white font-bold hover:bg-slate-800 transition-colors"
+              >
+                Close Audit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

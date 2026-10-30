@@ -5,6 +5,7 @@ import prisma from "@/lib/prisma";
 import { verifyRelayKey } from "@/lib/relay-auth";
 import { handleDeviceOtaAck } from "@/lib/ota-rollout-service";
 import { resolveRelay } from "@/lib/hardware-resolver";
+import { supabaseServer } from "@/lib/supabase-server";
 
 const RELEASE_DIR = path.join(process.cwd(), "firmware_releases");
 const MANIFEST_PATH = path.join(RELEASE_DIR, "manifest.json");
@@ -54,8 +55,36 @@ export async function POST(request: NextRequest) {
     const fwVersion = statusPayload.firmwareVersion ? String(statusPayload.firmwareVersion) : undefined;
     const fwChanged = Boolean(fwVersion && fwVersion !== relay.firmwareVersion);
 
-    // Throttle updates: only hit PostgreSQL if > 45 seconds have elapsed, or status changed, or auth revision / firmware changed
-    if (relay.status !== "ONLINE" || now - lastSeenTime > 45_000 || revChanged || fwChanged) {
+    // Parse screen telemetry
+    const screenObj = statusPayload.screen || {};
+    const line0 = statusPayload.screenLine0 !== undefined ? String(statusPayload.screenLine0) : (screenObj.line0 !== undefined ? String(screenObj.line0) : undefined);
+    const line1 = statusPayload.screenLine1 !== undefined ? String(statusPayload.screenLine1) : (screenObj.line1 !== undefined ? String(screenObj.line1) : undefined);
+    const backlight = statusPayload.screenBacklight !== undefined ? Number(statusPayload.screenBacklight) : (screenObj.backlight !== undefined ? Number(screenObj.backlight) : undefined);
+    const screenChanged = (line0 !== undefined && line0 !== (relay as any).lastScreenLine0) || (line1 !== undefined && line1 !== (relay as any).lastScreenLine1);
+
+    // Parse diagnostic telemetry
+    const diagObj = statusPayload.diag || {};
+    const qDepth = typeof statusPayload.diagQueueDepth === "number" ? statusPayload.diagQueueDepth : (typeof diagObj.qDepth === "number" ? diagObj.qDepth : undefined);
+    const droppedCount = typeof statusPayload.diagDroppedCount === "number" ? statusPayload.diagDroppedCount : (typeof diagObj.dropped === "number" ? diagObj.dropped : undefined);
+    const resetReason = statusPayload.resetReason ? String(statusPayload.resetReason) : (diagObj.rst ? String(diagObj.rst) : undefined);
+
+    // Non-blocking screen cache in Redis
+    if (line0 !== undefined || line1 !== undefined) {
+      try {
+        const { redis } = await import("@/lib/redis");
+        await redis.set(`relay:screen:${relay.id}`, JSON.stringify({
+          line0: line0 || "",
+          line1: line1 || "",
+          backlight: backlight ?? 1,
+          updatedAt: now,
+        }), { ex: 300 });
+      } catch (err) {
+        // Non-fatal
+      }
+    }
+
+    // Throttle updates: only hit PostgreSQL if > 45 seconds have elapsed, or status changed, or auth revision / firmware / screen changed
+    if (relay.status !== "ONLINE" || now - lastSeenTime > 45_000 || revChanged || fwChanged || screenChanged) {
       await prisma.relay.update({
         where: { id: relay.id },
         data: {
@@ -66,8 +95,37 @@ export async function POST(request: NextRequest) {
           pendingEventsCount: typeof statusPayload.pendingEvents === "number" ? statusPayload.pendingEvents : undefined,
           currentAuthRevision: typeof statusPayload.currentAuthRevision === "number" ? statusPayload.currentAuthRevision : undefined,
           firmwareVersion: fwVersion,
+          lastScreenLine0: line0 !== undefined ? line0.slice(0, 32) : undefined,
+          lastScreenLine1: line1 !== undefined ? line1.slice(0, 32) : undefined,
+          lastScreenBacklight: backlight !== undefined ? backlight : undefined,
+          lastScreenUpdatedAt: (line0 !== undefined || line1 !== undefined) ? new Date(now) : undefined,
+          diagQueueDepth: qDepth,
+          diagDroppedCount: droppedCount,
+          resetReason: resetReason ? resetReason.slice(0, 100) : undefined,
         },
       });
+    }
+
+    // Realtime broadcast for virtual screen mirror and diagnostic stats
+    if ((line0 !== undefined || line1 !== undefined || qDepth !== undefined) && supabaseServer) {
+      try {
+        await supabaseServer.channel("admin-hardware-diagnostics").send({
+          type: "broadcast",
+          event: "screen_mirror",
+          payload: {
+            relayId: relay.id,
+            line0: line0 ?? (relay as any).lastScreenLine0 ?? "",
+            line1: line1 ?? (relay as any).lastScreenLine1 ?? "",
+            backlight: backlight ?? (relay as any).lastScreenBacklight ?? 1,
+            diagQueueDepth: qDepth ?? (relay as any).diagQueueDepth ?? 0,
+            diagDroppedCount: droppedCount ?? (relay as any).diagDroppedCount ?? 0,
+            resetReason: resetReason || (relay as any).resetReason || null,
+            updatedAt: new Date(now).toISOString(),
+          },
+        });
+      } catch (broadcastErr) {
+        // Non-fatal
+      }
     }
 
     // Synchronize durable OTA fleet rollout lifecycle state machine

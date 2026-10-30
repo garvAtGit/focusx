@@ -33,8 +33,11 @@ QueueHandle_t bleAuthQueue = NULL;
 #include <Update.h>
 #include <esp_ota_ops.h>
 #include "mbedtls/sha256.h"
+#include "FocusX_Diagnostics.h"
 
-#define FOCUSX_FIRMWARE_VERSION "5.1.1-ota"
+FocusXDiagnostics DiagSubsystem;
+
+#define FOCUSX_FIRMWARE_VERSION "5.1.2-ota"
 
 
 // Task Watchdog Timer: 30-second timeout provides ample headroom for legitimate
@@ -171,9 +174,43 @@ struct SafeLCD {
   LiquidCrystal_I2C* realLcd;
   bool available;
   uint8_t detectedAddr;
-  SafeLCD() : realLcd(nullptr), available(false), detectedAddr(0) {}
-  
+  char shadowLine0[17];
+  char shadowLine1[17];
+  uint8_t cursorCol;
+  uint8_t cursorRow;
+  uint8_t backlightState;
+  uint32_t lastUpdateMs;
+  portMUX_TYPE shadowMux;
+
+  SafeLCD() : realLcd(nullptr), available(false), detectedAddr(0),
+              cursorCol(0), cursorRow(0), backlightState(1), lastUpdateMs(0) {
+    memset(shadowLine0, ' ', 16); shadowLine0[16] = '\0';
+    memset(shadowLine1, ' ', 16); shadowLine1[16] = '\0';
+    vPortCPUInitializeMutex(&shadowMux);
+  }
+
+  void appendToShadow(const char* str) {
+    if (!str) return;
+    taskENTER_CRITICAL(&shadowMux);
+    char* target = (cursorRow == 0) ? shadowLine0 : shadowLine1;
+    while (*str && cursorCol < 16) {
+      char c = *str++;
+      if (c >= 32 && c <= 126) {
+        target[cursorCol++] = c;
+      }
+    }
+    lastUpdateMs = millis();
+    taskEXIT_CRITICAL(&shadowMux);
+  }
+
   void init() {
+    taskENTER_CRITICAL(&shadowMux);
+    memset(shadowLine0, ' ', 16); shadowLine0[16] = '\0';
+    memset(shadowLine1, ' ', 16); shadowLine1[16] = '\0';
+    cursorCol = 0; cursorRow = 0;
+    backlightState = 1;
+    lastUpdateMs = millis();
+    taskEXIT_CRITICAL(&shadowMux);
     detectedAddr = 0;
     available = false;
 
@@ -189,32 +226,21 @@ struct SafeLCD {
     pinMode(I2C_SCL_PIN, INPUT_PULLUP);
     delay(10);
 
-    int sdaVal = digitalRead(I2C_SDA_PIN);
-    int sclVal = digitalRead(I2C_SCL_PIN);
-    Serial.printf("[SafeLCD] Pin states: SDA(GPIO %d)=%s, SCL(GPIO %d)=%s\n", 
-                  I2C_SDA_PIN, sdaVal ? "HIGH" : "LOW", 
-                  I2C_SCL_PIN, sclVal ? "HIGH" : "LOW");
-
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
     Wire.setClock(100000);
     Wire.setTimeOut(25);
     
-    // 1. Probe primary standard LCD backpack default addresses:
-    // 0x27 (PCF8574 default), 0x3F (PCF8574A/AT default)
     const uint8_t primaryAddrs[] = { 0x27, 0x3F };
     for (size_t i = 0; i < sizeof(primaryAddrs); i++) {
       uint8_t addr = primaryAddrs[i];
-      Serial.printf("[SafeLCD] Probing primary 0x%02X...\n", addr);
       Wire.beginTransmission(addr);
       uint8_t err = Wire.endTransmission();
-      Serial.printf("[SafeLCD] 0x%02X endTransmission returned %d\n", addr, err);
       if (err == 0) {
         detectedAddr = addr;
         break;
       }
     }
     
-    // 2. If not at defaults, probe alternate valid PCF8574 / PCF8574A jumper configurations only:
     if (detectedAddr == 0) {
       const uint8_t alternateAddrs[] = { 
         0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26,
@@ -222,10 +248,8 @@ struct SafeLCD {
       };
       for (size_t i = 0; i < sizeof(alternateAddrs); i++) {
         uint8_t addr = alternateAddrs[i];
-        Serial.printf("[SafeLCD] Probing alternate 0x%02X...\n", addr);
         Wire.beginTransmission(addr);
         uint8_t err = Wire.endTransmission();
-        Serial.printf("[SafeLCD] 0x%02X endTransmission returned %d\n", addr, err);
         if (err == 0) {
           detectedAddr = addr;
           break;
@@ -238,8 +262,6 @@ struct SafeLCD {
       realLcd = new LiquidCrystal_I2C(detectedAddr, 16, 2);
       if (realLcd) {
         realLcd->init();
-        // LiquidCrystal_I2C::init() calls Wire.begin() with no args, clobbering custom pins!
-        // Re-attach Wire to custom SDA/SCL pins immediately:
         Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
         realLcd->backlight();
         realLcd->clear();
@@ -248,14 +270,59 @@ struct SafeLCD {
       }
     } else {
       available = false;
-      Serial.println("[HARDWARE] No I2C LCD backpack detected at PCF8574 addresses (0x20-0x27, 0x38-0x3F). Operating in headless mode.");
+      Serial.println("[HARDWARE] No I2C LCD backpack detected. Operating in headless mirror mode.");
     }
   }
   
-  void backlight() { if (available && realLcd) realLcd->backlight(); }
-  void clear() { if (available && realLcd) realLcd->clear(); }
-  void setCursor(uint8_t col, uint8_t row) { if (available && realLcd) realLcd->setCursor(col, row); }
-  template<typename T> void print(T val) { if (available && realLcd) realLcd->print(val); }
+  void backlight() {
+    taskENTER_CRITICAL(&shadowMux);
+    backlightState = 1;
+    taskEXIT_CRITICAL(&shadowMux);
+    if (available && realLcd) realLcd->backlight();
+  }
+  void noBacklight() {
+    taskENTER_CRITICAL(&shadowMux);
+    backlightState = 0;
+    taskEXIT_CRITICAL(&shadowMux);
+    if (available && realLcd) realLcd->noBacklight();
+  }
+  void clear() {
+    taskENTER_CRITICAL(&shadowMux);
+    memset(shadowLine0, ' ', 16); shadowLine0[16] = '\0';
+    memset(shadowLine1, ' ', 16); shadowLine1[16] = '\0';
+    cursorCol = 0; cursorRow = 0;
+    lastUpdateMs = millis();
+    taskEXIT_CRITICAL(&shadowMux);
+    if (available && realLcd) realLcd->clear();
+  }
+  void setCursor(uint8_t col, uint8_t row) {
+    taskENTER_CRITICAL(&shadowMux);
+    cursorCol = (col < 16) ? col : 15;
+    cursorRow = (row < 2) ? row : 1;
+    taskEXIT_CRITICAL(&shadowMux);
+    if (available && realLcd) realLcd->setCursor(col, row);
+  }
+  void print(const char* val) {
+    appendToShadow(val);
+    if (available && realLcd) realLcd->print(val);
+  }
+  void print(const String& val) {
+    appendToShadow(val.c_str());
+    if (available && realLcd) realLcd->print(val);
+  }
+  template<typename T> void print(T val) {
+    String s = String(val);
+    appendToShadow(s.c_str());
+    if (available && realLcd) realLcd->print(val);
+  }
+  void getShadow(char* out0, char* out1, uint8_t& outBacklight, uint32_t& outAgeMs) {
+    taskENTER_CRITICAL(&shadowMux);
+    memcpy(out0, shadowLine0, 17);
+    memcpy(out1, shadowLine1, 17);
+    outBacklight = backlightState;
+    outAgeMs = millis() - lastUpdateMs;
+    taskEXIT_CRITICAL(&shadowMux);
+  }
 };
 SafeLCD lcd;
 
@@ -1200,7 +1267,7 @@ void sendHeartbeat() {
     http.addHeader("Authorization", "Bearer " + String(HARDWARE_API_KEY));
     http.setTimeout(8000);
     
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<1024> doc;
     doc["deviceId"] = READER_ID;
     doc["libraryId"] = currentLibraryId;
     doc["currentAuthRevision"] = currentAuthRevision;
@@ -1219,6 +1286,22 @@ void sendHeartbeat() {
     doc["runningPartition"] = curP ? curP->label : "app0";
     doc["freeBytes"] = LittleFS.totalBytes() - LittleFS.usedBytes();
     doc["pendingEvents"] = pendingEvents.size();
+
+    // Virtual 16x2 LCD mirror state
+    char sc0[17], sc1[17];
+    uint8_t scBl = 1;
+    uint32_t scAgeMs = 0;
+    lcd.getShadow(sc0, sc1, scBl, scAgeMs);
+    JsonObject screenObj = doc.createNestedObject("screen");
+    screenObj["line0"] = sc0;
+    screenObj["line1"] = sc1;
+    screenObj["backlight"] = scBl;
+
+    // Diagnostics health summary
+    JsonObject diagObj = doc.createNestedObject("diag");
+    diagObj["qDepth"] = DiagSubsystem.getQueueDepth();
+    diagObj["dropped"] = DiagSubsystem.getDroppedCount();
+    diagObj["rst"] = DiagSubsystem.getResetReason();
     
     String payload;
     serializeJson(doc, payload);
@@ -1470,6 +1553,20 @@ void httpWorkerTask(void *pvParameters) {
       sendHeartbeat();
       esp_task_wdt_reset();
       vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    // Periodic Background Diagnostic Flusher (Core 0, decoupled from attendance)
+    static unsigned long lastDiagFlushMs = 0;
+    if (millis() - lastDiagFlushMs >= 30000) {
+      lastDiagFlushMs = millis();
+      esp_task_wdt_reset();
+      WiFiClientSecure *diagClient = new WiFiClientSecure;
+      if (diagClient) {
+        DiagSubsystem.flush(diagClient, rootCACertificate, BACKEND_BASE_URL, HARDWARE_API_KEY, READER_ID);
+        delete diagClient;
+      }
+      esp_task_wdt_reset();
+      vTaskDelay(pdMS_TO_TICKS(50));
     }
 
     portENTER_CRITICAL(&queueMutex);
@@ -2297,6 +2394,7 @@ void setup() {
   READER_ID = "87b99b2c-90fd-11e9-bc42-526af7764f64:1:1";
 
   preferences.begin("focusx", false);
+  DiagSubsystem.init(READER_ID.c_str());
   String savedReader = preferences.getString("readerid", "");
   if (savedReader != "") READER_ID = savedReader;
   String savedKey = preferences.getString("apikey", "");
