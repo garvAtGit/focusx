@@ -54,12 +54,23 @@ export default function LoginPage() {
         } catch {}
       }
       
-      window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-        size: 'invisible',
-        callback: () => {
-          // reCAPTCHA solved
-        },
-      });
+      try {
+        const verifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+          size: 'invisible',
+          callback: () => {
+            // reCAPTCHA solved
+          },
+        });
+        window.recaptchaVerifier = verifier;
+
+        // Pre-warm and pre-render the reCAPTCHA widget immediately in the background
+        // so token negotiation is already done before the user clicks "Send OTP".
+        verifier.render().catch((err) => {
+          console.warn("reCAPTCHA pre-warm non-fatal notice:", err);
+        });
+      } catch (err) {
+        console.warn("reCAPTCHA initialization warning:", err);
+      }
     }
 
     return () => {
@@ -102,35 +113,67 @@ export default function LoginPage() {
   }, [otp, step, loading]);
 
   const getFormattedPhone = () => {
-    let formatted = phone.trim();
-    if (!formatted.startsWith('+91')) {
-      formatted = '+91' + formatted;
+    // Strip all non-digit characters (spaces, hyphens, parentheses)
+    let digits = phone.replace(/\D/g, '');
+
+    // If student typed leading 0 (e.g. 09876543210), strip the leading 0
+    if (digits.length === 11 && digits.startsWith('0')) {
+      digits = digits.slice(1);
     }
-    return formatted;
-  }
+
+    // Standard 10-digit Indian mobile number
+    if (digits.length === 10) {
+      return `+91${digits}`;
+    }
+
+    // 12-digit already prefixed with country code 91
+    if (digits.length === 12 && digits.startsWith('91')) {
+      return `+${digits}`;
+    }
+
+    // Fallback for international numbers or pre-prefixed input
+    return phone.trim().startsWith('+') ? `+${digits}` : `+91${digits}`;
+  };
 
   async function handleSendOtp(e?: React.FormEvent) {
-    if (e) e.preventDefault()
-    setLoading(true)
+    if (e) e.preventDefault();
+
+    const formattedPhone = getFormattedPhone();
+    const digitsOnly = formattedPhone.replace(/\D/g, '');
+
+    // Quick client-side check so invalid numbers don't hang waiting for carrier rejection
+    if (digitsOnly.length < 10) {
+      toast.error('Please enter a valid 10-digit mobile number');
+      return;
+    }
+
+    setLoading(true);
 
     try {
-      const formattedPhone = getFormattedPhone()
+      // Ensure appVerifier is ready and pre-rendered
+      if (!window.recaptchaVerifier) {
+        window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+          size: 'invisible',
+        });
+        await window.recaptchaVerifier.render();
+      }
+
       const appVerifier = window.recaptchaVerifier;
-      const confirmation = await signInWithPhoneNumber(auth, formattedPhone, appVerifier)
-      setConfirmationResult(confirmation)
-      setStep('OTP')
-      setResendTimer(60) // Start 60s cooldown
-      toast.success('OTP sent successfully!')
+      const confirmation = await signInWithPhoneNumber(auth, formattedPhone, appVerifier);
+      setConfirmationResult(confirmation);
+      setStep('OTP');
+      setResendTimer(45); // 45s cooldown for faster retry if carrier queues are slow
+      toast.success('OTP sent successfully!');
     } catch (error: unknown) {
-      console.error(error)
-      toast.error(getErrorMessage(error, "Failed to send OTP. Please try again."))
+      console.error(error);
+      toast.error(getErrorMessage(error, "Failed to send OTP. Please try again."));
       if (window.recaptchaVerifier) {
         window.recaptchaVerifier.render().then((widgetId) => {
           window.grecaptcha?.reset(widgetId);
         });
       }
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
   }
 
