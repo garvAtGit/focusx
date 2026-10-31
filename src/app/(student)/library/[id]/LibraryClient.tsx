@@ -15,6 +15,7 @@ import { auth } from "@/lib/firebase/clientApp"
 import { toast } from "react-hot-toast"
 import { formatStandardDate } from "@/lib/date-utils"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
+import LockerChart from "@/components/lockers/LockerChart"
 
 type LibraryPlan = {
   id: string
@@ -97,6 +98,7 @@ type DynamicDataResponse = {
 type LibraryClientProps = {
   library: LibraryDetails
   occupiedSeatIds: string[]
+  occupiedLockerIds?: string[]
   studentId: string
   currentPlanEndDate?: string | null
   studentPhone?: string
@@ -153,7 +155,15 @@ const LiveSeatMap = dynamic(() => import("@/components/LiveSeatMap"), {
     </div>
   ),
 })
-export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds, studentId: initialStudentId, currentPlanEndDate: initialCurrentPlanEndDate, studentPhone: initialStudentPhone, studentEmail: initialStudentEmail }: LibraryClientProps) {
+export function LibraryClient({ 
+  library, 
+  occupiedSeatIds: initialOccupiedSeatIds, 
+  occupiedLockerIds: initialOccupiedLockerIds = [],
+  studentId: initialStudentId, 
+  currentPlanEndDate: initialCurrentPlanEndDate, 
+  studentPhone: initialStudentPhone, 
+  studentEmail: initialStudentEmail 
+}: LibraryClientProps) {
   const router = useRouter();
   const [selectedSeat, setSelectedSeat] = useState<LibrarySeat | null>(null);
   const [selectedPlan, setSelectedPlan] = useState<LibraryPlan | null>(null);
@@ -174,7 +184,7 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
   // Dynamic Session State
   const [dynamicState, setDynamicState] = useState({
     occupiedSeatIds: initialOccupiedSeatIds,
-    occupiedLockerIds: [] as string[],
+    occupiedLockerIds: initialOccupiedLockerIds,
     studentId: initialStudentId,
     currentPlanEndDate: initialCurrentPlanEndDate,
     studentPhone: initialStudentPhone || "",
@@ -953,9 +963,11 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
                         setSelectedStandaloneLockerId("");
                       }
                       setTimeout(() => {
-                        const widget = document.getElementById('payment-section');
+                        const hasLockers = !seat.hasLocker && (library.standaloneLockers && library.standaloneLockers.length > 0);
+                        const targetId = hasLockers ? 'locker-section' : 'payment-section';
+                        const widget = document.getElementById(targetId) || document.getElementById('payment-section');
                         if (widget) window.scrollTo({top: widget.getBoundingClientRect().top + window.pageYOffset - 100, behavior: 'smooth'});
-                      }, 100);
+                      }, 120);
                     }}
                   />
                 </div>
@@ -972,53 +984,28 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
               </div>
             )}
 
-            {/* Locker Add-on UI */}
-            {selectedPlan && (seatHasMandatoryLocker || library.standaloneLockers?.length > 0) && (
-              <div className={`p-4 rounded-xl border ${seatHasMandatoryLocker ? 'bg-primary/5 border-primary/20' : 'bg-muted/30 border-border'} space-y-3`}>
-                <div className="flex items-start gap-3">
-                  <div className="mt-1">
-                    <Lock className={`w-4 h-4 ${seatHasMandatoryLocker ? 'text-primary' : 'text-muted-foreground'}`} />
-                  </div>
-                  <div className="flex-1 space-y-2">
-                    {seatHasMandatoryLocker ? (
-                      <>
-                        <div className="flex justify-between items-center">
-                          <span className="font-bold text-sm text-foreground">Attached Locker</span>
-                          <span className="font-bold text-sm">+₹{lockerCost.toFixed(0)}</span>
-                        </div>
-                        <p className="text-xs text-foreground/80">
-                          Included with this seat.
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        {library.standaloneLockers.length > 0 && (
-                          <div className="p-4 rounded-xl border border-primary/20 bg-primary/5 transition-all">
-                            <label className="text-sm font-bold text-primary mb-2 flex items-center justify-between">
-                              <div className="flex items-center gap-2"><Lock className="w-4 h-4" /> Optional Locker</div>
-                              {selectedStandaloneLockerId && <span className="font-bold text-sm text-primary">+₹{lockerCost.toFixed(0)}</span>}
-                            </label>
-                            <select 
-                              value={selectedStandaloneLockerId}
-                              onChange={(e) => setSelectedStandaloneLockerId(e.target.value)}
-                              className="w-full text-sm rounded-lg border border-primary/20 bg-background p-2.5 focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground font-medium"
-                            >
-                              <option value="">No locker needed</option>
-                              {library.standaloneLockers.map((locker) => (
-                                <option key={locker.id} value={locker.id}>
-                                  {locker.name} - ₹{locker.price}/mo
-                                </option>
-                              ))}
-                            </select>
-                            {selectedStandaloneLockerId && (
-                              <p className="text-xs text-primary/80 mt-2 font-medium">Locker fee will be added to your total.</p>
-                            )}
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </div>
+            {/* Locker Add-on UI - Step 3 (or Step 2 for Flexible plans) */}
+            {selectedPlan && (seatHasMandatoryLocker || (library.standaloneLockers && library.standaloneLockers.length > 0)) && (
+              <div className="space-y-3 pt-4 border-t border-border scroll-mt-24" id="locker-section">
+                <label className="text-sm font-bold text-foreground flex justify-between items-center">
+                  <span>{isFlexible ? "2. Select a Locker (Optional)" : "3. Select a Locker (Optional)"}</span>
+                </label>
+                <LockerChart 
+                  lockers={library.standaloneLockers || []}
+                  occupiedLockerIds={dynamicState.occupiedLockerIds}
+                  selectedLockerId={selectedStandaloneLockerId || null}
+                  onSelectLocker={(id) => {
+                    setSelectedStandaloneLockerId(id || "");
+                    if (id) {
+                      setTimeout(() => {
+                        const widget = document.getElementById('payment-section');
+                        if (widget) window.scrollTo({top: widget.getBoundingClientRect().top + window.pageYOffset - 100, behavior: 'smooth'});
+                      }, 120);
+                    }
+                  }}
+                  seatHasMandatoryLocker={seatHasMandatoryLocker}
+                  validityDays={selectedPlan.validityDays}
+                />
               </div>
             )}
 
