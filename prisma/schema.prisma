@@ -341,6 +341,17 @@ model Relay {
   pendingEventsCount Int?
   currentAuthRevision Int?
   firmwareVersion     String?
+  lastScreenLine0     String?
+  lastScreenLine1     String?
+  lastScreenBacklight Int?         @default(1)
+  lastScreenUpdatedAt DateTime?
+  diagQueueDepth      Int?         @default(0)
+  diagDroppedCount    Int?         @default(0)
+  lastDiagAckAt       DateTime?
+  resetReason         String?
+  liveDebugUntil      DateTime?
+  diagnosticLogs      DeviceDiagnosticLog[]
+  screenHistory       DeviceScreenHistory[]
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   logs        CheckinLog[]
@@ -348,6 +359,38 @@ model Relay {
   library     Library      @relation(fields: [libraryId], references: [id])
 
   @@index([libraryId])
+}
+
+model DeviceDiagnosticLog {
+  id               String   @id @default(uuid())
+  relayId          String
+  eventId          String   @unique
+  eventCode        Int
+  severity         String
+  timestamp        DateTime
+  uptimeMs         BigInt
+  param1           Int?
+  param2           BigInt?
+  detail           String?
+  serverReceivedAt DateTime @default(now())
+  relay            Relay    @relation(fields: [relayId], references: [id], onDelete: Cascade)
+
+  @@index([relayId, timestamp])
+  @@index([severity, timestamp])
+  @@index([eventCode])
+}
+
+model DeviceScreenHistory {
+  id        String   @id @default(uuid())
+  relayId   String
+  line0     String
+  line1     String
+  backlight Int      @default(1)
+  trigger   String?
+  timestamp DateTime @default(now())
+  relay     Relay    @relation(fields: [relayId], references: [id], onDelete: Cascade)
+
+  @@index([relayId, timestamp])
 }
 
 model CheckinLog {

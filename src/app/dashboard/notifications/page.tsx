@@ -48,14 +48,20 @@ export default async function LibrarianNotificationsPage() {
   }
 
   const initialLibraryId = libraries[0].id;
-  const historyData = await getLibrarianBroadcastHistory(initialLibraryId, { page: 1, limit: 20 });
+  let broadcasts: any[] = [];
+  try {
+    const historyData = await getLibrarianBroadcastHistory(initialLibraryId, { page: 1, limit: 20 });
+    broadcasts = JSON.parse(JSON.stringify(historyData.broadcasts || []));
+  } catch (err) {
+    console.error("[LibrarianNotificationsPage] Failed to load broadcast history:", err);
+  }
 
   return (
     <div className="max-w-7xl mx-auto py-4">
       <LibrarianNotificationsView
         libraries={libraries}
         initialLibraryId={initialLibraryId}
-        initialHistory={historyData.broadcasts}
+        initialHistory={broadcasts}
       />
     </div>
   );

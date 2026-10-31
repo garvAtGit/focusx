@@ -12,24 +12,32 @@ export default async function AdminNotificationsPage() {
     redirect("/");
   }
 
-  // Initial data loading for server-side hydration
-  const [historyData, libraries] = await Promise.all([
-    getBroadcastHistory({ page: 1, limit: 20 }),
-    prisma.library.findMany({
-      select: {
-        id: true,
-        name: true,
-        city: true,
-        address: true,
-      },
-      orderBy: { name: "asc" },
-    }),
-  ]);
+  let broadcasts: any[] = [];
+  let libraries: Array<{ id: string; name: string; city: string | null; address: string }> = [];
+
+  try {
+    const [historyData, libList] = await Promise.all([
+      getBroadcastHistory({ page: 1, limit: 20 }),
+      prisma.library.findMany({
+        select: {
+          id: true,
+          name: true,
+          city: true,
+          address: true,
+        },
+        orderBy: { name: "asc" },
+      }),
+    ]);
+    broadcasts = JSON.parse(JSON.stringify(historyData.broadcasts || []));
+    libraries = libList;
+  } catch (err) {
+    console.error("[AdminNotificationsPage] Failed to load data:", err);
+  }
 
   return (
     <div className="max-w-7xl mx-auto py-4">
       <AdminNotificationsView
-        initialHistory={historyData.broadcasts}
+        initialHistory={broadcasts}
         initialLibraries={libraries}
       />
     </div>

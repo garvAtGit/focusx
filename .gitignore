@@ -55,6 +55,7 @@ test_cf.ts
 # Transient debug & logs
 serial_log_*.txt
 *.bin
+!firmware_releases/**/*.bin
 *.log
 __pycache__/
 firmware_backup.txt

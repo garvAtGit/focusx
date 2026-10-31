@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { verifyRelayKey } from "@/lib/relay-auth";
 import { processAttendanceIntent } from "@/lib/attendance-core";
 import { resolveRelay } from "@/lib/hardware-resolver";
+import { supabaseServer } from "@/lib/supabase-server";
 
 export async function POST(request: NextRequest) {
   try {
@@ -49,11 +50,57 @@ export async function POST(request: NextRequest) {
 
     const libraryId = relay.libraryId;
 
-    // Touch relay active timestamps non-blockingly
+    // Touch relay active timestamps and update authentic hardware screen if attached
+    const screenObj = body.screen;
+    const hasScreen = screenObj && (screenObj.line0 !== undefined || screenObj.line1 !== undefined);
+    const line0 = hasScreen ? String(screenObj.line0 || "").slice(0, 32) : undefined;
+    const line1 = hasScreen ? String(screenObj.line1 || "").slice(0, 32) : undefined;
+    const backlight = hasScreen ? (typeof screenObj.backlight === "number" ? screenObj.backlight : 1) : undefined;
+    const now = new Date();
+
     prisma.relay.update({
       where: { id: relay.id },
-      data: { lastSeenAt: new Date(), lastSync: new Date(), status: "ONLINE" },
+      data: {
+        lastSeenAt: now,
+        lastSync: now,
+        status: "ONLINE",
+        ...(hasScreen ? {
+          lastScreenLine0: line0,
+          lastScreenLine1: line1,
+          lastScreenBacklight: backlight,
+          lastScreenUpdatedAt: now,
+        } : {})
+      },
     }).catch(() => {});
+
+    if (hasScreen) {
+      // Record authentic hardware screen transition (never synthetic)
+      prisma.deviceScreenHistory.create({
+        data: {
+          relayId: relay.id,
+          line0: line0 || "",
+          line1: line1 || "",
+          backlight: backlight ?? 1,
+          trigger: `SCAN_${scanType.toUpperCase()}`,
+          timestamp: now,
+        }
+      }).catch(() => {});
+
+      // Broadcast authentic screen to dashboard mirror
+      if (supabaseServer) {
+        supabaseServer.channel("admin-hardware-diagnostics").send({
+          type: "broadcast",
+          event: "screen_mirror",
+          payload: {
+            relayId: relay.id,
+            line0,
+            line1,
+            backlight,
+            updatedAt: now.toISOString(),
+          }
+        }).catch(() => {});
+      }
+    }
 
     // 4. Resolve Student ID
     let studentId: string | null = null;
@@ -163,6 +210,8 @@ export async function POST(request: NextRequest) {
       authRevision,
       offlineDecision
     });
+
+
 
     // 7. Format response matching ESP32 contract perfectly
     if (result.success) {

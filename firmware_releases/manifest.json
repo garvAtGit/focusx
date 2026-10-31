@@ -1,7 +1,7 @@
 {
-  "version": "5.1.1-ota",
-  "name": "FocusX ESP32-S3 Dual-RFID Scanner Firmware V5.1.1 (Hardened OTA Engine & Fleet Observability)",
-  "buildDate": "2026-10-26",
+  "version": "5.1.3-ota",
+  "name": "FocusX ESP32-S3 Dual-RFID Scanner Firmware V5.1.3 (Isolated Fault Diagnostics Subsystem, Virtual 16x2 LCD Mirror, SafeLCD Scan Telemetry & Ephemeral Live Peek)",
+  "buildDate": "2026-10-30",
   "targetChip": "ESP32-S3 rev v0.2",
   "flashMode": "DIO",
   "flashSpeed": "80MHz",
@@ -9,17 +9,18 @@
   "partitionLayout": "dual-slot 8MB zero-displacement (app0=0x10000, spiffs=0x310000, app1=0x410000)",
   "binary": {
     "filename": "FocusX_Scanner_Firmware_V5_DualRFID.ino.bin",
-    "size": 1279040,
-    "sha256": "382E734AC28E133D4B120041B0A02A350DC150F4E565C47BCE9D3448CEA8BA69"
+    "size": 1282000,
+    "sha256": "E9FAA9A2EDF717ED02D332629F734D87CAF5BBABEF3C6D0836313BCA749DDB80"
   },
   "capabilities": [
+    "isolated offline-first fault diagnostics subsystem",
+    "zero-allocation 64-entry priority ring buffer",
+    "crc32-guarded persistent critical fault journal",
+    "virtual 16x2 LCD screen memory mirror & backlight shadowing",
+    "ephemeral 5-minute live peek accelerated sub-second screen streaming",
+    "heartbeat screen telemetry & diagnostic summary streaming",
     "dual-slot A/B partition OTA update",
     "health-gated rollback commit (LittleFS, signed snapshot, dual PN532, free heap)",
-    "automatic bootloader fallback to working slot on boot panic or health check failure",
-    "SHA-256 image stream validation & 0xE9 magic byte check",
-    "durable command state machine with explicit device acknowledgement (ackCommandId)",
-    "idempotent duplicate command protection",
-    "24h command expiration purge",
-    "terminal status persistence in entry logs for durable fleet observability"
+    "SHA-256 image stream validation & 0xE9 magic byte check"
   ]
 }

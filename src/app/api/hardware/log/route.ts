@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { after } from "next/server";
 import prisma from "@/lib/prisma";
 import { verifyRelayKey } from "@/lib/relay-auth";
-import { supabaseServer } from "@/lib/supabase-server";
 import { updateStreak } from "@/lib/streak-utils";
 
 type HardwareLog = {
