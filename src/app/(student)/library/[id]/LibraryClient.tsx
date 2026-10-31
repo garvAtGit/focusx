@@ -171,6 +171,13 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
   const [libraryRating, setLibraryRating] = useState<{ avg: number; count: number } | null>(null);
 
+  const handleRatingLoaded = useCallback((avg: number, count: number) => {
+    setLibraryRating((prev) => {
+      if (prev && prev.avg === avg && prev.count === count) return prev;
+      return { avg, count };
+    });
+  }, []);
+
   // Dynamic Session State
   const [dynamicState, setDynamicState] = useState({
     occupiedSeatIds: initialOccupiedSeatIds,
@@ -1169,7 +1176,7 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
             libraryId={library.id} 
             libraryName={library.name} 
             currentUserId={dynamicState.studentId}
-            onRatingLoaded={(avg, count) => setLibraryRating({ avg, count })}
+            onRatingLoaded={handleRatingLoaded}
           />
 
           <section className="mt-8 border-t border-border pt-8 feedback-section">
