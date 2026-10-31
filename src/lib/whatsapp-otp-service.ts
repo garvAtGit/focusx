@@ -111,7 +111,12 @@ export async function createAndStoreWhatsAppOtp(phone: string): Promise<{
       if (!response.ok) {
         const errorData = await response.json();
         console.error('[WhatsApp Cloud API Error]:', errorData);
-        // Fall back to simulation log in non-prod
+        return {
+          otp: '',
+          expiresInSeconds: 0,
+          simulated: false,
+          error: 'Failed to dispatch WhatsApp OTP. Please use "Send code via SMS" below.',
+        };
       } else {
         return {
           otp,
@@ -121,10 +126,26 @@ export async function createAndStoreWhatsAppOtp(phone: string): Promise<{
       }
     } catch (apiErr) {
       console.error('[WhatsApp Cloud API Exception]:', apiErr);
+      return {
+        otp: '',
+        expiresInSeconds: 0,
+        simulated: false,
+        error: 'WhatsApp network error. Please use "Send code via SMS" below.',
+      };
     }
   }
 
-  // Simulation / Local Sandbox Mode:
+  // If deployed to production without Meta WhatsApp credentials configured:
+  if (process.env.NODE_ENV === 'production') {
+    return {
+      otp: '',
+      expiresInSeconds: 0,
+      simulated: false,
+      error: 'WhatsApp login is not yet configured on this server. Please use "Send code via SMS" below.',
+    };
+  }
+
+  // Simulation / Local Sandbox Mode (Development only):
   console.log(`\n==================================================`);
   console.log(`🟢 [WHATSAPP OTP SIMULATOR - LOCAL MODE]`);
   console.log(`📱 Recipient: ${phone}`);

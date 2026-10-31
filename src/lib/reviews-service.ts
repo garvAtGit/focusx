@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { Pool } from "pg";
 
-export type ReviewSource = "FOCUSX" | "LIBRARY_NEAR";
+export type ReviewSource = "FOCUSX" | "LIBRARY_NEAR" | "GOOGLE";
 
 export interface LibraryReview {
   id: string;
@@ -30,6 +30,30 @@ export interface LibraryReviewsSummary {
 }
 
 /**
+ * Normalizes a Supabase connection URL.
+ * Automatically translates direct hostnames (db.<ref>.supabase.co:5432), which fail
+ * on IPv4 networks due to lack of A records, into the resilient IPv4 Supabase pooler host.
+ */
+function normalizeSupabaseUrl(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    const match = parsed.hostname.match(/^db\.([a-z0-9]+)\.supabase\.co$/i);
+    if (match) {
+      const projectRef = match[1];
+      const user = parsed.username.includes(".") ? parsed.username : `postgres.${projectRef}`;
+      const password = parsed.password;
+      const host = "aws-1-ap-southeast-1.pooler.supabase.com";
+      const port = "6543";
+      const db = parsed.pathname || "/postgres";
+      return `postgresql://${user}:${password}@${host}:${port}${db}`;
+    }
+    return rawUrl;
+  } catch {
+    return rawUrl;
+  }
+}
+
+/**
  * Global pool for external reviews database (when REVIEWS_DATABASE_URL is provided).
  * Uses a singleton on globalThis to avoid exhausting connections in Next.js dev server.
  */
@@ -42,10 +66,17 @@ function getExternalReviewsPool(): Pool | null {
   if (!connectionString) return null;
 
   if (!globalForReviews.reviewsPool) {
+    const normalized = normalizeSupabaseUrl(connectionString);
     globalForReviews.reviewsPool = new Pool({
-      connectionString,
+      connectionString: normalized,
       max: 5,
       idleTimeoutMillis: 15000,
+      connectionTimeoutMillis: 8000,
+      ssl: { rejectUnauthorized: false },
+    });
+
+    globalForReviews.reviewsPool.on("error", (err) => {
+      console.warn("[Reviews Pool] External database background pool error:", err.message);
     });
   }
   return globalForReviews.reviewsPool;
@@ -63,6 +94,23 @@ export function generateLibrarySlug(name: string, locality?: string | null): str
     .replace(/[^\w\s-]/g, "") // Remove special characters
     .replace(/\s+/g, "-") // Replace spaces with hyphens
     .replace(/-+/g, "-"); // Collapse consecutive hyphens
+}
+
+/**
+ * Sanitizes phone numbers to standard 10 digits for indexing and cross-DB matching.
+ */
+function sanitizePhone(raw?: string | null): string | null {
+  if (!raw) return null;
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length >= 10) {
+    return digits.slice(-10);
+  }
+  return digits.length > 0 ? digits : null;
+}
+
+function cleanAlphaNumeric(raw?: string | null): string {
+  if (!raw) return "";
+  return raw.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 interface EncodedReviewMeta {
@@ -119,7 +167,7 @@ function encodeReviewContent(
   authorAvatar?: string,
   librarySlug?: string
 ): string {
-  if (source === "LIBRARY_NEAR" || librarySlug) {
+  if (source === "LIBRARY_NEAR" || source === "GOOGLE" || librarySlug) {
     return JSON.stringify({
       __focusx_sync: true,
       source,
@@ -132,160 +180,299 @@ function encodeReviewContent(
   return content;
 }
 
+interface FocusXLibraryInfo {
+  id: string;
+  name: string;
+  locality?: string | null;
+  city?: string | null;
+  whatsapp?: string | null;
+  managerPhone?: string | null;
+  slug: string;
+}
+
 /**
- * Resolves a library's details (ID and canonical slug) for robust dual-key matching.
+ * Resolves a library's details from FocusX database.
  */
-async function resolveLibraryIdentifiers(libraryIdOrSlug: string): Promise<{ id: string; slug: string; name: string } | null> {
+async function resolveFocusXLibrary(libraryIdOrSlug: string): Promise<FocusXLibraryInfo | null> {
   const lib = await prisma.library.findFirst({
     where: {
       OR: [
         { id: libraryIdOrSlug },
       ],
     },
-    select: { id: true, name: true, locality: true },
+    select: { 
+      id: true, 
+      name: true, 
+      locality: true, 
+      city: true, 
+      whatsapp: true, 
+      managerPhone: true 
+    },
   });
 
   if (!lib) return null;
 
   return {
     id: lib.id,
-    slug: generateLibrarySlug(lib.name, lib.locality),
     name: lib.name,
+    locality: lib.locality,
+    city: lib.city,
+    whatsapp: lib.whatsapp,
+    managerPhone: lib.managerPhone,
+    slug: generateLibrarySlug(lib.name, lib.locality),
   };
+}
+
+interface RemoteBranchMatch {
+  id: string;
+  name: string;
+  slug: string;
+  locality?: string | null;
+}
+
+/**
+ * Finds matching branch IDs in LibraryNear Supabase database using:
+ * 1. Exact UUID match (if input is already a LibraryNear UUID)
+ * 2. 10-digit phone number match (phone_number or whatsapp_number)
+ * 3. Exact slug match
+ * 4. Cleaned alphanumeric name & locality match
+ */
+async function findRemoteBranches(
+  pool: Pool,
+  targetId: string,
+  targetSlug: string,
+  focusLib?: FocusXLibraryInfo | null
+): Promise<RemoteBranchMatch[]> {
+  try {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetId);
+
+    // 1. Direct UUID match on branch ID
+    if (isUuid) {
+      const res = await pool.query(
+        "SELECT id, name, slug, locality FROM public.library_branches WHERE id = $1 LIMIT 5",
+        [targetId]
+      );
+      if (res.rowCount && res.rowCount > 0) {
+        return res.rows;
+      }
+    }
+
+    // 2. Phone match if FocusX library has phone numbers
+    if (focusLib) {
+      const phone1 = sanitizePhone(focusLib.whatsapp);
+      const phone2 = sanitizePhone(focusLib.managerPhone);
+      const phones = Array.from(new Set([phone1, phone2].filter(Boolean))) as string[];
+
+      if (phones.length > 0) {
+        const placeholders = phones.map((_, i) => `$${i + 1}`).join(", ");
+        const phoneRes = await pool.query(
+          `SELECT id, name, slug, locality 
+           FROM public.library_branches 
+           WHERE regexp_replace(phone_number, '[^0-9]', '', 'g') LIKE ANY(ARRAY[${placeholders}]::text[])
+              OR regexp_replace(whatsapp_number, '[^0-9]', '', 'g') LIKE ANY(ARRAY[${placeholders}]::text[])
+           LIMIT 5`,
+          phones.map(p => `%${p}`)
+        );
+        if (phoneRes.rowCount && phoneRes.rowCount > 0) {
+          return phoneRes.rows;
+        }
+      }
+    }
+
+    // 3. Exact Slug match
+    if (targetSlug) {
+      const slugRes = await pool.query(
+        "SELECT id, name, slug, locality FROM public.library_branches WHERE slug = $1 LIMIT 5",
+        [targetSlug]
+      );
+      if (slugRes.rowCount && slugRes.rowCount > 0) {
+        return slugRes.rows;
+      }
+    }
+
+    // 4. Clean Alphanumeric Name match
+    const nameClean = cleanAlphaNumeric(focusLib?.name || targetId);
+    if (nameClean.length >= 3) {
+      const nameRes = await pool.query(
+        `SELECT id, name, slug, locality 
+         FROM public.library_branches 
+         WHERE regexp_replace(lower(name), '[^a-z0-9]', '', 'g') = $1
+         LIMIT 5`,
+        [nameClean]
+      );
+      if (nameRes.rowCount && nameRes.rowCount > 0) {
+        return nameRes.rows;
+      }
+    }
+  } catch (err) {
+    console.warn("[Reviews] Error matching remote branch:", err);
+  }
+
+  return [];
 }
 
 /**
  * Fetch all reviews for a library.
- * 1. If REVIEWS_DATABASE_URL is set -> directly queries the shared reviews database table.
- * 2. Otherwise -> queries local Prisma Query table.
- * Supports matching by exact libraryId OR canonical librarySlug.
+ * Integrates:
+ * 1. Local student reviews from FocusX database (Prisma Query table).
+ * 2. External reviews from LibraryNear database (Supabase pooler).
+ * Deduplicates, normalizes ratings, and computes rating distribution.
  */
 export async function getLibraryReviews(libraryIdOrSlug: string): Promise<LibraryReviewsSummary> {
-  const resolved = await resolveLibraryIdentifiers(libraryIdOrSlug);
-  const targetId = resolved ? resolved.id : libraryIdOrSlug;
-  const targetSlug = resolved ? resolved.slug : generateLibrarySlug(libraryIdOrSlug);
+  const resolvedLib = await resolveFocusXLibrary(libraryIdOrSlug);
+  const targetId = resolvedLib ? resolvedLib.id : libraryIdOrSlug;
+  const targetSlug = resolvedLib ? resolvedLib.slug : generateLibrarySlug(libraryIdOrSlug);
 
+  const localReviews: LibraryReview[] = [];
+  const remoteReviews: LibraryReview[] = [];
+
+  // ==========================================
+  // PATH 1: Local FocusX Database (Prisma)
+  // ==========================================
+  try {
+    const queries = await prisma.query.findMany({
+      where: {
+        libraryId: targetId,
+        type: "REVIEW",
+      },
+      include: {
+        student: {
+          select: {
+            id: true,
+            name: true,
+            profilePhotoUrl: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    for (const q of queries) {
+      const rawRating = q.rating ?? 5;
+      const clampedRating = Math.max(1, Math.min(5, Math.round(rawRating)));
+      const parsed = parseReviewContent(q.content, q.student?.name || "Verified Student", q.student?.profilePhotoUrl);
+
+      localReviews.push({
+        id: q.id,
+        libraryId: q.libraryId,
+        librarySlug: parsed.librarySlug || targetSlug,
+        studentId: q.studentId,
+        userName: parsed.userName,
+        userAvatar: parsed.userAvatar,
+        rating: clampedRating,
+        content: parsed.content,
+        source: parsed.source,
+        createdAt: q.createdAt.toISOString(),
+      });
+    }
+  } catch (err) {
+    console.warn("[Reviews] Failed querying local Prisma reviews:", err);
+  }
+
+  // ==========================================
+  // PATH 2: External LibraryNear Supabase Pooler
+  // ==========================================
   const pool = getExternalReviewsPool();
-
-  // PATH 1: Direct Shared Database Access (External DB)
   if (pool) {
     try {
-      const res = await pool.query(
-        `SELECT 
-          id, 
-          library_id AS "libraryId", 
-          library_slug AS "librarySlug",
-          user_id AS "studentId", 
-          user_name AS "userName", 
-          user_avatar AS "userAvatar", 
-          rating, 
-          content, 
-          source, 
-          created_at AS "createdAt"
-         FROM reviews
-         WHERE library_id = $1 OR library_slug = $2
-         ORDER BY created_at DESC`,
-        [targetId, targetSlug]
-      );
+      const branches = await findRemoteBranches(pool, targetId, targetSlug, resolvedLib);
+      if (branches.length > 0) {
+        const branchIds = branches.map((b) => b.id);
+        const res = await pool.query(
+          `SELECT 
+            r.id, 
+            r.library_branch_id, 
+            r.rating, 
+            r.review_text, 
+            r.created_at, 
+            r.source, 
+            COALESCE(r.reviewer_name, p.full_name, 'Student') AS reviewer_name,
+            COALESCE(r.reviewer_photo_url, p.avatar_url) AS reviewer_photo_url,
+            b.slug AS branch_slug
+           FROM public.library_reviews r
+           LEFT JOIN public.profiles p ON r.user_id = p.id
+           LEFT JOIN public.library_branches b ON r.library_branch_id = b.id
+           WHERE r.library_branch_id = ANY($1::uuid[])
+             AND (r.status = 'published' OR r.status IS NULL)
+           ORDER BY r.created_at DESC`,
+          [branchIds]
+        );
 
-      const ratingDistribution = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
-      let ratingSum = 0;
-      let ratedCount = 0;
+        for (const row of res.rows) {
+          const rating = Math.max(1, Math.min(5, Math.round(row.rating || 5)));
+          const rawSource = String(row.source || "").toLowerCase();
+          const source: ReviewSource = rawSource === "google" ? "GOOGLE" : "LIBRARY_NEAR";
 
-      const reviews: LibraryReview[] = res.rows.map((row) => {
-        const rating = Math.max(1, Math.min(5, Math.round(row.rating || 5)));
-        ratingDistribution[rating as keyof typeof ratingDistribution]++;
-        ratingSum += rating;
-        ratedCount++;
-
-        return {
-          id: String(row.id),
-          libraryId: String(row.libraryId),
-          librarySlug: row.librarySlug ? String(row.librarySlug) : null,
-          studentId: row.studentId ? String(row.studentId) : null,
-          userName: String(row.userName || "Student"),
-          userAvatar: row.userAvatar ? String(row.userAvatar) : null,
-          rating,
-          content: String(row.content),
-          source: (row.source === "LIBRARY_NEAR" ? "LIBRARY_NEAR" : "FOCUSX") as ReviewSource,
-          createdAt: new Date(row.createdAt).toISOString(),
-        };
-      });
-
-      const averageRating = ratedCount > 0 ? Number((ratingSum / ratedCount).toFixed(1)) : 0;
-
-      return {
-        reviews,
-        averageRating,
-        totalReviews: reviews.length,
-        ratingDistribution,
-      };
+          remoteReviews.push({
+            id: String(row.id),
+            libraryId: targetId,
+            librarySlug: row.branch_slug || targetSlug,
+            studentId: null,
+            userName: String(row.reviewer_name || "Student"),
+            userAvatar: row.reviewer_photo_url ? String(row.reviewer_photo_url) : null,
+            rating,
+            content: String(row.review_text || ""),
+            source,
+            createdAt: new Date(row.created_at).toISOString(),
+          });
+        }
+      }
     } catch (err) {
-      console.warn("[Reviews] Failed querying external shared database, falling back to local:", err);
+      console.warn("[Reviews] Failed querying external LibraryNear database (fallback to local):", err);
     }
   }
 
-  // PATH 2: Local Database (Prisma Query Table)
-  const queries = await prisma.query.findMany({
-    where: {
-      libraryId: targetId,
-      type: "REVIEW",
-    },
-    include: {
-      student: {
-        select: {
-          id: true,
-          name: true,
-          profilePhotoUrl: true,
-        },
-      },
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-  });
+  // ==========================================
+  // DEDUPLICATION & AGGREGATION
+  // ==========================================
+  const seenKeys = new Set<string>();
+  const mergedReviews: LibraryReview[] = [];
 
+  // FocusX local reviews take priority for identity
+  for (const r of [...localReviews, ...remoteReviews]) {
+    // Generate a deduplication fingerprint based on content + userName + rating
+    const snippet = r.content.slice(0, 40).toLowerCase().trim();
+    const key = `${r.userName.toLowerCase()}-${r.rating}-${snippet}`;
+
+    if (!seenKeys.has(key)) {
+      seenKeys.add(key);
+      mergedReviews.push(r);
+    }
+  }
+
+  // Sort descending by date
+  mergedReviews.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  // Compute distribution and average
   const ratingDistribution = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
   let ratingSum = 0;
   let ratedCount = 0;
 
-  const reviews: LibraryReview[] = queries.map((q) => {
-    const rawRating = q.rating ?? 5;
-    const clampedRating = Math.max(1, Math.min(5, rawRating));
-    const parsed = parseReviewContent(q.content, q.student?.name || "Verified Student", q.student?.profilePhotoUrl);
-
-    ratingDistribution[clampedRating as keyof typeof ratingDistribution]++;
-    ratingSum += clampedRating;
+  for (const rev of mergedReviews) {
+    const ratingKey = rev.rating as keyof typeof ratingDistribution;
+    if (ratingDistribution[ratingKey] !== undefined) {
+      ratingDistribution[ratingKey]++;
+    }
+    ratingSum += rev.rating;
     ratedCount++;
-
-    return {
-      id: q.id,
-      libraryId: q.libraryId,
-      librarySlug: parsed.librarySlug || targetSlug,
-      studentId: q.studentId,
-      userName: parsed.userName,
-      userAvatar: parsed.userAvatar,
-      rating: clampedRating,
-      content: parsed.content,
-      source: parsed.source,
-      createdAt: q.createdAt.toISOString(),
-    };
-  });
+  }
 
   const averageRating = ratedCount > 0 ? Number((ratingSum / ratedCount).toFixed(1)) : 0;
 
   return {
-    reviews,
+    reviews: mergedReviews,
     averageRating,
-    totalReviews: reviews.length,
+    totalReviews: mergedReviews.length,
     ratingDistribution,
   };
 }
 
 /**
  * Creates a review.
- * 1. If REVIEWS_DATABASE_URL is set -> directly writes to the shared database.
- * 2. Otherwise -> writes to local database (Prisma Query table).
+ * 1. Always saves to the local FocusX database (Prisma Query table) for guaranteed persistence.
+ * 2. If REVIEWS_DATABASE_URL is set and matching LibraryNear branch exists, syndicates to LibraryNear.
  */
 export async function createLibraryReview(params: {
   libraryId: string;
@@ -297,52 +484,13 @@ export async function createLibraryReview(params: {
   authorAvatar?: string;
 }): Promise<LibraryReview> {
   const { libraryId, studentId, rating, content, source = "FOCUSX", authorName, authorAvatar } = params;
-
   const clampedRating = Math.max(1, Math.min(5, Math.round(rating)));
-  const resolved = await resolveLibraryIdentifiers(libraryId);
-  const targetId = resolved ? resolved.id : libraryId;
-  const targetSlug = resolved ? resolved.slug : generateLibrarySlug(libraryId);
 
-  const pool = getExternalReviewsPool();
+  const resolvedLib = await resolveFocusXLibrary(libraryId);
+  const targetId = resolvedLib ? resolvedLib.id : libraryId;
+  const targetSlug = resolvedLib ? resolvedLib.slug : generateLibrarySlug(libraryId);
 
-  // PATH 1: Direct Shared Database Access (External DB)
-  if (pool) {
-    try {
-      const res = await pool.query(
-        `INSERT INTO reviews (library_id, library_slug, user_id, user_name, user_avatar, rating, content, source)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING id, library_id, library_slug, user_id, user_name, user_avatar, rating, content, source, created_at`,
-        [
-          targetId,
-          targetSlug,
-          studentId,
-          authorName || "Student",
-          authorAvatar || null,
-          clampedRating,
-          content.trim(),
-          source,
-        ]
-      );
-
-      const row = res.rows[0];
-      return {
-        id: String(row.id),
-        libraryId: String(row.library_id),
-        librarySlug: row.library_slug ? String(row.library_slug) : targetSlug,
-        studentId: row.user_id ? String(row.user_id) : studentId,
-        userName: String(row.user_name || "Student"),
-        userAvatar: row.user_avatar ? String(row.user_avatar) : null,
-        rating: clampedRating,
-        content: String(row.content),
-        source,
-        createdAt: new Date(row.created_at).toISOString(),
-      };
-    } catch (err) {
-      console.warn("[Reviews] Failed inserting into external shared DB, writing to local DB:", err);
-    }
-  }
-
-  // PATH 2: Local Database (Prisma Query Table)
+  // 1. Create locally in FocusX Prisma
   const storedContent = encodeReviewContent(
     content.trim(), 
     source, 
@@ -351,7 +499,7 @@ export async function createLibraryReview(params: {
     targetSlug
   );
 
-  const created = await prisma.query.create({
+  const localQuery = await prisma.query.create({
     data: {
       libraryId: targetId,
       studentId,
@@ -370,22 +518,59 @@ export async function createLibraryReview(params: {
     },
   });
 
+  const finalUserName = authorName || localQuery.student?.name || "Student";
+  const finalUserAvatar = authorAvatar || localQuery.student?.profilePhotoUrl || null;
+
+  // 2. Syndicate to LibraryNear Supabase pooler if configured
+  const pool = getExternalReviewsPool();
+  if (pool) {
+    try {
+      const branches = await findRemoteBranches(pool, targetId, targetSlug, resolvedLib);
+      if (branches.length > 0) {
+        const primaryBranch = branches[0];
+        await pool.query(
+          `INSERT INTO public.library_reviews (
+            library_branch_id, 
+            user_id, 
+            rating, 
+            review_text, 
+            status, 
+            reviewer_name, 
+            reviewer_photo_url, 
+            source,
+            created_at,
+            updated_at
+          ) VALUES ($1, NULL, $2, $3, 'published', $4, $5, 'user', NOW(), NOW())`,
+          [
+            primaryBranch.id,
+            clampedRating,
+            content.trim(),
+            finalUserName,
+            finalUserAvatar,
+          ]
+        );
+      }
+    } catch (err) {
+      console.warn("[Reviews] Failed syndicating review to LibraryNear external DB:", err);
+    }
+  }
+
   return {
-    id: created.id,
-    libraryId: created.libraryId,
+    id: localQuery.id,
+    libraryId: targetId,
     librarySlug: targetSlug,
-    studentId: created.studentId,
-    userName: authorName || created.student?.name || "Student",
-    userAvatar: authorAvatar || created.student?.profilePhotoUrl || null,
+    studentId,
+    userName: finalUserName,
+    userAvatar: finalUserAvatar,
     rating: clampedRating,
     content: content.trim(),
     source,
-    createdAt: created.createdAt.toISOString(),
+    createdAt: localQuery.createdAt.toISOString(),
   };
 }
 
 /**
- * Synchronize a review from Library Near into FocusX.
+ * Synchronize a review pushed from LibraryNear into FocusX.
  */
 export async function syncReviewFromLibraryNear(params: {
   libraryId: string;

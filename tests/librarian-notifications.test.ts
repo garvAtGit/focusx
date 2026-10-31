@@ -272,6 +272,7 @@ function createMockPrismaClient() {
 
     _rawUsers: users,
     _rawNotifications: notifications,
+    _rawBookings: bookings,
     _rawBroadcasts: broadcasts,
   };
 }
@@ -590,4 +591,21 @@ test("15. Existing student notification regression: student can read and mark no
   const markRes = await markNotificationAsRead("student_1", created.notification.id, mockDb as any);
   assert.equal(markRes.success, true);
   assert.equal(markRes.notification?.isRead, true);
+});
+
+test("16. Admin, staff, and test users with bookings are eligible recipients", async () => {
+  const mockDb = createMockPrismaClient();
+  const now = new Date();
+  const future = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+  (mockDb as any)._rawBookings.push({
+    id: "b_admin_test",
+    studentId: "admin_1",
+    libraryId: "lib_central",
+    status: "CONFIRMED",
+    startTime: now,
+    endTime: future,
+  });
+
+  const eligible = await getAllEligibleLibraryStudents("lib_central", mockDb as any);
+  assert.ok(eligible.includes("admin_1"), "Admin user with active booking should be included in eligible library members");
 });

@@ -106,7 +106,7 @@ export default function AdminNotificationsView({
 
   // Recipient Search Modal / Drawer State
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchRole, setSearchRole] = useState<'ALL' | 'STUDENT' | 'LIBRARIAN'>('ALL');
+  const [searchRole, setSearchRole] = useState<'ALL' | 'STUDENT' | 'LIBRARIAN' | 'ADMIN'>('ALL');
   const [searchLibraryId, setSearchLibraryId] = useState<string>('');
   const [searchResults, setSearchResults] = useState<RecipientUser[]>([]);
   const [searchPage, setSearchPage] = useState(1);
@@ -721,7 +721,7 @@ export default function AdminNotificationsView({
                   {/* Role filter buttons (for CUSTOM_MIXED) */}
                   {audienceType === 'CUSTOM_MIXED' && (
                     <div className="flex gap-1.5 text-xs">
-                      {(['ALL', 'STUDENT', 'LIBRARIAN'] as const).map((r) => (
+                      {(['ALL', 'STUDENT', 'LIBRARIAN', 'ADMIN'] as const).map((r) => (
                         <button
                           key={r}
                           type="button"
@@ -732,7 +732,7 @@ export default function AdminNotificationsView({
                               : 'border-border text-muted-foreground hover:bg-muted'
                           }`}
                         >
-                          {r === 'ALL' ? 'All Roles' : r === 'STUDENT' ? 'Students' : 'Librarians'}
+                          {r === 'ALL' ? 'All Roles' : r === 'STUDENT' ? 'Students' : r === 'LIBRARIAN' ? 'Librarians' : 'Admins'}
                         </button>
                       ))}
                     </div>

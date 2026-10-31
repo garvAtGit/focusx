@@ -83,7 +83,10 @@ export async function sendNotification(studentId: string, title: string, message
       },
     });
 
-    if (!studentHasBooking) {
+    const targetUser = await prisma.user.findUnique({ where: { id: studentId }, select: { role: true } });
+    const isStaffOrAdmin = targetUser?.role === 'ADMIN' || targetUser?.role === 'LIBRARIAN' || targetUser?.role === 'RECEPTIONIST';
+
+    if (!studentHasBooking && !isStaffOrAdmin) {
       return { error: 'Forbidden: You do not have permission to notify this student.' };
     }
   }
@@ -138,9 +141,7 @@ export async function createDirectNotification(params: {
 
   // Non-admins can only message students who have booked at their library
   if (session.role !== 'ADMIN') {
-    if (targetUser.role !== 'STUDENT') {
-      return { error: 'Forbidden: Only administrators can send direct messages to staff or administrators.' };
-    }
+    const isStaffOrAdmin = targetUser.role === 'ADMIN' || targetUser.role === 'LIBRARIAN' || targetUser.role === 'RECEPTIONIST';
 
     const authorizedLibraryIds = await getStaffAuthorizedLibraryIds(session.userId, session.employerLibraryId);
     if (authorizedLibraryIds.length === 0) {
@@ -154,7 +155,7 @@ export async function createDirectNotification(params: {
       },
     });
 
-    if (!studentHasBooking) {
+    if (!studentHasBooking && !isStaffOrAdmin) {
       return { error: 'Forbidden: You do not have permission to notify this recipient.' };
     }
   }

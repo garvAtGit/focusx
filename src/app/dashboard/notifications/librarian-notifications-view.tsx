@@ -732,7 +732,14 @@ export default function LibrarianNotificationsView({
                               className="w-3.5 h-3.5 text-primary border-input"
                             />
                             <div>
-                              <div className="font-semibold text-foreground">{student.name}</div>
+                              <div className="font-semibold text-foreground flex items-center gap-1.5">
+                                <span>{student.name}</span>
+                                {student.role && student.role !== 'STUDENT' && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-bold uppercase tracking-wider">
+                                    {student.role}
+                                  </span>
+                                )}
+                              </div>
                               <div className="text-[11px] text-muted-foreground">
                                 {student.phone || student.email || student.uniqueId || 'Member'}
                               </div>
