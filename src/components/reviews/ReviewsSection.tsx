@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   Star, 
@@ -51,6 +51,11 @@ export function ReviewsSection({
   const [formError, setFormError] = useState<string | null>(null);
   const [successToast, setSuccessToast] = useState(false);
 
+  const onRatingLoadedRef = useRef(onRatingLoaded);
+  useEffect(() => {
+    onRatingLoadedRef.current = onRatingLoaded;
+  }, [onRatingLoaded]);
+
   const fetchReviews = useCallback(async () => {
     try {
       setLoading(true);
@@ -61,8 +66,8 @@ export function ReviewsSection({
       const json = await res.json();
       if (json.success) {
         setData(json);
-        if (onRatingLoaded) {
-          onRatingLoaded(json.averageRating, json.totalReviews);
+        if (onRatingLoadedRef.current) {
+          onRatingLoadedRef.current(json.averageRating, json.totalReviews);
         }
       }
     } catch (err) {
@@ -70,7 +75,7 @@ export function ReviewsSection({
     } finally {
       setLoading(false);
     }
-  }, [libraryId, onRatingLoaded]);
+  }, [libraryId]);
 
   useEffect(() => {
     fetchReviews();
