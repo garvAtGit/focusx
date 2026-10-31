@@ -1,4 +1,4 @@
-import { Calendar, Clock, MapPin, User as UserIcon, BookOpen, Key, Flame, PauseCircle, PlayCircle } from "lucide-react";
+import { Calendar, Clock, MapPin, User as UserIcon, BookOpen, Key, Flame, PauseCircle } from "lucide-react";
 import { FocusActivityCalendar } from "@/components/dashboard/FocusActivityCalendar";
 import { Suspense } from "react";
 import prisma from "@/lib/prisma";
@@ -15,6 +15,7 @@ import { StudentLeaderboard } from "@/components/dashboard/StudentLeaderboard";
 import { StudentLibraryWifiCard } from "@/components/dashboard/StudentLibraryWifiCard";
 
 import { formatStandardDate, formatStandardDateTime, startOfDayIST } from "@/lib/date-utils";
+import PlanTimeline from "@/components/dashboard/PlanTimeline";
 import { startOfDay, startOfWeek, startOfMonth, subDays, differenceInMinutes } from "date-fns";
 import CozyWinterDashboard from "@/components/winter-arc/CozyWinterDashboard";
 
@@ -430,28 +431,14 @@ const todayStart = startOfDayIST(new Date());
                               <Key className="w-4 h-4 text-muted-foreground" />
                               <span>Access Code: <strong className="text-foreground font-mono bg-muted px-1.5 py-0.5 rounded">{booking.id.split('-')[0].toUpperCase()}</strong></span>
                             </div>
-                            {booking.isPaused && booking.pausedAt && (
-                              <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-lg text-xs font-medium w-fit mt-1">
-                                <PauseCircle className="w-4 h-4 shrink-0" />
-                                <span>Plan Paused on: <strong className="font-semibold">{formatDateTime(booking.pausedAt)}</strong></span>
-                              </div>
-                            )}
-                            {!booking.isPaused && (booking.resumedAt || (booking.totalPausedDays ?? 0) > 0) && (
-                              <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg text-xs font-medium w-fit mt-1">
-                                <div className="flex items-center gap-1.5">
-                                  <PlayCircle className="w-4 h-4 shrink-0" />
-                                  <span>Resumed on: <strong className="font-semibold">{formatDateTime(booking.resumedAt || booking.updatedAt)}</strong></span>
-                                </div>
-                                {booking.pausedAt && (
-                                  <span className="text-muted-foreground font-normal">(Paused on {formatDateTime(booking.pausedAt)})</span>
-                                )}
-                                {(booking.totalPausedDays ?? 0) > 0 && (
-                                  <span className="text-emerald-700 dark:text-emerald-300 font-bold bg-emerald-500/20 px-1.5 py-0.5 rounded text-[11px]">
-                                    +{booking.totalPausedDays} days extended
-                                  </span>
-                                )}
-                              </div>
-                            )}
+                            <PlanTimeline
+                              startTime={booking.startTime}
+                              endTime={booking.endTime}
+                              isPaused={booking.isPaused}
+                              pausedAt={booking.pausedAt}
+                              resumedAt={booking.resumedAt}
+                              totalPausedDays={booking.totalPausedDays ?? 0}
+                            />
                           </div>
                         </div>
 
