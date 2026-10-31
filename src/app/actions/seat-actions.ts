@@ -269,3 +269,201 @@ export async function getSeatLayoutAndLockers() {
     seatNaming: library.seatNaming
   };
 }
+
+
+export type LockerAllocationItem = {
+  id: string;
+  name: string;
+  type: 'STANDALONE' | 'ATTACHED';
+  price: number;
+  seatName?: string | null;
+  status: 'AVAILABLE' | 'OCCUPIED' | 'PAUSED' | 'HOLD';
+  bookingId?: string | null;
+  student?: {
+    id: string;
+    name: string;
+    uniqueId: string | null;
+    username: string | null;
+    phone?: string | null;
+  } | null;
+  planName?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  isPaused?: boolean;
+};
+
+export type LockerAllocationChartData = {
+  libraryId: string;
+  lockers: LockerAllocationItem[];
+  stats: {
+    total: number;
+    available: number;
+    occupied: number;
+    paused: number;
+    standaloneCount: number;
+    attachedCount: number;
+  };
+  canViewStudentIdentity: boolean;
+};
+
+export async function getLockerAllocationChartData(): Promise<LockerAllocationChartData> {
+  const session = await getSession();
+  if (!session) throw new Error("Unauthorized");
+
+  const library = await getActiveLibrary(session);
+  if (!library) throw new Error("Library not found");
+
+  const authSeats = await requirePermission(session, library.id, 'seats.view');
+  if (!authSeats.authorized) throw new Error(authSeats.error || "Permission denied to view seats/lockers");
+
+  const canViewStudentIdentity = await hasPermission(session, library.id, 'bookings.view');
+
+  const now = new Date();
+
+  const [standaloneLockers, attachedSeats, activeBookings, activeLeases] = await Promise.all([
+    prisma.standaloneLocker.findMany({
+      where: { libraryId: library.id },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.seat.findMany({
+      where: { libraryId: library.id, hasLocker: true },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.booking.findMany({
+      where: {
+        libraryId: library.id,
+        status: { in: ['CONFIRMED', 'PENDING_PAYMENT'] },
+        endTime: { gt: now },
+        OR: [
+          { standaloneLockerId: { not: null } },
+          { hasLocker: true, seatId: { not: null } },
+        ],
+      },
+      include: {
+        student: {
+          select: { id: true, name: true, uniqueId: true, username: true, phone: true },
+        },
+        seat: { select: { id: true, name: true } },
+        plan: { select: { id: true, name: true } },
+        standaloneLocker: { select: { id: true, name: true } },
+      },
+    }),
+    prisma.resourceLease.findMany({
+      where: {
+        libraryId: library.id,
+        resourceType: 'STANDALONE_LOCKER',
+        expiresAt: { gt: now },
+      },
+      select: { resourceId: true },
+    }),
+  ]);
+
+  const leaseMap = new Set(activeLeases.map((l) => l.resourceId));
+
+  const standaloneBookingMap = new Map<string, (typeof activeBookings)[0]>();
+  const attachedBookingMap = new Map<string, (typeof activeBookings)[0]>();
+
+  for (const b of activeBookings) {
+    if (b.standaloneLockerId) {
+      standaloneBookingMap.set(b.standaloneLockerId, b);
+    }
+    if (b.hasLocker && b.seatId) {
+      attachedBookingMap.set(b.seatId, b);
+    }
+  }
+
+  const items: LockerAllocationItem[] = [];
+
+  // 1. Process Standalone Lockers
+  for (const l of standaloneLockers) {
+    const booking = standaloneBookingMap.get(l.id);
+    const isLeased = leaseMap.has(l.id);
+
+    let status: LockerAllocationItem['status'] = 'AVAILABLE';
+    if (booking) {
+      status = booking.isPaused ? 'PAUSED' : 'OCCUPIED';
+    } else if (isLeased) {
+      status = 'HOLD';
+    }
+
+    items.push({
+      id: l.id,
+      name: l.name,
+      type: 'STANDALONE',
+      price: l.price,
+      seatName: null,
+      status,
+      bookingId: booking?.id || null,
+      student: booking && canViewStudentIdentity ? {
+        id: booking.student.id,
+        name: booking.student.name,
+        uniqueId: booking.student.uniqueId,
+        username: booking.student.username,
+        phone: booking.student.phone,
+      } : booking ? {
+        id: booking.student.id,
+        name: 'Reserved Member',
+        uniqueId: booking.student.uniqueId,
+        username: null,
+      } : null,
+      planName: booking?.plan.name || null,
+      startTime: booking?.startTime.toISOString() || null,
+      endTime: booking?.endTime.toISOString() || null,
+      isPaused: booking?.isPaused || false,
+    });
+  }
+
+  // 2. Process Attached Lockers
+  for (const s of attachedSeats) {
+    const booking = attachedBookingMap.get(s.id);
+
+    let status: LockerAllocationItem['status'] = 'AVAILABLE';
+    if (booking) {
+      status = booking.isPaused ? 'PAUSED' : 'OCCUPIED';
+    }
+
+    items.push({
+      id: `attached-${s.id}`,
+      name: `Locker (Seat ${s.name})`,
+      type: 'ATTACHED',
+      price: s.lockerPriceDaily ? Math.round(s.lockerPriceDaily * 30) : 0,
+      seatName: s.name,
+      status,
+      bookingId: booking?.id || null,
+      student: booking && canViewStudentIdentity ? {
+        id: booking.student.id,
+        name: booking.student.name,
+        uniqueId: booking.student.uniqueId,
+        username: booking.student.username,
+        phone: booking.student.phone,
+      } : booking ? {
+        id: booking.student.id,
+        name: 'Reserved Member',
+        uniqueId: booking.student.uniqueId,
+        username: null,
+      } : null,
+      planName: booking?.plan.name || null,
+      startTime: booking?.startTime.toISOString() || null,
+      endTime: booking?.endTime.toISOString() || null,
+      isPaused: booking?.isPaused || false,
+    });
+  }
+
+  const occupiedCount = items.filter((i) => i.status === 'OCCUPIED' || i.status === 'PAUSED').length;
+  const pausedCount = items.filter((i) => i.status === 'PAUSED').length;
+  const availableCount = items.filter((i) => i.status === 'AVAILABLE').length;
+
+  return {
+    libraryId: library.id,
+    lockers: items,
+    stats: {
+      total: items.length,
+      available: availableCount,
+      occupied: occupiedCount,
+      paused: pausedCount,
+      standaloneCount: standaloneLockers.length,
+      attachedCount: attachedSeats.length,
+    },
+    canViewStudentIdentity,
+  };
+}

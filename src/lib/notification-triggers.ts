@@ -322,3 +322,69 @@ export async function notifyQueryStatusChanged(
     client
   );
 }
+
+
+export interface BookingPausedTriggerInput {
+  bookingId: string;
+  studentId: string;
+  libraryId: string;
+  libraryName?: string;
+  planName: string;
+  pausedAt: Date;
+  reason?: string | null;
+}
+
+export async function notifyBookingPaused(
+  input: BookingPausedTriggerInput,
+  client?: PrismaClient | Prisma.TransactionClient
+) {
+  const eventId = `notif_booking_paused_${input.bookingId}_${input.pausedAt.getTime()}`;
+  const libInfo = input.libraryName ? ` at ${input.libraryName}` : "";
+  const reasonText = input.reason ? ` Reason: ${input.reason}.` : "";
+
+  return createNotification(
+    {
+      recipientId: input.studentId,
+      title: "Membership Paused ⏸️",
+      message: `Your ${input.planName} membership${libInfo} has been paused.${reasonText} Your remaining validity is safely frozen.`,
+      type: "BOOKING" as NotificationType,
+      actionLabel: "View Membership",
+      actionUrl: "/student/dashboard",
+      eventId,
+    },
+    client
+  );
+}
+
+export interface BookingResumedTriggerInput {
+  bookingId: string;
+  studentId: string;
+  libraryId: string;
+  libraryName?: string;
+  planName: string;
+  resumedAt: Date;
+  newEndTime: Date;
+  extendedDays: number;
+}
+
+export async function notifyBookingResumed(
+  input: BookingResumedTriggerInput,
+  client?: PrismaClient | Prisma.TransactionClient
+) {
+  const eventId = `notif_booking_resumed_${input.bookingId}_${input.resumedAt.getTime()}`;
+  const libInfo = input.libraryName ? ` at ${input.libraryName}` : "";
+  const formattedDate = input.newEndTime.toLocaleDateString();
+
+  return createNotification(
+    {
+      recipientId: input.studentId,
+      title: "Membership Resumed ▶️",
+      message: `Your ${input.planName} membership${libInfo} has been resumed. Extended by ${input.extendedDays} day${input.extendedDays === 1 ? '' : 's'}. New expiry: ${formattedDate}.`,
+      type: "BOOKING" as NotificationType,
+      actionLabel: "View Dashboard",
+      actionUrl: "/student/dashboard",
+      eventId,
+    },
+    client
+  );
+}

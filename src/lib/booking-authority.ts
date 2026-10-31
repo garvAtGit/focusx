@@ -15,6 +15,7 @@ import { loadBookingFacts } from "@/lib/booking-engine/server/server-fact-loader
 import { evaluateBookingSelection } from "@/lib/booking-engine/evaluate-selection"
 import { endOfDayIST } from "@/lib/date-utils"
 import { invalidateStudentsCache } from "@/lib/student-cache"
+import { incrementLibraryRevision } from "@/lib/hardware-sync"
 
 const ONLINE_HOLD_MINUTES = 20
 const MANUAL_HOLD_MINUTES = 24 * 60
@@ -1830,7 +1831,10 @@ export async function changeBookingSeat(
   })
 }
 
-export async function pauseConfirmedBooking(bookingId: string): Promise<Booking> {
+export async function pauseConfirmedBooking(
+  bookingId: string,
+  options?: { actorUserId?: string; reason?: string },
+): Promise<Booking> {
   return serializable(async (tx) => {
     const booking = await tx.booking.findUnique({ where: { id: bookingId } })
     if (!booking) {
@@ -1844,19 +1848,39 @@ export async function pauseConfirmedBooking(bookingId: string): Promise<Booking>
     }
     if (booking.isPaused) throw new Error("Booking is already paused")
 
-    return tx.booking.update({
+    const now = new Date()
+
+    // 1. Create durable pause history entry
+    await tx.bookingPauseHistory.create({
+      data: {
+        bookingId: booking.id,
+        libraryId: booking.libraryId,
+        pausedAt: now,
+        reason: options?.reason || null,
+        pausedByUserId: options?.actorUserId || null,
+      },
+    })
+
+    // 2. Mark booking paused
+    const updated = await tx.booking.update({
       where: { id: booking.id },
       data: {
         isPaused: true,
-        pausedAt: new Date(),
+        pausedAt: now,
       },
     })
+
+    // 3. Atomically increment library revision to invalidate hardware reader snapshots
+    await incrementLibraryRevision(booking.libraryId, tx)
+
+    return updated
   })
 }
 
 export async function resumePausedBooking(
   bookingId: string,
-): Promise<{ booking: Booking; extendedDays: number }> {
+  options?: { actorUserId?: string },
+): Promise<{ booking: Booking; extendedDays: number; extendedMilliseconds: number }> {
   return serializable(async (tx) => {
     const booking = await tx.booking.findUnique({ where: { id: bookingId } })
     if (!booking) {
@@ -1868,16 +1892,10 @@ export async function resumePausedBooking(
 
     const now = new Date()
     const pausedMilliseconds = Math.max(0, now.getTime() - booking.pausedAt.getTime())
-    const pausedDays = Math.min(
-      365,
-      Math.floor(pausedMilliseconds / (24 * 60 * 60 * 1000)),
-    )
-    const extendedDays = pausedDays >= 7 ? pausedDays : 0
-    const newEndTime = new Date(
-      booking.endTime.getTime() + extendedDays * 24 * 60 * 60 * 1000,
-    )
+    const extendedDays = Math.ceil(pausedMilliseconds / (24 * 60 * 60 * 1000))
+    const newEndTime = new Date(booking.endTime.getTime() + pausedMilliseconds)
 
-    if (extendedDays > 0) {
+    if (pausedMilliseconds > 0) {
       const resources = resourcesFor(booking)
       await lockResources(tx, resources)
       await assertNoLeaseConflict(tx, resources, booking.endTime, newEndTime)
@@ -1893,6 +1911,22 @@ export async function resumePausedBooking(
       )
     }
 
+    // Close the latest open pause history record
+    const latestOpenHistory = await tx.bookingPauseHistory.findFirst({
+      where: { bookingId: booking.id, resumedAt: null },
+      orderBy: { pausedAt: "desc" },
+    })
+    if (latestOpenHistory) {
+      await tx.bookingPauseHistory.update({
+        where: { id: latestOpenHistory.id },
+        data: {
+          resumedAt: now,
+          pausedDays: extendedDays,
+          resumedByUserId: options?.actorUserId || null,
+        },
+      })
+    }
+
     const updated = await tx.booking.update({
       where: { id: booking.id },
       data: {
@@ -1902,7 +1936,11 @@ export async function resumePausedBooking(
         endTime: newEndTime,
       },
     })
-    return { booking: updated, extendedDays }
+
+    // Atomically increment library revision to refresh hardware reader snapshots
+    await incrementLibraryRevision(booking.libraryId, tx)
+
+    return { booking: updated, extendedDays, extendedMilliseconds: pausedMilliseconds }
   })
 }
 

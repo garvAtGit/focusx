@@ -39,6 +39,7 @@ export async function GET(request: NextRequest) {
         { name: { contains: query, mode: "insensitive" } },
         { phone: { contains: query } },
         { uniqueId: { startsWith: query, mode: "insensitive" } },
+        { username: { contains: query, mode: "insensitive" } },
       ],
     },
     select: {
@@ -46,6 +47,7 @@ export async function GET(request: NextRequest) {
       name: true,
       phone: true,
       uniqueId: true,
+      username: true,
       bookings: {
         where: {
           libraryId,

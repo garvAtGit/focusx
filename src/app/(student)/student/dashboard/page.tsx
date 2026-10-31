@@ -6,7 +6,7 @@ import { getSession } from "@/app/actions/auth-actions";
 import { redirect } from "next/navigation";
 
 import Link from "next/link";
-import PauseResumeButton from "./PauseResumeButton";
+import MembershipTimeline from "@/components/dashboard/MembershipTimeline";
 import BookingSuccessToast from "./BookingSuccessToast";
 import ExtendPlanModal from "./ExtendPlanModal";
 import { AccessQRModal } from "@/components/AccessQRModal";
@@ -111,7 +111,8 @@ where: { timestamp: { gte: fetchStart } },
         library: true,
         plan: true,
         seat: true,
-        standaloneLocker: true
+        standaloneLocker: true,
+        pauseHistories: { orderBy: { pausedAt: "asc" } }
       },
       take: 50,
       orderBy: { createdAt: 'desc' }
@@ -439,7 +440,7 @@ where: { timestamp: { gte: fetchStart } },
 
                     {/* Action Footer */}
                     <div className="p-4 bg-muted/20 border-t border-border grid grid-cols-2 sm:grid-cols-5 gap-3">
-                      <PauseResumeButton bookingId={booking.id} isPaused={booking.isPaused} />
+                      <MembershipTimeline booking={booking as any} />
                       <ExtendPlanModal 
                         libraryId={booking.libraryId}
                         planId={booking.planId}

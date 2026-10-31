@@ -5,6 +5,7 @@ import { getSession } from "./auth-actions"
 import { revalidatePath } from "next/cache"
 import { uploadImage } from "@/lib/imagekit"
 import { invalidateStudentsCache } from "@/lib/student-cache"
+import { validateUsername } from "@/lib/username-validator"
 
 function getFormString(formData: FormData, key: string): string {
   const value = formData.get(key);
@@ -69,12 +70,23 @@ export async function updateStudentProfile(formData: FormData): Promise<{ succes
   const isVerified = currentUser?.digilockerVerified;
 
   const email = getFormString(formData, "email");
+  const usernameRaw = getFormString(formData, "username");
+  let normalizedUsername: string | undefined = undefined;
+
+  if (usernameRaw) {
+    const val = validateUsername(usernameRaw);
+    if (!val.isValid) {
+      throw new Error(val.error);
+    }
+    normalizedUsername = val.normalized;
+  }
 
   try {
     await prisma.user.update({
       where: { id: session.userId },
       data: {
         name: isVerified ? undefined : (name || undefined),
+        ...(normalizedUsername && { username: normalizedUsername }),
         email: email || undefined,
         phone: isVerified ? undefined : (phone || null),
         dob: isVerified ? undefined : (dobStr ? new Date(dobStr) : null),
@@ -87,6 +99,17 @@ export async function updateStudentProfile(formData: FormData): Promise<{ succes
       }
     });
   } catch (error: unknown) {
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      error.code === 'P2002'
+    ) {
+      const meta = 'meta' in error && error.meta && typeof error.meta === 'object' ? JSON.stringify(error.meta) : '';
+      if (meta.includes('username') || meta.includes('User_username')) {
+        throw new Error("This username is already taken. Please choose another.");
+      }
+    }
     if (isUniqueEmailError(error)) {
       throw new Error("Email address is already in use by another account.");
     }
@@ -164,4 +187,57 @@ export async function syncUpdatedPhone() {
 
   revalidatePath("/student/profile");
   return { success: true, phone: newPhone };
+}
+
+export async function claimOrUpdateUsername(rawUsername: string): Promise<{ success: true; username: string }> {
+  const session = await getSession();
+  if (!session) throw new Error("Unauthorized: Please log in.");
+
+  const validation = validateUsername(rawUsername);
+  if (!validation.isValid) {
+    throw new Error(validation.error);
+  }
+
+  const normalized = validation.normalized;
+
+  const current = await prisma.user.findUnique({
+    where: { id: session.userId },
+    select: { username: true }
+  });
+  if (current?.username?.toLowerCase() === normalized) {
+    return { success: true, username: current.username };
+  }
+
+  const taken = await prisma.user.findFirst({
+    where: {
+      id: { not: session.userId },
+      username: { equals: normalized, mode: 'insensitive' }
+    },
+    select: { id: true }
+  });
+  if (taken) {
+    throw new Error("This username is already taken. Please choose another.");
+  }
+
+  try {
+    await prisma.user.update({
+      where: { id: session.userId },
+      data: { username: normalized }
+    });
+  } catch (error: unknown) {
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      error.code === 'P2002'
+    ) {
+      throw new Error("This username is already taken. Please choose another.");
+    }
+    throw error;
+  }
+
+  revalidatePath("/student/profile");
+  revalidatePath("/student/dashboard");
+  revalidatePath("/dashboard/students");
+  return { success: true, username: normalized };
 }

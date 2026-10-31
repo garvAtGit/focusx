@@ -10,6 +10,7 @@ interface DigitalPassCardProps {
     name: string | null;
     uniqueId: string;
     profilePhotoUrl: string | null;
+    username?: string | null;
   };
   currentStreak: number; // Keeping prop to avoid breaking page.tsx, but unused in UI
   libraryId: string;
@@ -91,6 +92,9 @@ export function DigitalPassCard({ student, currentStreak, libraryId, studentId, 
           <div className="flex items-end justify-between border-b-2 border-black/10 dark:border-white/10 pb-4">
             <div className="flex flex-col">
               <span className="font-mono font-bold text-2xl tracking-[0.1em]">{student.uniqueId}</span>
+              {student.username && (
+                <span className="font-mono text-xs font-semibold text-primary mt-0.5">@{student.username}</span>
+              )}
             </div>
           </div>
 

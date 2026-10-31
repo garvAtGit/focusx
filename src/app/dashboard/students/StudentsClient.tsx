@@ -86,6 +86,7 @@ interface ActivityLog {
   student: {
     name: string
     uniqueId?: string | null
+    username?: string | null
   } | null
 }
 
@@ -236,6 +237,11 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
   // RFID Modal States
   const [addFormHasLocker, setAddFormHasLocker] = useState<boolean>(true);
   const [rfidModalOpen, setRfidModalOpen] = useState(false);
+  const [pauseModalBooking, setPauseModalBooking] = useState<{ id: string; studentName: string; planName: string; endTime: string | Date } | null>(null);
+  const [pauseReasonInput, setPauseReasonInput] = useState("");
+  const [pauseLoading, setPauseLoading] = useState(false);
+  const [resumeModalBooking, setResumeModalBooking] = useState<{ id: string; studentName: string; planName: string; pausedAt: string | Date | null; totalPausedDays: number } | null>(null);
+  const [resumeLoading, setResumeLoading] = useState(false);
   const [rfidStudentId, setRfidStudentId] = useState<string | null>(null);
   const [rfidTagInput, setRfidTagInput] = useState("");
   const [rfidQrPayload, setRfidQrPayload] = useState<string | null>(null);
@@ -460,6 +466,7 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
   const searchedBookings = currentBookings.filter(b => 
     (b.student.name || '').toLowerCase().includes(search.toLowerCase()) ||
     (b.student.uniqueId && b.student.uniqueId.toLowerCase().includes(search.toLowerCase())) ||
+    (b.student.username && b.student.username.toLowerCase().includes(search.toLowerCase())) ||
     (b.student.phone && b.student.phone.includes(search))
   );
 
@@ -1294,44 +1301,38 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                                   )}
 
                                   {booking.status === 'CONFIRMED' && (
-                                    booking.isPaused ? (
-                                      <DropdownMenuItem 
-                                        onClick={async () => {
-                                          setLoadingId(booking.id);
-                                          try {
-                                            const res = await resumeBooking(booking.id);
-                                            toast.success(`Plan resumed! Extended by ${res.extendedDays} days.`);
-                                            router.refresh();
-                                          } catch (error: unknown) {
-                                            toast.error(getErrorMessage(error, "Failed to resume"));
-                                          }
-                                          setLoadingId(null);
-                                        }}
-                                        className="cursor-pointer px-2 py-2 text-sm font-semibold rounded-lg hover:bg-emerald-50 text-emerald-600 focus:bg-emerald-50 focus:text-emerald-600"
-                                      >
-                                        Resume Plan
-                                      </DropdownMenuItem>
-                                    ) : (
-                                      <DropdownMenuItem 
-                                        onClick={async (e) => {
-                                          if (booking.plan.type === 'FIXED') { e.preventDefault(); toast.error("Reserved seats cannot be paused."); return; }
-                                          setLoadingId(booking.id);
-                                          try {
-                                            await pauseBooking(booking.id);
-                                            toast.success("Plan paused");
-                                            router.refresh();
-                                          } catch (error: unknown) {
-                                            toast.error(getErrorMessage(error, "Failed to pause"));
-                                          }
-                                          setLoadingId(null);
-                                        }}
-                                        disabled={booking.plan.type === 'FIXED'}
-                                        className={`cursor-pointer px-2 py-2 text-sm font-semibold rounded-lg ${booking.plan.type === 'FIXED' ? 'opacity-50 cursor-not-allowed' : 'hover:bg-amber-50 text-amber-600 focus:bg-amber-50 focus:text-amber-600'}`}
-                                      >
-                                        Pause Plan
-                                      </DropdownMenuItem>
-                                    )
-                                  )}
+                                     booking.isPaused ? (
+                                       <DropdownMenuItem 
+                                         onClick={() => {
+                                           setResumeModalBooking({
+                                             id: booking.id,
+                                             studentName: booking.student.name,
+                                             planName: booking.plan.name,
+                                             pausedAt: booking.pausedAt,
+                                             totalPausedDays: booking.totalPausedDays || 0
+                                           });
+                                         }}
+                                         className="cursor-pointer px-2 py-2 text-sm font-semibold rounded-lg hover:bg-emerald-50 text-emerald-600 focus:bg-emerald-50 focus:text-emerald-600"
+                                       >
+                                         Resume Plan
+                                       </DropdownMenuItem>
+                                     ) : (
+                                       <DropdownMenuItem 
+                                         onClick={() => {
+                                           setPauseReasonInput("");
+                                           setPauseModalBooking({
+                                             id: booking.id,
+                                             studentName: booking.student.name,
+                                             planName: booking.plan.name,
+                                             endTime: booking.endTime
+                                           });
+                                         }}
+                                         className="cursor-pointer px-2 py-2 text-sm font-semibold rounded-lg hover:bg-amber-50 text-amber-600 focus:bg-amber-50 focus:text-amber-600"
+                                       >
+                                         Pause Plan
+                                       </DropdownMenuItem>
+                                     )
+                                   )}
 
                                   {booking.status === 'CONFIRMED' && (
                                     <>
@@ -1503,44 +1504,38 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                                 )}
 
                                 {booking.status === 'CONFIRMED' && (
-                                  booking.isPaused ? (
-                                    <DropdownMenuItem 
-                                      onClick={async () => {
-                                        setLoadingId(booking.id);
-                                        try {
-                                          const res = await resumeBooking(booking.id);
-                                          toast.success(`Plan resumed! Extended by ${res.extendedDays} days.`);
-                                          router.refresh();
-                                        } catch (error: unknown) {
-                                          toast.error(getErrorMessage(error, "Failed to resume"));
-                                        }
-                                        setLoadingId(null);
-                                      }}
-                                      className="cursor-pointer px-2 py-2 text-sm font-semibold rounded-lg hover:bg-emerald-50 text-emerald-600 focus:bg-emerald-50 focus:text-emerald-600"
-                                    >
-                                      Resume Plan
-                                    </DropdownMenuItem>
-                                  ) : (
-                                    <DropdownMenuItem 
-                                      onClick={async (e) => {
-                                        if (booking.plan.type === 'FIXED') { e.preventDefault(); toast.error("Reserved seats cannot be paused."); return; }
-                                        setLoadingId(booking.id);
-                                        try {
-                                          await pauseBooking(booking.id);
-                                          toast.success("Plan paused");
-                                          router.refresh();
-                                        } catch (error: unknown) {
-                                          toast.error(getErrorMessage(error, "Failed to pause"));
-                                        }
-                                        setLoadingId(null);
-                                      }}
-                                      disabled={booking.plan.type === 'FIXED'}
-                                      className={`cursor-pointer px-2 py-2 text-sm font-semibold rounded-lg ${booking.plan.type === 'FIXED' ? 'opacity-50 cursor-not-allowed' : 'hover:bg-amber-50 text-amber-600 focus:bg-amber-50 focus:text-amber-600'}`}
-                                    >
-                                      Pause Plan
-                                    </DropdownMenuItem>
-                                  )
-                                )}
+                                     booking.isPaused ? (
+                                       <DropdownMenuItem 
+                                         onClick={() => {
+                                           setResumeModalBooking({
+                                             id: booking.id,
+                                             studentName: booking.student.name,
+                                             planName: booking.plan.name,
+                                             pausedAt: booking.pausedAt,
+                                             totalPausedDays: booking.totalPausedDays || 0
+                                           });
+                                         }}
+                                         className="cursor-pointer px-2 py-2 text-sm font-semibold rounded-lg hover:bg-emerald-50 text-emerald-600 focus:bg-emerald-50 focus:text-emerald-600"
+                                       >
+                                         Resume Plan
+                                       </DropdownMenuItem>
+                                     ) : (
+                                       <DropdownMenuItem 
+                                         onClick={() => {
+                                           setPauseReasonInput("");
+                                           setPauseModalBooking({
+                                             id: booking.id,
+                                             studentName: booking.student.name,
+                                             planName: booking.plan.name,
+                                             endTime: booking.endTime
+                                           });
+                                         }}
+                                         className="cursor-pointer px-2 py-2 text-sm font-semibold rounded-lg hover:bg-amber-50 text-amber-600 focus:bg-amber-50 focus:text-amber-600"
+                                       >
+                                         Pause Plan
+                                       </DropdownMenuItem>
+                                     )
+                                   )}
 
                                 {booking.status === 'CONFIRMED' && (
                                   <>

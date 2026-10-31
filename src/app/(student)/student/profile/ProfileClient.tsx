@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
-import { User, Camera, ShieldCheck, Loader2 } from "lucide-react"
+import { User, Camera, ShieldCheck, Loader2, CheckCircle2, AlertCircle } from "lucide-react"
 import { ImageCropperModal } from "@/components/ImageCropperModal"
 import type { User as UserRecord } from "@prisma/client"
 
@@ -27,6 +27,7 @@ type ProfileUser = Omit<
     | "profilePhotoUrl"
     | "qualification"
     | "uniqueId"
+    | "username"
   >,
   "dob"
 > & {
@@ -48,6 +49,58 @@ export function ProfileClient({ user: initialUser }: { user: ProfileUser }) {
   const [photoUrl, setPhotoUrl] = useState<string | null>(user.profilePhotoUrl || "")
   const [uncroppedImageSrc, setUncroppedImageSrc] = useState<string | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [username, setUsername] = useState(user.username || "")
+  const [usernameStatus, setUsernameStatus] = useState<'idle' | 'checking' | 'available' | 'taken' | 'invalid'>('idle')
+  const [usernameMessage, setUsernameMessage] = useState<string>('')
+
+  useEffect(() => {
+    const trimmed = username.trim()
+    if (!trimmed) {
+      setUsernameStatus('idle')
+      setUsernameMessage('')
+      return
+    }
+
+    if (trimmed.length < 3) {
+      setUsernameStatus('invalid')
+      setUsernameMessage('Username must be at least 3 characters.')
+      return
+    }
+
+    if (!/^[a-zA-Z0-9_.-]+$/.test(trimmed)) {
+      setUsernameStatus('invalid')
+      setUsernameMessage('Only letters, numbers, _, -, and . are allowed.')
+      return
+    }
+
+    if (user.username && trimmed.toLowerCase() === user.username.toLowerCase()) {
+      setUsernameStatus('available')
+      setUsernameMessage('This is your current username.')
+      return
+    }
+
+    setUsernameStatus('checking')
+    setUsernameMessage('Checking availability...')
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/students/check-username?username=${encodeURIComponent(trimmed)}`)
+        const data = await res.json()
+        if (data.available) {
+          setUsernameStatus('available')
+          setUsernameMessage(data.message || 'Username is available!')
+        } else {
+          setUsernameStatus('taken')
+          setUsernameMessage(data.error || 'Username is already taken.')
+        }
+      } catch {
+        setUsernameStatus('idle')
+        setUsernameMessage('')
+      }
+    }, 400)
+
+    return () => clearTimeout(timer)
+  }, [username, user.username])
 
   const verifyCashfreeReturn = useCallback(async (verification_id: string) => {
     setVerifying(true);

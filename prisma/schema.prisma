@@ -15,6 +15,7 @@ model User {
   phone                       String?            @unique
   area                        String?
   uniqueId                    String?            @unique
+  username                    String?            @unique
   createdAt                   DateTime           @default(now())
   updatedAt                   DateTime           @updatedAt
   password                    String?
@@ -68,6 +69,8 @@ model User {
   staffMemberships            LibraryStaff[]     @relation("UserStaffMemberships")
   grantedStaff                LibraryStaff[]     @relation("StaffGrants")
   staffAuditLogs              StaffAuditLog[]    @relation("StaffAuditActor")
+  pausedHistories             BookingPauseHistory[] @relation("PausedByStaff")
+  resumedHistories            BookingPauseHistory[] @relation("ResumedByStaff")
 
   @@index([name])
   @@index([phone])
@@ -119,6 +122,7 @@ model Library {
   standaloneLockers StandaloneLocker[]
   staff             User[]             @relation("LibraryStaff")
   staffMemberships  LibraryStaff[]     @relation("LibraryStaffMemberships")
+  pauseHistories    BookingPauseHistory[]
 
   @@index([librarianId])
   @@index([kycStatus])
@@ -205,6 +209,7 @@ model Booking {
   student               User              @relation(fields: [studentId], references: [id])
   bookingIntent         BookingIntent?
   refundTasks           RefundTask[]
+  pauseHistories        BookingPauseHistory[]
 
   @@index([libraryId, status])
   @@index([libraryId, status, endTime])
@@ -830,3 +835,27 @@ model StaffAuditLog {
   @@index([createdAt])
 }
 
+
+
+model BookingPauseHistory {
+  id              String    @id @default(uuid())
+  bookingId       String
+  libraryId       String
+  pausedAt        DateTime  @default(now())
+  resumedAt       DateTime?
+  pausedDays      Int?
+  reason          String?
+  pausedByUserId  String?
+  resumedByUserId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  booking         Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  library         Library   @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  pausedByUser    User?     @relation("PausedByStaff", fields: [pausedByUserId], references: [id], onDelete: SetNull)
+  resumedByUser   User?     @relation("ResumedByStaff", fields: [resumedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([bookingId])
+  @@index([libraryId])
+  @@index([bookingId, resumedAt])
+}

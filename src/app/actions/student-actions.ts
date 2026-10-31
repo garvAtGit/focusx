@@ -541,6 +541,7 @@ export async function searchActiveStudents(query?: string) {
             { name: { contains: trimmed, mode: 'insensitive' } },
             { phone: { contains: trimmed, mode: 'insensitive' } },
             { uniqueId: { contains: trimmed, mode: 'insensitive' } },
+            { username: { contains: trimmed, mode: 'insensitive' } },
             { rfidTag: { contains: trimmed, mode: 'insensitive' } },
           ]
         } : {})
@@ -765,7 +766,8 @@ export async function searchStudentsGlobal(query: string) {
       OR: [
         { name: { contains: query, mode: 'insensitive' } },
         { phone: { contains: query } },
-        { uniqueId: { contains: query, mode: 'insensitive' } }
+        { uniqueId: { contains: query, mode: 'insensitive' } },
+        { username: { contains: query, mode: 'insensitive' } }
       ]
     },
     include: {

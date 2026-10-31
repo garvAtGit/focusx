@@ -19,8 +19,11 @@ import {
   type SeatLayoutItem,
   type SeatNamingValue,
   type StandaloneLockerLayoutItem,
+  getLockerAllocationChartData,
+  type LockerAllocationChartData,
 } from "@/app/actions/seat-actions";
 import LiveSeatMap, { type LiveSeat } from "@/components/LiveSeatMap";
+import LockerAllocationGrid from "@/components/dashboard/LockerAllocationGrid";
 import { useAdminRealtimeSeats } from "@/hooks/useAdminRealtimeSeats";
 import { formatStandardDate } from "@/lib/date-utils";
 
@@ -61,7 +64,22 @@ export default function SeatsManagerPage() {
   
   const [selectedSeatId, setSelectedSeatId] = useState<string | null>(null);
 
-  const [viewMode, setViewMode] = useState<'LIVE' | 'EDIT'>('LIVE');
+  const [viewMode, setViewMode] = useState<'LIVE' | 'LOCKERS' | 'EDIT'>('LIVE');
+  const [lockerData, setLockerData] = useState<LockerAllocationChartData | null>(null);
+  const [lockerLoading, setLockerLoading] = useState(false);
+
+  const loadLockerData = async () => {
+    try {
+      setLockerLoading(true);
+      const res = await getLockerAllocationChartData();
+      setLockerData(res);
+    } catch (err) {
+      console.error("Failed to load locker allocation:", err);
+      toast.error("Failed to load locker allocation data");
+    } finally {
+      setLockerLoading(false);
+    }
+  };
   const [popupSeatId, setPopupSeatId] = useState<string | null>(null);
   const [popupSeatLabel, setPopupSeatLabel] = useState<string | null>(null);
   const [popupData, setPopupData] = useState<{ booking: SeatBookingDetails | null, latestCheckin: CheckinLog | null } | null>(null);
@@ -406,6 +424,15 @@ export default function SeatsManagerPage() {
               Live View
             </button>
             <button 
+              onClick={() => {
+                setViewMode('LOCKERS');
+                if (!lockerData) loadLockerData();
+              }}
+              className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'LOCKERS' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              Locker Allocation
+            </button>
+            <button 
               onClick={() => setViewMode('EDIT')}
               className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${viewMode === 'EDIT' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
             >
@@ -727,6 +754,20 @@ export default function SeatsManagerPage() {
       </div>
       
       </>
+            ) : viewMode === 'LOCKERS' ? (
+        lockerLoading && !lockerData ? (
+          <div className="flex flex-col items-center justify-center py-24 bg-card rounded-3xl border border-border">
+            <Loader2 className="w-8 h-8 animate-spin text-primary mb-3" />
+            <p className="text-muted-foreground text-sm font-medium">Loading locker allocation chart...</p>
+          </div>
+        ) : lockerData ? (
+          <LockerAllocationGrid initialData={lockerData} onRefresh={loadLockerData} />
+        ) : (
+          <div className="text-center py-16 bg-card rounded-3xl border border-border">
+            <p className="text-muted-foreground mb-4">No locker data available</p>
+            <Button onClick={loadLockerData} variant="outline" size="sm">Retry Loading</Button>
+          </div>
+        )
       ) : (
         <div className="bg-card rounded-3xl border border-border shadow-sm flex flex-col relative min-h-[70vh]">
           <div className="p-6 overflow-y-auto bg-muted/10 relative h-full">

@@ -69,6 +69,7 @@ export default async function StudentsPage(props: { searchParams: Promise<{ [key
         u."name" ILIKE ${`%${query}%`}
         OR u."phone" ILIKE ${`%${query}%`}
         OR u."uniqueId" ILIKE ${`%${query}%`}
+        OR u."username" ILIKE ${`%${query}%`}
       )`
     : Prisma.empty;
 
@@ -145,6 +146,7 @@ export default async function StudentsPage(props: { searchParams: Promise<{ [key
             email: true,
             phone: true,
             uniqueId: true,
+            username: true,
             profilePhotoUrl: true,
             rfidTag: true,
             crmNote: true,
