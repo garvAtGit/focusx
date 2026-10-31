@@ -281,8 +281,6 @@ export default function LoginPage() {
       <div className="pointer-events-none absolute -top-40 -left-40 w-96 h-96 bg-blue-500/5 rounded-full blur-3xl" />
       <div className="pointer-events-none absolute -bottom-40 -right-40 w-96 h-96 bg-indigo-500/5 rounded-full blur-3xl" />
 
-      {/* Invisible reCAPTCHA container hidden off-screen */}
-      <div id="recaptcha-container" className="hidden" aria-hidden="true" />
 
       {/* Top Navigation Bar */}
       <header className="w-full max-w-6xl mx-auto px-6 py-6 flex items-center justify-between z-20">
@@ -361,6 +359,9 @@ export default function LoginPage() {
                       />
                     </div>
                   </div>
+
+                  {/* reCAPTCHA container for invisible app verification */}
+                  <div id="recaptcha-container" />
 
                   {/* Single Clean Primary Blue Button for SMS OTP */}
                   <Button 
