@@ -37,6 +37,10 @@ export async function submitInquiry(formData: FormData): Promise<InquiryActionRe
       }
     });
 
+    try {
+      revalidatePath("/dashboard/inquiries");
+    } catch {}
+
     return { success: true };
   } catch (error: unknown) {
     console.error("Inquiry error:", error);
