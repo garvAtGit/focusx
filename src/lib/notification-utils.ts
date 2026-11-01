@@ -1,15 +1,19 @@
 import prisma from "@/lib/prisma";
 import { fireRules } from "@/lib/rule-engine";
+import { createNotification } from "@/lib/notifications";
+import { startOfDayIST } from "@/lib/date-utils";
+
+function toISTDateStr(d: Date) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(d);
+}
 
 /**
- * Called after a student checks out (relay sync or direct checkin route).
- * Calculates today's session duration and fires OVERSTAY rules if applicable.
- * Falls back to the old hardcoded notification when no rules are configured.
+ * Called when a student exceeds their daily limit (live or on checkout).
+ * Calculates today's session duration and fires OVERSTAY rules / creates real-time notifications.
  */
 export async function checkDurationAndNotify(studentId: string, libraryId: string) {
   try {
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
+    const startOfDay = startOfDayIST(new Date());
 
     // Get active booking
     const activeBooking = await prisma.booking.findFirst({
@@ -23,7 +27,9 @@ export async function checkDurationAndNotify(studentId: string, libraryId: strin
       include: { plan: true }
     });
 
-    if (!activeBooking || !activeBooking.plan.durationHours) return;
+    if (!activeBooking || !activeBooking.plan.durationHours) {
+      return { exceeded: false, durationHrs: 0, overstayHrs: 0, limitHours: null };
+    }
 
     // Calculate today's duration from checkin + entry logs
     const todayLogs = await prisma.checkinLog.findMany({
@@ -72,49 +78,60 @@ export async function checkDurationAndNotify(studentId: string, libraryId: strin
 
     const durationHrs = totalDurationMs / (1000 * 60 * 60);
     const overstayHrs = Math.max(0, durationHrs - activeBooking.plan.durationHours);
+    const isExceeded = overstayHrs > 0;
 
-    if (overstayHrs > 0) {
-      // Try to fire configured OVERSTAY rules first
-      const fired = await fireRules({
-        trigger: 'OVERSTAY',
-        libraryId,
-        studentId,
-        context: { overstay_hours: overstayHrs },
-      });
-
-      // Fallback: if no rules are configured, use the old hardcoded notification
-      if (fired === 0) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const existingNotif = await prisma.notification.findFirst({
-          where: {
-            studentId,
-            title: { startsWith: "Plan Limit Exceeded" },
-            createdAt: { gte: today }
-          }
+    if (isExceeded) {
+      // 1. Try to fire configured OVERSTAY rules
+      try {
+        await fireRules({
+          trigger: 'OVERSTAY',
+          libraryId,
+          studentId,
+          context: { overstay_hours: overstayHrs },
         });
-
-        if (!existingNotif) {
-          await prisma.notification.create({
-            data: {
-              studentId,
-              title: "Plan Limit Exceeded ⚠️",
-              message: `You've exceeded the ${activeBooking.plan.durationHours} hr limit of your plan today. [Upgrade Plan](/student/dashboard)`,
-            }
-          });
-        }
+      } catch (err) {
+        console.warn("Rule engine fire error (OVERSTAY):", err);
       }
+
+      // 2. Deliver real-time notification + web push (idempotent per student per day)
+      const todayStr = toISTDateStr(new Date());
+      const eventId = `overstay_${studentId}_${libraryId}_${todayStr}`;
+
+      const overstayMins = Math.round(overstayHrs * 60);
+      const overstayStr = overstayMins < 60
+        ? `${overstayMins} mins`
+        : `${Math.floor(overstayMins / 60)}h ${overstayMins % 60}m`;
+
+      await createNotification({
+        recipientId: studentId,
+        eventId,
+        title: "Daily Plan Limit Exceeded ⚠️",
+        message: `You've exceeded the ${activeBooking.plan.durationHours} hr limit of your plan by ${overstayStr} today. Please checkout or upgrade your plan.`,
+        type: "WARNING",
+        actionLabel: "Upgrade Plan",
+        actionUrl: `/library/${libraryId}?upgrade=${activeBooking.id}`,
+      });
     }
 
-    // Also fire CHECKOUT rules regardless of overstay
-    await fireRules({
-      trigger: 'CHECKOUT',
-      libraryId,
-      studentId,
-      context: { overstay_hours: overstayHrs, session_count: todayLogs.filter(l => l.status === 'CHECK_IN').length },
-    });
+    // Also fire CHECKOUT rules
+    try {
+      await fireRules({
+        trigger: 'CHECKOUT',
+        libraryId,
+        studentId,
+        context: { overstay_hours: overstayHrs, session_count: todayLogs.filter(l => l.status === 'CHECK_IN').length },
+      });
+    } catch {}
 
+    return {
+      exceeded: isExceeded,
+      durationHrs,
+      overstayHrs,
+      totalDurationMs,
+      limitHours: activeBooking.plan.durationHours
+    };
   } catch (error) {
     console.error("Error in checkDurationAndNotify:", error);
+    return { exceeded: false, durationHrs: 0, overstayHrs: 0, limitHours: null };
   }
 }

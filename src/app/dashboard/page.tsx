@@ -354,6 +354,9 @@ export default async function LibrarianDashboardPage() {
     }
 
     const avgData = studentAvgMap.get(student.studentId) || { avgHrs: 0, optedHrs: 24, overstayHrs: 0, image: null };
+    const isInside = !lastOut || (sortedEvents[0] && sortedEvents[0].action === 'CHECK_IN');
+    const isSittingOverPlan = isInside && (todayHrs > avgData.optedHrs);
+    const todayOverstayHrs = Math.max(0, todayHrs - avgData.optedHrs);
 
     return {
       studentId: student.studentId,
@@ -369,6 +372,9 @@ export default async function LibrarianDashboardPage() {
       overstayHrs: avgData.overstayHrs,
       avgStr: formatHrs(avgData.avgHrs),
       optedStr: formatHrs(avgData.optedHrs),
+      isInside,
+      isSittingOverPlan,
+      todayOverstayStr: formatHrs(todayOverstayHrs),
       events: sortedEvents.reduce((acc: any[], e: any) => {
         const action = e.action === 'CHECK_IN' ? 'IN' : 'OUT';
         if (acc.length === 0 || acc[acc.length - 1].action !== action) {
