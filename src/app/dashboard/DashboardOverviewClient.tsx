@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import Link from "next/link";
 import { 
   UserCheck, LayoutGrid, Timer, BellRing, 
@@ -50,6 +50,28 @@ export function DashboardOverviewClient({
   const [customEnd, setCustomEnd] = useState("");
   const [isLoadingChart, setIsLoadingChart] = useState(false);
   const [supabaseToken, setSupabaseToken] = useState<string | null>(null);
+  const [attendanceFilter, setAttendanceFilter] = useState<'ALL' | 'SITTING_OVER_PLAN' | 'INSIDE' | 'ALL_OVERSTAY'>('ALL');
+
+  const sittingOverPlanCount = useMemo(() => {
+    return todaysAttendance.filter((s: any) => s.isSittingOverPlan || (s.lastOut === 'Still In' && s.todayHrs > s.optedHrs)).length;
+  }, [todaysAttendance]);
+
+  const insideCount = useMemo(() => {
+    return todaysAttendance.filter((s: any) => s.isInside || s.lastOut === 'Still In').length;
+  }, [todaysAttendance]);
+
+  const filteredAttendance = useMemo(() => {
+    if (attendanceFilter === 'SITTING_OVER_PLAN') {
+      return todaysAttendance.filter((s: any) => s.isSittingOverPlan || (s.lastOut === 'Still In' && s.todayHrs > s.optedHrs));
+    }
+    if (attendanceFilter === 'INSIDE') {
+      return todaysAttendance.filter((s: any) => s.isInside || s.lastOut === 'Still In');
+    }
+    if (attendanceFilter === 'ALL_OVERSTAY') {
+      return todaysAttendance.filter((s: any) => s.todayHrs > s.optedHrs);
+    }
+    return todaysAttendance;
+  }, [todaysAttendance, attendanceFilter]);
 
   const router = useRouter();
 
@@ -536,13 +558,63 @@ export function DashboardOverviewClient({
 
             {/* Today's Attendance */}
             <div className="bg-gradient-to-b from-white to-indigo-50/40 border border-slate-200/60 rounded-[3rem] shadow-[0_8px_30px_rgb(0,0,0,0.04)] flex flex-col overflow-hidden">
-                <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                <div className="p-8 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-50/50">
                    <div>
                      <h2 className="text-xl font-black text-slate-900 tracking-tight">Today&apos;s Attendance</h2>
-                     <p className="text-[13px] font-semibold text-slate-500 mt-1">{todaysAttendance.length} students recorded today</p>
+                     <p className="text-[13px] font-semibold text-slate-500 mt-1">
+                       {filteredAttendance.length} {attendanceFilter === 'ALL' ? 'students recorded today' : 'matching filter'}
+                     </p>
                    </div>
-                   <div className="flex gap-3">
-                     <button onClick={handleExportCSV} className="text-[13px] font-bold text-slate-700 bg-white border border-slate-200 px-4 py-2.5 rounded-xl shadow-[0_2px_10px_rgba(0,0,0,0.04)] hover:bg-slate-50 hover:shadow-[0_4px_15px_rgba(0,0,0,0.06)] transition-all">Export CSV</button>
+                   
+                   {/* Beside Daily Attendance: Filter Controls */}
+                   <div className="flex flex-wrap items-center gap-2">
+                     <button 
+                       onClick={() => setAttendanceFilter('ALL')} 
+                       className={`text-xs font-bold px-3 py-2 rounded-xl border transition-all ${
+                         attendanceFilter === 'ALL' 
+                           ? 'bg-slate-900 text-white border-slate-900 shadow-sm' 
+                           : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                       }`}
+                     >
+                       All ({todaysAttendance.length})
+                     </button>
+
+                     <button 
+                       onClick={() => setAttendanceFilter('SITTING_OVER_PLAN')} 
+                       className={`text-xs font-bold px-3.5 py-2 rounded-xl border transition-all flex items-center gap-1.5 ${
+                         attendanceFilter === 'SITTING_OVER_PLAN' 
+                           ? 'bg-rose-600 text-white border-rose-600 shadow-md ring-2 ring-rose-200' 
+                           : sittingOverPlanCount > 0 
+                           ? 'bg-rose-50 text-rose-700 border-rose-300 hover:bg-rose-100 animate-pulse' 
+                           : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                       }`}
+                       title="Students currently inside the library who have exceeded their plan hours today"
+                     >
+                       <span>⚠️ Sitting Over Plan</span>
+                       <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                         attendanceFilter === 'SITTING_OVER_PLAN' 
+                           ? 'bg-white/25 text-white' 
+                           : sittingOverPlanCount > 0 
+                           ? 'bg-rose-200 text-rose-800' 
+                           : 'bg-slate-100 text-slate-600'
+                       }`}>
+                         {sittingOverPlanCount}
+                       </span>
+                     </button>
+
+                     <button 
+                       onClick={() => setAttendanceFilter('INSIDE')} 
+                       className={`text-xs font-bold px-3 py-2 rounded-xl border transition-all flex items-center gap-1.5 ${
+                         attendanceFilter === 'INSIDE' 
+                           ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' 
+                           : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                       }`}
+                     >
+                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                       <span>Inside ({insideCount})</span>
+                     </button>
+
+                     <button onClick={handleExportCSV} className="text-[13px] font-bold text-slate-700 bg-white border border-slate-200 px-4 py-2 rounded-xl shadow-[0_2px_10px_rgba(0,0,0,0.04)] hover:bg-slate-50 hover:shadow-[0_4px_15px_rgba(0,0,0,0.06)] transition-all">Export CSV</button>
                    </div>
                 </div>
                 <div className="p-0 overflow-x-auto overflow-y-auto w-full max-h-[500px]">
@@ -557,20 +629,32 @@ export function DashboardOverviewClient({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                  {todaysAttendance.length === 0 && (
-                    <tr><td colSpan={4} className="px-8 py-8 text-center text-sm text-slate-500">No attendance records today</td></tr>
+                  {filteredAttendance.length === 0 && (
+                    <tr><td colSpan={5} className="px-8 py-12 text-center text-sm font-semibold text-slate-500">
+                      {attendanceFilter === 'SITTING_OVER_PLAN' 
+                        ? '🎉 No students currently sitting over their plan limit!' 
+                        : attendanceFilter === 'INSIDE' 
+                        ? 'No students currently inside the library' 
+                        : 'No attendance records today'}
+                    </td></tr>
                   )}
-                  {todaysAttendance.map((student: any) => {
+                  {filteredAttendance.map((student: any) => {
                     const isExpanded = expandedStudent === student.name;
+                    const isSittingOver = student.isSittingOverPlan || (student.lastOut === 'Still In' && student.todayHrs > student.optedHrs);
+                    const isOverstayToday = (student.todayHrs - student.optedHrs) > 0;
                     return (
                       <React.Fragment key={student.name}>
                         <tr 
                           onClick={() => setExpandedStudent(isExpanded ? null : student.name)}
-                          className="bg-white hover:bg-slate-50/50 transition-colors cursor-pointer group"
+                          className={`transition-colors cursor-pointer group ${
+                            isSittingOver 
+                              ? 'bg-rose-50/40 hover:bg-rose-50/70 border-l-4 border-l-rose-500' 
+                              : 'bg-white hover:bg-slate-50/50'
+                          }`}
                         >
                           <td className="px-8 py-5">
                             <div 
-                              className="flex items-center gap-4 hover:bg-slate-50 p-1.5 -m-1.5 rounded-lg transition-colors"
+                              className="flex items-center gap-4 hover:bg-slate-50/80 p-1.5 -m-1.5 rounded-lg transition-colors"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setProfileStudentId(student.studentId);
@@ -584,9 +668,15 @@ export function DashboardOverviewClient({
                                 )}
                               </div>
                               <div>
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 flex-wrap">
                                   <div className="text-[15px] font-black text-slate-900 group-hover:text-[#0085FF] transition-colors">{student.name}</div>
                                   <span className="text-[10px] font-black bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{student.optedStr} limit</span>
+                                  {isSittingOver && (
+                                    <span className="text-[10px] font-black bg-rose-100 text-rose-700 border border-rose-300 px-2 py-0.5 rounded-full flex items-center gap-1 shadow-2xs">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+                                      Sitting Over Plan
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="text-[13px] font-semibold text-slate-500 mt-0.5">{student.phone}</div>
                               </div>
@@ -596,22 +686,35 @@ export function DashboardOverviewClient({
                             <div className="text-[14px] font-bold text-slate-900">{student.firstIn}</div>
                           </td>
                           <td className="px-8 py-5">
-                            <div className="text-[14px] font-bold text-slate-400">{student.lastOut}</div>
+                            <div className="text-[14px] font-bold text-slate-400">
+                              {student.lastOut === 'Still In' ? (
+                                <span className="inline-flex items-center gap-1.5 text-emerald-600 font-bold">
+                                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                                  Still In
+                                </span>
+                              ) : (
+                                student.lastOut
+                              )}
+                            </div>
                           </td>
                           <td className="px-8 py-5">
                             <div className={`flex flex-col`}>
-                              <span className={`text-[14px] font-bold ${student.overstayHrs > 0.5 ? 'text-rose-600' : 'text-slate-900'}`}>{student.avgStr}</span>
-                              {student.overstayHrs > 0.5 && (
-                                <span className="text-[10px] font-black uppercase text-rose-500 tracking-widest">Overstaying</span>
+                              <span className={`text-[14px] font-bold ${student.overstayHrs > 0 ? 'text-rose-600' : 'text-slate-900'}`}>{student.avgStr}</span>
+                              {student.overstayHrs > 0 && (
+                                <span className="text-[10px] font-black uppercase text-rose-500 tracking-widest">Overstay Avg</span>
                               )}
                             </div>
                           </td>
                           <td className="px-8 py-5">
                             <div className="flex items-start justify-between w-full">
                               <div className="flex flex-col">
-                                <span className={`text-[14px] font-bold ${(student.todayHrs - student.optedHrs) > 0.5 ? 'text-rose-600' : 'text-slate-400'}`}>{student.totalHrs}</span>
-                                {(student.todayHrs - student.optedHrs) > 0.5 && (
-                                  <span className="text-[10px] font-black uppercase text-rose-500 tracking-widest mt-0.5">Overstaying</span>
+                                <span className={`text-[14px] font-bold ${isOverstayToday ? 'text-rose-600' : 'text-slate-700'}`}>
+                                  {student.totalHrs}
+                                </span>
+                                {isOverstayToday && (
+                                  <span className="text-[10px] font-black uppercase text-rose-600 bg-rose-100/70 border border-rose-200 px-1.5 py-0.5 rounded-md tracking-wider mt-1 w-fit">
+                                    {isSittingOver ? '⚠️ Sitting Overstay' : 'Overstayed'}
+                                  </span>
                                 )}
                               </div>
                               <button className="text-[13px] font-bold text-slate-400 group-hover:text-[#0085FF] flex items-center transition-colors mt-0.5">

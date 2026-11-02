@@ -115,6 +115,7 @@ export default async function LibraryDetailsPage({
         library={library} 
         // Initial props are empty, client-side effect will fetch dynamic data
         occupiedSeatIds={[]} 
+        occupiedLockerIds={[]} 
         studentId={""} 
         currentPlanEndDate={null} 
         studentPhone={""}

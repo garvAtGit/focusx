@@ -298,6 +298,8 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
   const [addFormSeatId, setAddFormSeatId] = useState<string | null>(null)
   const [addFormStandaloneLockerId, setAddFormStandaloneLockerId] = useState<string | null>(null)
   const [addFormPaymentMethod, setAddFormPaymentMethod] = useState("CASH")
+  const [addFormAmountPaid, setAddFormAmountPaid] = useState<string>("")
+  const [addFormAmountDue, setAddFormAmountDue] = useState<string>("")
 
   const [studentFormData, setStudentFormData] = useState({
     name: "",
@@ -421,6 +423,8 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
       formData.set("address", studentFormData.address);
       formData.set("paymentMethod", addFormPaymentMethod);
       formData.set("standaloneLockerId", addFormStandaloneLockerId || "");
+      if (addFormAmountPaid !== "") formData.set("amountPaid", addFormAmountPaid);
+      if (addFormAmountDue !== "") formData.set("amountDue", addFormAmountDue);
       
       const result = await addStudentWithBooking(formData);
       if (result && result.error) {
@@ -429,7 +433,7 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
       }
       toast.success("Student enrolled & plan assigned!");
       setIsOpen(false);
-      setPhone("+91 "); setOtp(""); setStep(1); setVerifiedAuthId(null); setSelectedPlanId(null); setAddFormStandaloneLockerId(null);
+      setPhone("+91 "); setOtp(""); setStep(1); setVerifiedAuthId(null); setSelectedPlanId(null); setAddFormStandaloneLockerId(null); setAddFormAmountPaid(""); setAddFormAmountDue("");
       setStudentFormData({ name: "", email: "", dob: "", gender: "", address: "", isKycVerified: false });
       refreshData();
     } catch (error: unknown) {
@@ -920,6 +924,85 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                     <div className="flex justify-between text-base font-black pt-2 border-t border-primary/10 mt-2">
                       <span>Total Amount</span>
                       <span>₹{totalAmount.toFixed(0)}</span>
+                    </div>
+
+                    {/* Dues & Payment Breakdown */}
+                    <div className="pt-3 border-t border-primary/15 space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-xs font-bold text-foreground block">
+                            Amount Paid (₹)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            max={totalAmount}
+                            placeholder={String(totalAmount)}
+                            value={addFormAmountPaid}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setAddFormAmountPaid(val);
+                              if (val === "") {
+                                setAddFormAmountDue("");
+                              } else {
+                                const paidNum = Math.max(0, parseFloat(val) || 0);
+                                setAddFormAmountDue(String(Math.max(0, totalAmount - paidNum)));
+                              }
+                            }}
+                            className="w-full px-3 py-2 rounded-xl border border-input bg-background text-sm font-bold text-foreground focus:outline-none focus:ring-2 focus:ring-primary shadow-xs"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-xs font-bold text-foreground block">
+                            Pending Due (₹)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            max={totalAmount}
+                            placeholder="0"
+                            value={addFormAmountDue}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setAddFormAmountDue(val);
+                              if (val === "") {
+                                setAddFormAmountPaid("");
+                              } else {
+                                const dueNum = Math.max(0, parseFloat(val) || 0);
+                                setAddFormAmountPaid(String(Math.max(0, totalAmount - dueNum)));
+                              }
+                            }}
+                            className="w-full px-3 py-2 rounded-xl border border-input bg-background text-sm font-bold text-amber-600 dark:text-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-xs"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Due Status Notice */}
+                      {(() => {
+                        const effectiveDue = addFormAmountDue !== "" 
+                          ? parseFloat(addFormAmountDue) || 0 
+                          : addFormAmountPaid !== "" 
+                          ? Math.max(0, totalAmount - (parseFloat(addFormAmountPaid) || 0)) 
+                          : 0;
+
+                        if (effectiveDue > 0) {
+                          return (
+                            <div className="p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs flex items-center justify-between font-medium">
+                              <span>⚠️ Pending Due: <strong>₹{effectiveDue.toFixed(0)}</strong></span>
+                              <span className="text-[10px] bg-amber-500/20 px-2 py-0.5 rounded-full font-bold">
+                                Appears in Dues Tab
+                              </span>
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-700 dark:text-emerald-300 text-xs flex items-center gap-1.5 font-medium">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Paid in Full — ₹0 pending due</span>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 );

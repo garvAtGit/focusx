@@ -174,3 +174,192 @@ export async function executeBookingWorkflowAction(draft: BookingDraft, _idempot
     };
   }
 }
+
+export async function addLockerToExistingBookingAction(input: {
+  bookingId: string;
+  standaloneLockerId?: string | null;
+  attachedLocker?: boolean;
+  paymentMode: "RECEPTION" | "ONLINE";
+}) {
+  const session = await getSession();
+  if (!session?.userId) {
+    return { success: false, error: "Please log in to continue." };
+  }
+
+  const { bookingId, standaloneLockerId, attachedLocker, paymentMode } = input;
+
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    include: {
+      library: { select: { id: true, name: true, librarianId: true } },
+      seat: true,
+      plan: true,
+    },
+  });
+
+  if (!booking) {
+    return { success: false, error: "Active booking not found." };
+  }
+
+  const isStaff = session.role === "LIBRARIAN" || session.role === "ADMIN";
+  if (booking.studentId !== session.userId && !isStaff) {
+    return { success: false, error: "Unauthorized access to this booking." };
+  }
+
+  if (booking.status !== "CONFIRMED" || new Date(booking.endTime) <= new Date()) {
+    return { success: false, error: "This booking is no longer active." };
+  }
+
+  if (booking.hasLocker || booking.standaloneLockerId) {
+    return { success: false, error: "This booking already has an assigned locker." };
+  }
+
+  const now = new Date();
+  const end = new Date(booking.endTime);
+  const remainingDays = Math.max(
+    1,
+    Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+  );
+
+  let proratedAmount = 0;
+  let lockerName = "";
+  let targetStandaloneLockerId: string | null = null;
+  let isSeatAttachedLocker = false;
+
+  if (standaloneLockerId) {
+    const locker = await prisma.standaloneLocker.findUnique({
+      where: { id: standaloneLockerId },
+    });
+    if (!locker || locker.libraryId !== booking.libraryId) {
+      return { success: false, error: "Locker not found in this library." };
+    }
+
+    // Check if locker is already occupied or leased
+    const [existingBooking, existingLease] = await Promise.all([
+      prisma.booking.findFirst({
+        where: {
+          standaloneLockerId: locker.id,
+          status: "CONFIRMED",
+          endTime: { gt: now },
+        },
+      }),
+      prisma.resourceLease.findFirst({
+        where: {
+          resourceType: "STANDALONE_LOCKER",
+          resourceId: locker.id,
+          expiresAt: { gt: now },
+        },
+      }),
+    ]);
+
+    if (existingBooking || existingLease) {
+      return { success: false, error: `Locker ${locker.name} is already booked or occupied.` };
+    }
+
+    // Standalone locker price is daily price set by librarian
+    const dailyPrice = locker.price;
+    proratedAmount = Math.round(dailyPrice * remainingDays);
+    lockerName = locker.name;
+    targetStandaloneLockerId = locker.id;
+  } else if (attachedLocker && booking.seat?.hasLocker) {
+    isSeatAttachedLocker = true;
+    const dailyPrice = booking.seat.lockerPriceDaily || 0;
+    proratedAmount = Math.round(dailyPrice * remainingDays);
+    lockerName = `Seat ${booking.seat.name} Locker`;
+  } else {
+    return { success: false, error: "Please select an available locker." };
+  }
+
+  const amountPaise = proratedAmount * 100;
+
+  if (paymentMode === "RECEPTION") {
+    await prisma.$transaction(async (tx) => {
+      await tx.booking.update({
+        where: { id: booking.id },
+        data: {
+          hasLocker: true,
+          standaloneLockerId: targetStandaloneLockerId,
+          amountDuePaise: (booking.amountDuePaise || 0) + amountPaise,
+        },
+      });
+    });
+
+    const { createNotification } = await import("@/lib/notifications");
+
+    await createNotification({
+      recipientId: booking.studentId,
+      title: "Locker Added! 🔒",
+      message: `Locker "${lockerName}" is assigned for remaining ${remainingDays} days. Please pay ₹${proratedAmount} at the reception.`,
+      type: "SYSTEM",
+      actionUrl: "/student/dashboard",
+    });
+
+    if (booking.library.librarianId) {
+      await createNotification({
+        recipientId: booking.library.librarianId,
+        title: "Student Added Locker (Desk Payment)",
+        message: `${session.phone || "A student"} added Locker "${lockerName}". Collect ₹${proratedAmount} at reception.`,
+        type: "ATTENDANCE_ALERT",
+        actionUrl: "/dashboard/students",
+      });
+    }
+
+    await invalidateLibraryRuntimeCache(booking.libraryId);
+    revalidatePath("/student/dashboard");
+    revalidatePath(`/library/${booking.libraryId}`);
+
+    return {
+      success: true,
+      mode: "RECEPTION",
+      proratedAmount,
+      remainingDays,
+      lockerName,
+    };
+  }
+
+  // ONLINE PAYMENT
+  try {
+    const { getRazorpayClient } = await import("@/lib/razorpay");
+    const razorpay = getRazorpayClient();
+
+    const paymentLink = await razorpay.paymentLink.create({
+      amount: amountPaise,
+      currency: "INR",
+      description: `Locker Add-on (${lockerName}) for ${remainingDays} days`,
+      customer: {
+        name: session.phone || "Student",
+        contact: session.phone || undefined,
+        email: session.email || undefined,
+      },
+      notify: { sms: true, email: false },
+      reminder_enable: true,
+      notes: {
+        type: "ADD_LOCKER",
+        bookingId: booking.id,
+        standaloneLockerId: targetStandaloneLockerId || "",
+        attachedLocker: isSeatAttachedLocker ? "true" : "false",
+        studentId: booking.studentId,
+        libraryId: booking.libraryId,
+        proratedAmount: String(proratedAmount),
+      },
+      callback_url: `${process.env.NEXT_PUBLIC_APP_URL || "https://www.focusx.in"}/student/dashboard`,
+      callback_method: "get",
+    });
+
+    return {
+      success: true,
+      mode: "ONLINE",
+      paymentUrl: paymentLink.short_url,
+      proratedAmount,
+      remainingDays,
+      lockerName,
+    };
+  } catch (err: unknown) {
+    console.error("Online payment link creation failed:", err);
+    return {
+      success: false,
+      error: "Online payment gateway is temporarily unavailable. Please choose 'Pay at Reception' to secure your locker.",
+    };
+  }
+}
+

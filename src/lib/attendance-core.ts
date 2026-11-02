@@ -220,6 +220,15 @@ export async function processAttendanceIntent(intent: AttendanceIntent) {
       }
     }
 
+    if (txResult.newStatus === "CHECK_OUT") {
+      try {
+        const { checkDurationAndNotify } = await import("@/lib/notification-utils");
+        void checkDurationAndNotify(studentId, libraryId);
+      } catch (e) {
+        console.error("[processAttendanceIntent] checkDurationAndNotify failed:", e);
+      }
+    }
+
     return { 
       success: true, 
       status: txResult.newStatus, 

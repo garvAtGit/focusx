@@ -39,6 +39,7 @@ export async function GET(req: Request) {
 
     let currentPlanEndDate = null;
     let studentActiveBookingId = null;
+    let activeBooking = null;
 
     if (userId) {
       const cancelRes = await cancelStudentPendingBooking({
@@ -59,11 +60,33 @@ export async function GET(req: Request) {
           status: "CONFIRMED",
           endTime: { gt: new Date() }
         },
-        orderBy: { endTime: 'desc' }
+        orderBy: { endTime: 'desc' },
+        include: {
+          plan: { select: { id: true, name: true, durationHours: true, validityDays: true } },
+          seat: { select: { id: true, name: true, hasLocker: true, lockerPriceDaily: true } },
+          standaloneLocker: { select: { id: true, name: true, price: true } },
+        }
       });
       if (studentActiveBooking) {
         currentPlanEndDate = studentActiveBooking.endTime.toISOString();
         studentActiveBookingId = studentActiveBooking.id;
+        const now = new Date();
+        const end = new Date(studentActiveBooking.endTime);
+        const remainingDays = Math.max(1, Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
+        activeBooking = {
+          id: studentActiveBooking.id,
+          planId: studentActiveBooking.planId,
+          planName: studentActiveBooking.plan?.name || "Active Plan",
+          seatId: studentActiveBooking.seatId,
+          seatName: studentActiveBooking.seat?.name || null,
+          seatHasLocker: Boolean(studentActiveBooking.seat?.hasLocker),
+          seatLockerPriceDaily: studentActiveBooking.seat?.lockerPriceDaily || null,
+          hasLocker: studentActiveBooking.hasLocker || Boolean(studentActiveBooking.standaloneLockerId),
+          standaloneLockerId: studentActiveBooking.standaloneLockerId,
+          standaloneLockerName: studentActiveBooking.standaloneLocker?.name || null,
+          endTime: studentActiveBooking.endTime.toISOString(),
+          remainingDays,
+        };
       }
     }
 
@@ -149,7 +172,8 @@ export async function GET(req: Request) {
       occupiedSeatIds,
       occupiedLockerIds,
       currentPlanEndDate,
-      studentActiveBookingId
+      studentActiveBookingId,
+      activeBooking,
     });
 
   } catch (error: unknown) {

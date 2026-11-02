@@ -1,4 +1,4 @@
-import { Calendar, Clock, MapPin, User as UserIcon, BookOpen, Key, Flame, PauseCircle, PlayCircle } from "lucide-react";
+import { Calendar, Clock, MapPin, User as UserIcon, BookOpen, Key, Flame, PauseCircle } from "lucide-react";
 import { FocusActivityCalendar } from "@/components/dashboard/FocusActivityCalendar";
 import { Suspense } from "react";
 import prisma from "@/lib/prisma";
@@ -9,12 +9,17 @@ import Link from "next/link";
 import PauseResumeButton from "./PauseResumeButton";
 import BookingSuccessToast from "./BookingSuccessToast";
 import ExtendPlanModal from "./ExtendPlanModal";
+import AddLockerModal from "./AddLockerModal";
 import { AccessQRModal } from "@/components/AccessQRModal";
 import { DigitalPassCard } from "@/components/dashboard/DigitalPassCard";
 import { StudentLeaderboard } from "@/components/dashboard/StudentLeaderboard";
 import { StudentLibraryWifiCard } from "@/components/dashboard/StudentLibraryWifiCard";
+import { StudentSupportCard } from "@/components/dashboard/StudentSupportCard";
 
 import { formatStandardDate, formatStandardDateTime, startOfDayIST } from "@/lib/date-utils";
+import PlanTimeline from "@/components/dashboard/PlanTimeline";
+import TodayTimeTimeline from "@/components/dashboard/TodayTimeTimeline";
+import { checkDurationAndNotify } from "@/lib/notification-utils";
 import { startOfDay, startOfWeek, startOfMonth, subDays, differenceInMinutes } from "date-fns";
 import CozyWinterDashboard from "@/components/winter-arc/CozyWinterDashboard";
 
@@ -118,7 +123,11 @@ const todayStart = startOfDayIST(new Date());
     prisma.booking.findMany({
       where: { studentId: session.userId },
       include: {
-        library: true,
+        library: {
+          include: {
+            standaloneLockers: true
+          }
+        },
         plan: true,
         seat: true,
         standaloneLocker: true
@@ -162,6 +171,30 @@ const todayStart = startOfDayIST(new Date());
   }
 
   if (!student) redirect("/login");
+
+  // Build unique libraries list for student inquiry support
+  const libraryMap = new Map<string, { id: string; name: string; whatsapp: string | null; managerPhone: string | null }>();
+  allBookings.forEach((b) => {
+    if (b.library && !libraryMap.has(b.library.id)) {
+      libraryMap.set(b.library.id, {
+        id: b.library.id,
+        name: b.library.name,
+        whatsapp: b.library.whatsapp || null,
+        managerPhone: b.library.managerPhone || null,
+      });
+    }
+  });
+
+  if (libraryMap.size === 0) {
+    const fallbackLibs = await prisma.library.findMany({
+      take: 5,
+      orderBy: { createdAt: "desc" },
+      select: { id: true, name: true, whatsapp: true, managerPhone: true },
+    });
+    fallbackLibs.forEach((l) => libraryMap.set(l.id, l));
+  }
+
+  const supportLibraries = Array.from(libraryMap.values());
 
   const activeBookings = allBookings.filter(b => b.endTime > now && b.status !== 'CANCELLED');
   const pastBookings = allBookings.filter(b => b.endTime <= now || b.status === 'CANCELLED');
@@ -387,6 +420,38 @@ const todayStart = startOfDayIST(new Date());
                   const todayIST = new Date(`${todayISTStr}T12:00:00Z`);
                   const daysLeft = Math.round((endIST.getTime() - todayIST.getTime()) / (1000 * 3600 * 24)) + 1;
 
+                  // Calculate today's time spent in this library
+                  const todayStartIST = startOfDayIST(now);
+                  const libraryTodayLogs = recentLogs
+                    .filter(l => l.libraryId === booking.libraryId && new Date(l.timestamp) >= todayStartIST)
+                    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+                  let completedMins = 0;
+                  let currentInTime: Date | null = null;
+
+                  for (const log of libraryTodayLogs) {
+                    if (log.status === 'CHECK_IN') {
+                      if (!currentInTime) currentInTime = new Date(log.timestamp);
+                    } else if (log.status === 'CHECK_OUT' || log.status === 'AUTO_CHECKOUT') {
+                      if (currentInTime) {
+                        completedMins += Math.floor((new Date(log.timestamp).getTime() - currentInTime.getTime()) / 60000);
+                        currentInTime = null;
+                      }
+                    }
+                  }
+
+                  const isBookingCheckedIn = !!currentInTime;
+                  const activeSessionStartTime = currentInTime ? currentInTime.toISOString() : null;
+
+                  // If student has exceeded their plan's daily duration limit, ensure real-time notification is dispatched
+                  if (booking.plan?.durationHours && !booking.isPaused) {
+                    const activeMins = currentInTime ? Math.floor((now.getTime() - currentInTime.getTime()) / 60000) : 0;
+                    const totalMinsToday = completedMins + activeMins;
+                    if (totalMinsToday >= booking.plan.durationHours * 60) {
+                      void checkDurationAndNotify(session.userId, booking.libraryId);
+                    }
+                  }
+
                   return (
                   <div key={booking.id} className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm flex flex-col">
                     {/* Header: Status & Date */}
@@ -430,28 +495,23 @@ const todayStart = startOfDayIST(new Date());
                               <Key className="w-4 h-4 text-muted-foreground" />
                               <span>Access Code: <strong className="text-foreground font-mono bg-muted px-1.5 py-0.5 rounded">{booking.id.split('-')[0].toUpperCase()}</strong></span>
                             </div>
-                            {booking.isPaused && booking.pausedAt && (
-                              <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-lg text-xs font-medium w-fit mt-1">
-                                <PauseCircle className="w-4 h-4 shrink-0" />
-                                <span>Plan Paused on: <strong className="font-semibold">{formatDateTime(booking.pausedAt)}</strong></span>
-                              </div>
-                            )}
-                            {!booking.isPaused && (booking.resumedAt || (booking.totalPausedDays ?? 0) > 0) && (
-                              <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg text-xs font-medium w-fit mt-1">
-                                <div className="flex items-center gap-1.5">
-                                  <PlayCircle className="w-4 h-4 shrink-0" />
-                                  <span>Resumed on: <strong className="font-semibold">{formatDateTime(booking.resumedAt || booking.updatedAt)}</strong></span>
-                                </div>
-                                {booking.pausedAt && (
-                                  <span className="text-muted-foreground font-normal">(Paused on {formatDateTime(booking.pausedAt)})</span>
-                                )}
-                                {(booking.totalPausedDays ?? 0) > 0 && (
-                                  <span className="text-emerald-700 dark:text-emerald-300 font-bold bg-emerald-500/20 px-1.5 py-0.5 rounded text-[11px]">
-                                    +{booking.totalPausedDays} days extended
-                                  </span>
-                                )}
-                              </div>
-                            )}
+                            <PlanTimeline
+                              startTime={booking.startTime}
+                              endTime={booking.endTime}
+                              isPaused={booking.isPaused}
+                              pausedAt={booking.pausedAt}
+                              resumedAt={booking.resumedAt}
+                              totalPausedDays={booking.totalPausedDays ?? 0}
+                            />
+                            <TodayTimeTimeline
+                              optedHours={booking.plan.durationHours}
+                              completedMinutes={completedMins}
+                              activeSessionStartTime={activeSessionStartTime}
+                              isCheckedIn={isBookingCheckedIn}
+                              libraryId={booking.libraryId}
+                              bookingId={booking.id}
+                              isPaused={booking.isPaused}
+                            />
                           </div>
                         </div>
 
@@ -482,7 +542,7 @@ const todayStart = startOfDayIST(new Date());
                     </div>
 
                     {/* Action Footer */}
-                    <div className="p-4 bg-muted/20 border-t border-border grid grid-cols-2 sm:grid-cols-5 gap-3">
+                    <div className="p-4 bg-muted/20 border-t border-border grid grid-cols-2 sm:grid-cols-4 gap-3">
                       <PauseResumeButton bookingId={booking.id} isPaused={booking.isPaused} />
                       <ExtendPlanModal 
                         libraryId={booking.libraryId}
@@ -500,6 +560,14 @@ const todayStart = startOfDayIST(new Date());
                         Upgrade Plan
                       </Link>
                       {/* AccessQRModal removed from footer, now at the top of the dashboard */}
+                      {!booking.hasLocker && !booking.standaloneLockerId && (
+                        <AddLockerModal 
+                          booking={booking}
+                          libraryId={booking.libraryId}
+                          libraryName={booking.library.name}
+                          standaloneLockers={booking.library.standaloneLockers || []}
+                        />
+                      )}
                     </div>
                   </div>
                   );
@@ -547,6 +615,13 @@ const todayStart = startOfDayIST(new Date());
               </div>
             </div>
           )}
+
+          {/* Dedicated Support / Inquiry Card */}
+          <StudentSupportCard 
+            studentName={student.name || ""}
+            studentPhone={student.phone || ""}
+            libraries={supportLibraries}
+          />
 
         </div>
       </div>

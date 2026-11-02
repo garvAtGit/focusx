@@ -15,6 +15,8 @@ import { auth } from "@/lib/firebase/clientApp"
 import { toast } from "react-hot-toast"
 import { formatStandardDate } from "@/lib/date-utils"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
+import LockerChart from "@/components/lockers/LockerChart"
+import { addLockerToExistingBookingAction } from "@/app/actions/booking-actions"
 
 type LibraryPlan = {
   id: string
@@ -83,10 +85,24 @@ type CheckoutDraft = {
   paymentMode?: "ONLINE" | "RECEPTION"
 }
 
+type DynamicActiveBooking = {
+  id: string
+  planId: string
+  planName: string
+  seatId: string | null
+  seatName: string | null
+  hasLocker: boolean
+  standaloneLockerId: string | null
+  standaloneLockerName: string | null
+  endTime: string
+  remainingDays: number
+}
+
 type DynamicDataResponse = {
   occupiedSeatIds?: string[]
   occupiedLockerIds?: string[]
   currentPlanEndDate?: string | null
+  activeBooking?: DynamicActiveBooking | null
   session?: {
     userId?: string
     phone?: string
@@ -97,6 +113,7 @@ type DynamicDataResponse = {
 type LibraryClientProps = {
   library: LibraryDetails
   occupiedSeatIds: string[]
+  occupiedLockerIds?: string[]
   studentId: string
   currentPlanEndDate?: string | null
   studentPhone?: string
@@ -153,7 +170,15 @@ const LiveSeatMap = dynamic(() => import("@/components/LiveSeatMap"), {
     </div>
   ),
 })
-export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds, studentId: initialStudentId, currentPlanEndDate: initialCurrentPlanEndDate, studentPhone: initialStudentPhone, studentEmail: initialStudentEmail }: LibraryClientProps) {
+export function LibraryClient({ 
+  library, 
+  occupiedSeatIds: initialOccupiedSeatIds, 
+  occupiedLockerIds: initialOccupiedLockerIds = [],
+  studentId: initialStudentId, 
+  currentPlanEndDate: initialCurrentPlanEndDate = null, 
+  studentPhone: initialStudentPhone, 
+  studentEmail: initialStudentEmail 
+}: LibraryClientProps) {
   const router = useRouter();
   const [selectedSeat, setSelectedSeat] = useState<LibrarySeat | null>(null);
   const [selectedPlan, setSelectedPlan] = useState<LibraryPlan | null>(null);
@@ -179,15 +204,26 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
   }, []);
 
   // Dynamic Session State
-  const [dynamicState, setDynamicState] = useState({
+  const [dynamicState, setDynamicState] = useState<{
+    occupiedSeatIds: string[];
+    occupiedLockerIds: string[];
+    studentId: string;
+    currentPlanEndDate: string | null;
+    studentPhone: string;
+    studentEmail: string;
+    isLoading: boolean;
+    hasError: boolean;
+    activeBooking?: DynamicActiveBooking | null;
+  }>({
     occupiedSeatIds: initialOccupiedSeatIds,
-    occupiedLockerIds: [] as string[],
+    occupiedLockerIds: initialOccupiedLockerIds,
     studentId: initialStudentId,
     currentPlanEndDate: initialCurrentPlanEndDate,
     studentPhone: initialStudentPhone || "",
     studentEmail: initialStudentEmail || "",
     isLoading: true,
-    hasError: false
+    hasError: false,
+    activeBooking: null,
   });
 
   const dynamicRetryAfterRef = useRef(0);
@@ -245,6 +281,7 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
         currentPlanEndDate: data.currentPlanEndDate || null,
         studentPhone: data.session?.phone || "",
         studentEmail: data.session?.email || "",
+        activeBooking: data.activeBooking || null,
         isLoading: false,
         hasError: false
       });
@@ -466,10 +503,26 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
     }
   }
 
-  const totalAmount = Math.round(planPrice + lockerCost + premiumSurcharge);
-
   const searchParams = useSearchParams();
   const upgradeBookingId = searchParams.get('upgrade');
+  const addLockerParam = searchParams.get('addLocker');
+  const [isLockerOnlyMode, setIsLockerOnlyMode] = useState<boolean>(Boolean(addLockerParam));
+
+  // Daily locker calculation for active booking
+  const activeRemainingDays = dynamicState.activeBooking?.remainingDays || 1;
+  let lockerOnlyCost = 0;
+  if (selectedStandaloneLockerId) {
+    const locker = library.standaloneLockers.find(
+      (item) => item.id === selectedStandaloneLockerId,
+    );
+    if (locker) {
+      lockerOnlyCost = Math.round(locker.price * activeRemainingDays);
+    }
+  }
+
+  const totalAmount = isLockerOnlyMode
+    ? lockerOnlyCost
+    : Math.round(planPrice + lockerCost + premiumSurcharge);
 
   let startDate = new Date();
   if (dynamicState.currentPlanEndDate && !upgradeBookingId) {
@@ -485,6 +538,49 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
     : new Date(startDate);
 
   const executeCheckout = async (idToken?: string, overrideMode?: "ONLINE" | "RECEPTION") => {
+    if (isLockerOnlyMode) {
+      if (!selectedStandaloneLockerId) {
+        toast.error("Please select a locker to add.");
+        return;
+      }
+      if (!dynamicState.activeBooking) {
+        toast.error("No active booking found to add this locker to.");
+        return;
+      }
+
+      checkoutLockRef.current = true;
+      setIsProcessing(true);
+
+      const mode = overrideMode || paymentMode;
+      try {
+        const res = await addLockerToExistingBookingAction({
+          bookingId: dynamicState.activeBooking.id,
+          standaloneLockerId: selectedStandaloneLockerId,
+          paymentMode: mode === "ONLINE" ? "ONLINE" : "RECEPTION",
+        });
+
+        if (!res.success) {
+          toast.error(res.error || "Failed to add locker.");
+          return;
+        }
+
+        if (res.mode === "RECEPTION") {
+          toast.success(`Locker "${res.lockerName}" assigned! Please pay ₹${res.proratedAmount} at reception.`);
+          setShowSuccessModal(true);
+          setShowPaymentSheet(false);
+          await loadDynamicData(false);
+        } else if (res.mode === "ONLINE" && res.paymentUrl) {
+          window.location.href = res.paymentUrl;
+        }
+      } catch (e: unknown) {
+        toast.error(e instanceof Error ? e.message : "Failed to add locker");
+      } finally {
+        setIsProcessing(false);
+        checkoutLockRef.current = false;
+      }
+      return;
+    }
+
     if (!selectedPlan) {
       toast.error("Please select a plan.");
       return;
@@ -797,9 +893,91 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
             </h3>
 
             <div className="space-y-3 scroll-mt-24" id="plans-section">
+              {/* Active Booking Locker Add-on Banner */}
+              {dynamicState.activeBooking && !dynamicState.activeBooking.hasLocker && (library.standaloneLockers?.length ?? 0) > 0 && (
+                <div className={`p-4 rounded-2xl border transition-all ${
+                  isLockerOnlyMode
+                    ? "bg-amber-500/10 border-amber-500 shadow-md ring-2 ring-amber-500/20"
+                    : "bg-muted/40 hover:bg-muted/60 border-border"
+                }`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className={`p-2.5 rounded-xl shrink-0 ${
+                        isLockerOnlyMode ? "bg-amber-500 text-white" : "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                      }`}>
+                        <Lock className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-foreground">Add Locker to Active Membership</span>
+                          <span className="text-[10px] bg-amber-500/20 text-amber-700 dark:text-amber-300 font-bold px-1.5 py-0.5 rounded-full">
+                            {dynamicState.activeBooking.remainingDays}d left
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground truncate">
+                          Add a locker for remaining {dynamicState.activeBooking.remainingDays} days at daily rate
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !isLockerOnlyMode;
+                        setIsLockerOnlyMode(next);
+                        if (next) {
+                          setSelectedPlan(null);
+                          setSelectedSeat(null);
+                          setTimeout(() => {
+                            document.getElementById('locker-section')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          }, 100);
+                        }
+                      }}
+                      className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-sm ${
+                        isLockerOnlyMode
+                          ? "bg-amber-600 hover:bg-amber-700 text-white shadow-amber-600/30"
+                          : "bg-background border border-amber-500/40 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10"
+                      }`}
+                    >
+                      {isLockerOnlyMode ? "✓ Locker Only" : "+ Add Locker"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <label className="text-sm font-bold text-foreground flex items-center justify-between">
                 <span>1. Choose a Plan</span>
               </label>
+
+              {isLockerOnlyMode && dynamicState.activeBooking && (
+                <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground font-medium">Active Membership:</span>
+                    <span className="font-bold text-foreground">
+                      {dynamicState.activeBooking.seatName ? `Seat ${dynamicState.activeBooking.seatName} • ` : ""}
+                      {dynamicState.activeBooking.planName}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground font-medium">Locker Validity:</span>
+                    <span className="font-bold text-amber-700 dark:text-amber-300">
+                      Remaining {dynamicState.activeBooking.remainingDays} days (Till {formatStandardDate(dynamicState.activeBooking.endTime)})
+                    </span>
+                  </div>
+                  <div className="pt-2 border-t border-amber-500/20 flex justify-between items-center">
+                    <span className="text-[11px] text-muted-foreground">Select a locker below to proceed</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsLockerOnlyMode(false);
+                        setSelectedStandaloneLockerId("");
+                      }}
+                      className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 hover:underline"
+                    >
+                      Cancel Locker-Only
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Filters */}
               <div className="flex overflow-x-auto gap-2 pb-2 scrollbar-none">
@@ -960,9 +1138,11 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
                         setSelectedStandaloneLockerId("");
                       }
                       setTimeout(() => {
-                        const widget = document.getElementById('payment-section');
+                        const hasLockers = !seat.hasLocker && (library.standaloneLockers && library.standaloneLockers.length > 0);
+                        const targetId = hasLockers ? 'locker-section' : 'payment-section';
+                        const widget = document.getElementById(targetId) || document.getElementById('payment-section');
                         if (widget) window.scrollTo({top: widget.getBoundingClientRect().top + window.pageYOffset - 100, behavior: 'smooth'});
-                      }, 100);
+                      }, 120);
                     }}
                   />
                 </div>
@@ -979,53 +1159,28 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
               </div>
             )}
 
-            {/* Locker Add-on UI */}
-            {selectedPlan && (seatHasMandatoryLocker || library.standaloneLockers?.length > 0) && (
-              <div className={`p-4 rounded-xl border ${seatHasMandatoryLocker ? 'bg-primary/5 border-primary/20' : 'bg-muted/30 border-border'} space-y-3`}>
-                <div className="flex items-start gap-3">
-                  <div className="mt-1">
-                    <Lock className={`w-4 h-4 ${seatHasMandatoryLocker ? 'text-primary' : 'text-muted-foreground'}`} />
-                  </div>
-                  <div className="flex-1 space-y-2">
-                    {seatHasMandatoryLocker ? (
-                      <>
-                        <div className="flex justify-between items-center">
-                          <span className="font-bold text-sm text-foreground">Attached Locker</span>
-                          <span className="font-bold text-sm">+₹{lockerCost.toFixed(0)}</span>
-                        </div>
-                        <p className="text-xs text-foreground/80">
-                          Included with this seat.
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        {library.standaloneLockers.length > 0 && (
-                          <div className="p-4 rounded-xl border border-primary/20 bg-primary/5 transition-all">
-                            <label className="text-sm font-bold text-primary mb-2 flex items-center justify-between">
-                              <div className="flex items-center gap-2"><Lock className="w-4 h-4" /> Optional Locker</div>
-                              {selectedStandaloneLockerId && <span className="font-bold text-sm text-primary">+₹{lockerCost.toFixed(0)}</span>}
-                            </label>
-                            <select 
-                              value={selectedStandaloneLockerId}
-                              onChange={(e) => setSelectedStandaloneLockerId(e.target.value)}
-                              className="w-full text-sm rounded-lg border border-primary/20 bg-background p-2.5 focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground font-medium"
-                            >
-                              <option value="">No locker needed</option>
-                              {library.standaloneLockers.map((locker) => (
-                                <option key={locker.id} value={locker.id}>
-                                  {locker.name} - ₹{locker.price}/mo
-                                </option>
-                              ))}
-                            </select>
-                            {selectedStandaloneLockerId && (
-                              <p className="text-xs text-primary/80 mt-2 font-medium">Locker fee will be added to your total.</p>
-                            )}
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </div>
+            {/* Locker Add-on UI - Step 3 (or Step 2 for Flexible plans) */}
+            {(selectedPlan || isLockerOnlyMode) && (seatHasMandatoryLocker || (library.standaloneLockers && library.standaloneLockers.length > 0)) && (
+              <div className="space-y-3 pt-4 border-t border-border scroll-mt-24" id="locker-section">
+                <label className="text-sm font-bold text-foreground flex justify-between items-center">
+                  <span>{isLockerOnlyMode ? "2. Select Your Locker" : isFlexible ? "2. Select a Locker (Optional)" : "3. Select a Locker (Optional)"}</span>
+                </label>
+                <LockerChart 
+                  lockers={library.standaloneLockers || []}
+                  occupiedLockerIds={dynamicState.occupiedLockerIds}
+                  selectedLockerId={selectedStandaloneLockerId || null}
+                  onSelectLocker={(id) => {
+                    setSelectedStandaloneLockerId(id || "");
+                    if (id) {
+                      setTimeout(() => {
+                        const widget = document.getElementById('payment-section');
+                        if (widget) window.scrollTo({top: widget.getBoundingClientRect().top + window.pageYOffset - 100, behavior: 'smooth'});
+                      }, 120);
+                    }
+                  }}
+                  seatHasMandatoryLocker={seatHasMandatoryLocker}
+                  validityDays={isLockerOnlyMode ? (dynamicState.activeBooking?.remainingDays || 1) : (selectedPlan?.validityDays || 30)}
+                />
               </div>
             )}
 
@@ -1067,10 +1222,16 @@ export function LibraryClient({ library, occupiedSeatIds: initialOccupiedSeatIds
             <div id="payment-section" className="mt-4 scroll-mt-24">
               <button 
                 onClick={() => setShowPaymentSheet(true)}
-                disabled={!selectedPlan || (!isFlexible && !selectedSeat) || isProcessing || dynamicState.isLoading || dynamicState.hasError}
+                disabled={
+                  isLockerOnlyMode
+                    ? (!selectedStandaloneLockerId || isProcessing || dynamicState.isLoading || dynamicState.hasError)
+                    : (!selectedPlan || (!isFlexible && !selectedSeat) || isProcessing || dynamicState.isLoading || dynamicState.hasError)
+                }
                 className="w-full bg-primary text-primary-foreground font-bold text-lg py-4 rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2 shadow-lg"
               >
-                Book Now for ₹{totalAmount.toFixed(0)}
+                {isLockerOnlyMode
+                  ? `Add Locker for ₹${totalAmount.toFixed(0)}`
+                  : `Book Now for ₹${totalAmount.toFixed(0)}`}
               </button>
             </div>
             

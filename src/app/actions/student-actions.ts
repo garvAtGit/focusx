@@ -387,6 +387,26 @@ export async function addStudentWithBooking(formData: FormData) {
       return { error: "Please select a seat for this reserved (fixed-seat) plan." };
     }
 
+    const amountPaidStr = formData.get("amountPaid") as string;
+    const amountDueStr = formData.get("amountDue") as string;
+
+    let amountPaidCashPaise: number | undefined = undefined;
+    let amountPaidOnlinePaise: number | undefined = undefined;
+    let amountDuePaise: number | undefined = undefined;
+
+    if (amountDueStr !== null && amountDueStr !== undefined && amountDueStr !== "") {
+      amountDuePaise = Math.max(0, Math.round(parseFloat(amountDueStr) * 100));
+    }
+
+    if (amountPaidStr !== null && amountPaidStr !== undefined && amountPaidStr !== "") {
+      const parsedPaid = Math.max(0, Math.round(parseFloat(amountPaidStr) * 100));
+      if (paymentMethod === "ONLINE") {
+        amountPaidOnlinePaise = parsedPaid;
+      } else {
+        amountPaidCashPaise = parsedPaid;
+      }
+    }
+
     try {
       await createManualConfirmedBooking({
         studentId: student.id,
@@ -397,6 +417,9 @@ export async function addStudentWithBooking(formData: FormData) {
         standaloneLockerId,
         requestedStart: startDateStr ? new Date(startDateStr) : undefined,
         paymentMethod: paymentMethod || "CASH",
+        amountPaidCashPaise,
+        amountPaidOnlinePaise,
+        amountDuePaise,
         source: BookingIntentSource.MANUAL,
         paymentRef: manualPaymentReference(`MANUAL_${paymentMethod || "CASH"}`),
       });
@@ -909,5 +932,19 @@ export async function collectDues(bookingId: string, additionalCashPaise: number
   } catch (error) {
     console.error("Failed to collect dues:", error);
     return { error: 'Failed to collect dues' };
+  }
+}
+
+export async function checkStudentOverstayAction(libraryId: string) {
+  const session = await getSession();
+  if (!session) return { success: false, error: 'Unauthorized' };
+
+  try {
+    const { checkDurationAndNotify } = await import("@/lib/notification-utils");
+    const result = await checkDurationAndNotify(session.userId, libraryId);
+    return { success: true, ...result };
+  } catch (error) {
+    console.error("Failed to check overstay:", error);
+    return { success: false, error: "Internal error" };
   }
 }
