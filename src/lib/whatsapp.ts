@@ -22,9 +22,19 @@ export function formatWhatsAppPhone(phone: string | null | undefined): string | 
 }
 
 /**
- * Returns the full WhatsApp direct chat URL with optional pre-filled text.
- * Uses api.whatsapp.com/send which routes directly to the single chat thread
- * on both WhatsApp Web and native mobile/desktop apps.
+ * Returns the direct WhatsApp Web URL with pre-filled text.
+ * Used on desktop browsers to bypass the intermediate "Open App / Continue to WhatsApp Web" screen.
+ */
+export function getWhatsAppWebUrl(phone: string | null | undefined, text?: string): string | null {
+  const formatted = formatWhatsAppPhone(phone);
+  if (!formatted) return null;
+  const encodedText = text ? `&text=${encodeURIComponent(text)}` : '';
+  return `https://web.whatsapp.com/send?phone=${formatted}${encodedText}`;
+}
+
+/**
+ * Returns the universal WhatsApp URL with optional pre-filled text.
+ * Uses api.whatsapp.com/send which routes directly on mobile devices to the native WhatsApp app.
  */
 export function getWhatsAppUrl(phone: string | null | undefined, text?: string): string | null {
   const formatted = formatWhatsAppPhone(phone);
@@ -36,45 +46,61 @@ export function getWhatsAppUrl(phone: string | null | undefined, text?: string):
 /**
  * Opens a WhatsApp chat directly for that person.
  *
- * To open ONLY that person's direct chat without the left sidebar (conversation list):
- * We launch a centered compact window (560px x 760px).
- * Because WhatsApp Web is responsive, when the viewport width is below 750px,
- * it completely collapses and hides the left sidebar, showing ONLY that student's single chat!
+ * On desktop:
+ * Opens WhatsApp Web directly (skipping the intermediate "Download / Continue to Web" page)
+ * as a companion side window (740px x 800px) docked gracefully to the right side of the screen
+ * so the dashboard remains visible on the left and WhatsApp chat opens immediately with pre-filled text.
+ *
+ * On mobile:
+ * Opens via deep link to launch the native WhatsApp app directly.
  */
 export function openWhatsAppChat(
   phone: string | null | undefined, 
   text?: string, 
   asCompactPopup: boolean = true
 ): boolean {
-  const url = getWhatsAppUrl(phone, text);
+  if (typeof window === 'undefined') return false;
+
+  const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 640;
+  const url = isMobile 
+    ? getWhatsAppUrl(phone, text) 
+    : getWhatsAppWebUrl(phone, text);
+
   if (!url) return false;
 
-  if (typeof window !== 'undefined') {
-    // If on a desktop/laptop browser, open as a compact focused popup window
-    // to hide WhatsApp's sidebar and show ONLY that student's chat.
-    if (asCompactPopup && window.innerWidth >= 640) {
-      const width = 560;
-      const height = 760;
-      const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - width) / 2));
-      const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - height) / 2));
-      
-      const popup = window.open(
-        url,
-        `wa_direct_${formatWhatsAppPhone(phone)}`,
-        `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no,location=no,status=no,scrollbars=yes,resizable=yes`
-      );
+  if (!isMobile && asCompactPopup) {
+    const screenWidth = window.screen.availWidth || window.innerWidth;
+    const screenHeight = window.screen.availHeight || window.innerHeight;
 
-      if (popup) {
-        popup.focus();
-        return true;
-      }
+    // Proportioned companion window shape:
+    // ~720px - 780px width accommodates both the chat panel and contact context cleanly
+    // without awkward clipping or squishing.
+    const width = Math.min(800, Math.max(720, Math.round(screenWidth * 0.44)));
+    const height = Math.min(860, Math.max(720, Math.round(screenHeight * 0.84)));
+
+    const screenLeft = typeof window.screenLeft !== 'undefined' ? window.screenLeft : window.screenX;
+    const screenTop = typeof window.screenTop !== 'undefined' ? window.screenTop : window.screenY;
+    const outerWidth = window.outerWidth || screenWidth;
+
+    // Dock right-aligned so the dashboard remains visible on the left
+    const left = Math.max(0, Math.round(screenLeft + outerWidth - width - 24));
+    const top = Math.max(20, Math.round(screenTop + 36));
+
+    const popup = window.open(
+      url,
+      `wa_direct_${formatWhatsAppPhone(phone)}`,
+      `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no,location=no,status=no,scrollbars=yes,resizable=yes`
+    );
+
+    if (popup) {
+      popup.focus();
+      return true;
     }
-
-    // Fallback for mobile devices or if popup was blocked
-    window.open(url, '_blank', 'noopener,noreferrer');
-    return true;
   }
-  return false;
+
+  // Fallback for mobile devices or if popup was blocked
+  window.open(url, '_blank', 'noopener,noreferrer');
+  return true;
 }
 
 /**
