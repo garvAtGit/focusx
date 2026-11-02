@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { submitInquiry } from "@/app/actions/inquiry-actions";
+import { formatWhatsAppPhone } from "@/lib/whatsapp";
 import { toast } from "react-hot-toast";
 import { 
   HelpCircle, 
@@ -132,7 +133,7 @@ export function StudentSupportCard({
           <div className="flex items-center gap-2 shrink-0">
             {activeLibrary.whatsapp && (
               <a
-                href={`https://wa.me/${activeLibrary.whatsapp.replace(/[^0-9]/g, "")}`}
+                href={`https://wa.me/${formatWhatsAppPhone(activeLibrary.whatsapp)}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20 transition-colors"
