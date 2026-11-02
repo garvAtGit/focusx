@@ -29,8 +29,8 @@ export function formatWhatsAppPhone(phone: string | null | undefined): string | 
 export function getWhatsAppUrl(phone: string | null | undefined, text?: string): string | null {
   const formatted = formatWhatsAppPhone(phone);
   if (!formatted) return null;
-  const encodedText = text ? `?text=${encodeURIComponent(text)}` : '';
-  return `https://api.whatsapp.com/send?phone=${formatted}${encodedText}`;
+  const encodedText = text ? `&text=${encodeURIComponent(text)}` : '';
+  return `https://api.whatsapp.com/send/?phone=${formatted}${encodedText}`;
 }
 
 /**
