@@ -43,6 +43,12 @@ export function getWhatsAppUrl(phone: string | null | undefined, text?: string):
   return `https://api.whatsapp.com/send/?phone=${formatted}${encodedText}`;
 }
 
+// Reusable companion window reference and target name so consecutive student messages
+// focus and update the existing warm WhatsApp Web session rather than cold-booting
+// and reloading WhatsApp from scratch every time.
+let sharedWhatsAppPopup: Window | null = null;
+const WA_COMPANION_TARGET = 'focusx_whatsapp_companion';
+
 /**
  * Opens a WhatsApp chat directly for that person.
  *
@@ -72,11 +78,11 @@ export function openWhatsAppChat(
     const screenWidth = window.screen.availWidth || window.innerWidth;
     const screenHeight = window.screen.availHeight || window.innerHeight;
 
-    // Proportioned companion window shape:
-    // ~720px - 780px width accommodates both the chat panel and contact context cleanly
-    // without awkward clipping or squishing.
-    const width = Math.min(800, Math.max(720, Math.round(screenWidth * 0.44)));
-    const height = Math.min(860, Math.max(720, Math.round(screenHeight * 0.84)));
+    // Companion window dimensions:
+    // WhatsApp Web requires a minimum width of ~880px to properly render the active conversation
+    // on the right with full chat history and pre-filled composer without pushing it off-screen.
+    const width = Math.min(920, Math.max(860, Math.round(screenWidth * 0.48)));
+    const height = Math.min(860, Math.max(720, Math.round(screenHeight * 0.86)));
 
     const screenLeft = typeof window.screenLeft !== 'undefined' ? window.screenLeft : window.screenX;
     const screenTop = typeof window.screenTop !== 'undefined' ? window.screenTop : window.screenY;
@@ -86,13 +92,26 @@ export function openWhatsAppChat(
     const left = Math.max(0, Math.round(screenLeft + outerWidth - width - 24));
     const top = Math.max(20, Math.round(screenTop + 36));
 
+    // Re-use already open warm companion window if still alive to prevent
+    // cold-boot reload ("Loading your chats... End-to-end encrypted")
+    if (sharedWhatsAppPopup && !sharedWhatsAppPopup.closed) {
+      try {
+        sharedWhatsAppPopup.location.href = url;
+        sharedWhatsAppPopup.focus();
+        return true;
+      } catch {
+        // Fallback to window.open if cross-origin navigation is restricted
+      }
+    }
+
     const popup = window.open(
       url,
-      `wa_direct_${formatWhatsAppPhone(phone)}`,
+      WA_COMPANION_TARGET,
       `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no,location=no,status=no,scrollbars=yes,resizable=yes`
     );
 
     if (popup) {
+      sharedWhatsAppPopup = popup;
       popup.focus();
       return true;
     }
