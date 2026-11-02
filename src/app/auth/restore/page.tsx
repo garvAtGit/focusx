@@ -14,17 +14,49 @@ function RestoreSessionLogic() {
     if (hasAttempted.current) return;
     hasAttempted.current = true;
 
-    const unsubscribe = auth.onAuthStateChanged((user) => {
-      // If there IS a user, GlobalSessionRestorer will handle the POST and reload.
-      // We just need to catch the case where there is NO user.
-      if (!user) {
+    let isMounted = true;
+    const restore = async () => {
+      try {
+        await auth.authStateReady();
+        const user = auth.currentUser;
+        if (user) {
+          const idToken = await user.getIdToken();
+          const res = await fetch('/api/auth/session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ idToken })
+          });
+          if (res.ok && isMounted) {
+            try {
+              const ATTEMPT_KEY = 'focusx_restore_attempt';
+              const lastAttempt = sessionStorage.getItem(ATTEMPT_KEY);
+              const now = Date.now();
+              if (lastAttempt && now - parseInt(lastAttempt, 10) < 15000) {
+                // Loop guard: Already tried reloading. Break loop and redirect to login.
+                const searchStr = searchParams.toString();
+                const returnUrl = encodeURIComponent(pathname + (searchStr ? '?' + searchStr : ''));
+                window.location.href = `/login?returnUrl=${returnUrl}`;
+                return;
+              }
+              sessionStorage.setItem(ATTEMPT_KEY, String(now));
+            } catch {}
+            window.location.reload();
+            return;
+          }
+        }
+      } catch (e) {
+        console.error('Session restore error:', e);
+      }
+
+      if (isMounted) {
         const searchStr = searchParams.toString();
         const returnUrl = encodeURIComponent(pathname + (searchStr ? '?' + searchStr : ''));
         window.location.href = `/login?returnUrl=${returnUrl}`;
       }
-    });
+    };
 
-    return () => unsubscribe();
+    restore();
+    return () => { isMounted = false; };
   }, [pathname, searchParams]);
 
   return (

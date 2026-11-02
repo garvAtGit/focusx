@@ -387,6 +387,18 @@ export async function logout() {
     }
   }
   
-  cookieStore.set('session', '', { maxAge: 0 });
+  const { headers } = await import('next/headers');
+  const host = (await headers()).get('host') || (await headers()).get('x-forwarded-host');
+  const domain = host && host.includes('focusx.in') ? '.focusx.in' : undefined;
+
+  cookieStore.set('session', '', {
+    maxAge: 0,
+    expires: new Date(0),
+    domain,
+    path: '/',
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+  });
   redirect('/login?loggedOut=true');
 }

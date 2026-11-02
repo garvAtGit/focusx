@@ -47,6 +47,29 @@ export default function AdminLoginPage() {
   // Resend OTP cooldown
   const [resendTimer, setResendTimer] = useState(0)
   const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const [checkingExistingSession, setCheckingExistingSession] = useState(true)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let isMounted = true;
+    const checkAdminSession = async () => {
+      try {
+        await auth.authStateReady();
+        const user = auth.currentUser;
+        if (user && isMounted) {
+          await completeAdminSession(user);
+          return;
+        }
+      } catch (err) {
+        console.error("Admin session check failed:", err);
+      } finally {
+        if (isMounted) setCheckingExistingSession(false);
+      }
+    };
+
+    checkAdminSession();
+    return () => { isMounted = false; };
+  }, []);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -231,6 +254,15 @@ export default function AdminLoginPage() {
       toast.error("Session finalization error.");
       setLoading(false);
     }
+  }
+
+  if (checkingExistingSession) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-950 text-slate-100">
+        <Loader2 className="w-8 h-8 text-red-500 animate-spin mb-3" />
+        <p className="text-sm font-medium text-slate-400">Verifying Super Admin session...</p>
+      </div>
+    );
   }
 
   return (
