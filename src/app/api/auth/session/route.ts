@@ -2,6 +2,14 @@ import { NextResponse } from 'next/server';
 import { adminAuth } from '@/lib/firebase/firebaseAdmin';
 import { redis } from '@/lib/redis';
 
+function getCookieDomain(req: Request): string | undefined {
+  const host = req.headers.get('host') || req.headers.get('x-forwarded-host');
+  if (host && host.includes('focusx.in')) {
+    return '.focusx.in';
+  }
+  return undefined;
+}
+
 export async function POST(req: Request) {
   try {
     const { idToken } = await req.json();
@@ -37,12 +45,16 @@ export async function POST(req: Request) {
     }
 
     const response = NextResponse.json({ success: true }, { status: 200 });
+    const domain = getCookieDomain(req);
+    const expires = new Date(Date.now() + expiresIn);
 
-    // Set the HTTP-Only cookie
+    // Set the HTTP-Only cookie with explicit Expires and domain scoping
     response.cookies.set('session', sessionCookie, {
       maxAge: expiresIn / 1000, // maxAge expects seconds, not milliseconds
+      expires,
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
+      domain,
       path: '/',
       sameSite: 'lax',
     });
@@ -54,16 +66,19 @@ export async function POST(req: Request) {
   }
 }
 
-export async function DELETE() {
+export async function DELETE(req: Request) {
   const response = NextResponse.json({ success: true }, { status: 200 });
+  const domain = getCookieDomain(req);
   
   // Clear the session cookie
   response.cookies.set('session', '', {
     maxAge: 0,
+    expires: new Date(0),
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
+    domain,
     path: '/',
-    sameSite: 'none',
+    sameSite: 'lax',
   });
 
   return response;

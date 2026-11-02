@@ -48,6 +48,7 @@ export default function LoginPage() {
   // Resend OTP state
   const [resendTimer, setResendTimer] = useState(0)
   const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const [checkingExistingSession, setCheckingExistingSession] = useState(true)
 
   useEffect(() => {
     return () => {
@@ -66,7 +67,45 @@ export default function LoginPage() {
     if (urlParams.get('loggedOut') === 'true') {
       auth.signOut();
       window.history.replaceState({}, document.title, window.location.pathname);
+      setCheckingExistingSession(false);
+      return;
     }
+
+    let isMounted = true;
+    const checkSession = async () => {
+      try {
+        await auth.authStateReady();
+        const user = auth.currentUser;
+        if (user) {
+          const idToken = await user.getIdToken();
+          const res = await fetch('/api/auth/session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ idToken })
+          });
+          if (res.ok && isMounted) {
+            const returnUrl = urlParams.get('returnUrl');
+            if (returnUrl && returnUrl.startsWith('/') && !returnUrl.startsWith('//') && returnUrl !== '/login') {
+              window.location.href = returnUrl;
+              return;
+            } else {
+              const dest = await getPostLoginRedirect();
+              if (dest && dest !== '/login' && dest !== window.location.pathname) {
+                window.location.href = dest;
+                return;
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Existing session check failed:', err);
+      } finally {
+        if (isMounted) setCheckingExistingSession(false);
+      }
+    };
+
+    checkSession();
+    return () => { isMounted = false; };
   }, []);
 
   // Pre-warm reCAPTCHA early so user doesn't wait 5-10s when clicking "Send Code"
@@ -271,6 +310,15 @@ export default function LoginPage() {
       toast.error("Failed to complete login.")
       setLoading(false)
     }
+  }
+
+  if (checkingExistingSession) {
+    return (
+      <div className="min-h-screen bg-[#FBFBFA] flex flex-col items-center justify-center font-sans">
+        <Loader2 className="w-8 h-8 text-blue-600 animate-spin mb-3" />
+        <p className="text-sm font-medium text-slate-500">Checking session...</p>
+      </div>
+    );
   }
 
   return (
