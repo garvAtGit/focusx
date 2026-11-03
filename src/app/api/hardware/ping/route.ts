@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { resolveRelay } from "@/lib/hardware-resolver";
+
+// In-memory throttling map to prevent excessive DB writes on repeated hardware pings
+const lastPingDbUpdateMap = new Map<string, number>();
 
 export async function POST(req: Request) {
   try {
@@ -10,18 +14,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: "Missing readerId" }, { status: 400 });
     }
 
-    const relay = await prisma.relay.findFirst({
-      where: { OR: [{ bleReaderId: readerId }, { macAddress: readerId }] },
-      select: { id: true, lastSeenAt: true, lastSync: true, status: true },
-    });
+    // Resolve relay using high-speed in-memory cache (prevents continuous DB findFirst queries)
+    const relay = await resolveRelay(readerId);
 
     if (!relay) {
       return NextResponse.json({ success: false, error: "Relay not found" }, { status: 404 });
     }
 
     const now = Date.now();
-    const lastSeenTime = relay.lastSeenAt ? relay.lastSeenAt.getTime() : 0;
-    if (relay.status !== 'ONLINE' || now - lastSeenTime > 30_000) {
+    const lastDbUpdate = lastPingDbUpdateMap.get(relay.id) || 0;
+
+    // Only hit the database to update lastSeenAt if status was not ONLINE or >= 60 seconds elapsed
+    if (relay.status !== 'ONLINE' || now - lastDbUpdate >= 60_000) {
+      lastPingDbUpdateMap.set(relay.id, now);
       await prisma.relay.update({
         where: { id: relay.id },
         data: {
@@ -35,15 +40,15 @@ export async function POST(req: Request) {
         const { supabaseServer } = await import('@/lib/supabase-server');
         if (supabaseServer) {
           await supabaseServer.channel('admin-hardware-diagnostics').send({
-          type: 'broadcast',
-          event: 'hardware_status',
-          payload: {
-            relayId: relay.id,
-            lastSync: new Date(now).toISOString(),
-            lastSeenAt: new Date(now).toISOString(),
-            status: 'ONLINE',
-          },
-        });
+            type: 'broadcast',
+            event: 'hardware_status',
+            payload: {
+              relayId: relay.id,
+              lastSync: new Date(now).toISOString(),
+              lastSeenAt: new Date(now).toISOString(),
+              status: 'ONLINE',
+            },
+          });
         }
       } catch (realtimeErr) {
         // Non-blocking
