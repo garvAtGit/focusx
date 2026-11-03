@@ -1,0 +1,124 @@
+name: Continuous Integration & Query Governance
+
+on:
+  push:
+    branches: [ master, main, redis-final ]
+  pull_request:
+    branches: [ master, main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-and-governance:
+    name: 🛡️ Code Governance & Anti-Loop Verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # Spin up 100% isolated, ephemeral local test services inside GitHub Actions
+    # NEVER connects to live Supabase or Upstash, preserving production quotas
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: focusx_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: test
+      CI: true
+      # Point strictly to the local ephemeral GitHub Actions container
+      DATABASE_URL: "postgresql://postgres:testpassword@localhost:5432/focusx_test"
+      DIRECT_URL: "postgresql://postgres:testpassword@localhost:5432/focusx_test"
+      TEST_DATABASE_URL: "postgresql://postgres:testpassword@localhost:5432/focusx_test"
+      # Fake mock endpoints (never touch cloud providers)
+      NEXT_PUBLIC_SUPABASE_URL: "https://mock-fake-supabase.supabase.co"
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "mock-fake-anon-key"
+      UPSTASH_REDIS_REST_URL: "https://mock-fake-redis.upstash.io"
+      UPSTASH_REDIS_REST_TOKEN: "mock-fake-token"
+
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci || npm install --prefer-offline
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Push Schema to Ephemeral Local Test DB
+        run: npx prisma db push --accept-data-loss
+
+      - name: Execute Professional E2E & Query Governance Suite
+        run: npm run test:ci
+
+  build-verification:
+    name: 🚀 Production Build Verification
+    needs: quality-and-governance
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      NODE_ENV: production
+      CI: true
+      # Isolated dummy connection string for build-time static generation
+      DATABASE_URL: "postgresql://postgres:testpassword@localhost:5432/focusx_test"
+      DIRECT_URL: "postgresql://postgres:testpassword@localhost:5432/focusx_test"
+      NEXT_PUBLIC_SUPABASE_URL: "https://mock-fake-supabase.supabase.co"
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "mock-fake-anon-key"
+      UPSTASH_REDIS_REST_URL: "https://mock-fake-redis.upstash.io"
+      UPSTASH_REDIS_REST_TOKEN: "mock-fake-token"
+
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'npm'
+
+      - name: Restore Next.js Build Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}-${{ hashFiles('**.[jt]s', '**.[jt]sx') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}-
+
+      - name: Install Dependencies
+        run: npm ci || npm install --prefer-offline
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Build Next.js Application (Webpack Engine)
+        run: npx next build --webpack

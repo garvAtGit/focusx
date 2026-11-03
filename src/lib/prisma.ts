@@ -20,10 +20,14 @@ if (process.env.CI && process.env.DIRECT_URL) {
 }
 
 if (!connectionString) {
-  throw new Error(
-    'Missing DATABASE_URL or DIRECT_URL environment variable. ' +
-    'Database connection cannot be established.',
-  );
+  if (process.env.NODE_ENV === 'test' || process.env.CI_TEST || process.argv.some(a => a.includes('test'))) {
+    connectionString = 'postgresql://postgres:postgres@localhost:5432/dummy_test_db';
+  } else {
+    throw new Error(
+      'Missing DATABASE_URL or DIRECT_URL environment variable. ' +
+      'Database connection cannot be established.',
+    );
+  }
 }
 
 const pool = globalForPrisma.pool ?? new Pool({ 

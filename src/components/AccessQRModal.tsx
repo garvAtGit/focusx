@@ -245,6 +245,8 @@ export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: ini
     };
 
     const pollStatus = async () => {
+      // If Realtime is already connected and healthy, do not poll DB
+      if (isRealtimeSubscribed.current) return;
       if (showSuccess || !active || !qrDataRef.current || isPolling) return;
 
       isPolling = true;
