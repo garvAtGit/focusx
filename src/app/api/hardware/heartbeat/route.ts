@@ -68,8 +68,9 @@ export async function POST(request: NextRequest) {
     const droppedCount = typeof statusPayload.diagDroppedCount === "number" ? statusPayload.diagDroppedCount : (typeof diagObj.dropped === "number" ? diagObj.dropped : undefined);
     const resetReason = statusPayload.resetReason ? String(statusPayload.resetReason) : (diagObj.rst ? String(diagObj.rst) : undefined);
 
-    // Non-blocking screen cache in Redis
-    if (line0 !== undefined || line1 !== undefined) {
+    // Non-blocking screen cache in Redis (throttled to state change or max once per 60s to protect Redis quota)
+    const lastScreenUpdate = (relay as any).lastScreenUpdatedAt ? new Date((relay as any).lastScreenUpdatedAt).getTime() : 0;
+    if ((line0 !== undefined || line1 !== undefined) && (screenChanged || now - lastScreenUpdate > 60_000)) {
       try {
         const { redis } = await import("@/lib/redis");
         await redis.set(`relay:screen:${relay.id}`, JSON.stringify({
@@ -106,8 +107,8 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Durable Screen History capture on state transition
-    if (screenChanged && (line0 !== undefined || line1 !== undefined)) {
+    // Durable Screen History capture on state transition (throttled to 30s to prevent clock tick DB bloat)
+    if (screenChanged && (line0 !== undefined || line1 !== undefined) && (now - lastScreenUpdate > 30_000 || !lastScreenUpdate)) {
       try {
         await prisma.deviceScreenHistory.create({
           data: {

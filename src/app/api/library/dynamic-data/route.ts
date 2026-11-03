@@ -42,15 +42,22 @@ export async function GET(req: Request) {
     let activeBooking = null;
 
     if (userId) {
-      const cancelRes = await cancelStudentPendingBooking({
-        studentId: userId,
-        libraryId,
-      }).catch((e) => {
-        console.warn("Failed to auto-free student hold:", e);
-        return null;
+      // Fast check before launching heavy serializable transaction
+      const hasPending = await prisma.booking.findFirst({
+        where: { studentId: userId, libraryId, status: "PENDING_PAYMENT" },
+        select: { id: true },
       });
-      if (cancelRes?.success) {
-        await invalidateLibraryRuntimeCache(libraryId);
+      if (hasPending) {
+        const cancelRes = await cancelStudentPendingBooking({
+          studentId: userId,
+          libraryId,
+        }).catch((e) => {
+          console.warn("Failed to auto-free student hold:", e);
+          return null;
+        });
+        if (cancelRes?.success) {
+          await invalidateLibraryRuntimeCache(libraryId);
+        }
       }
 
       const studentActiveBooking = await prisma.booking.findFirst({
@@ -130,16 +137,30 @@ export async function GET(req: Request) {
       activeBookings = cachedBookings;
     }
 
-    const activeLeases = await prisma.resourceLease.findMany({
-      where: {
-        libraryId,
-        expiresAt: { gt: new Date() }
-      },
-      select: {
-        resourceType: true,
-        resourceId: true,
+    const leasesCacheKey = `library:${libraryId}:active_leases`;
+    let activeLeases: Array<{ resourceType: LeaseResourceType; resourceId: string }> | null = null;
+    try {
+      const cached = await redis.get(leasesCacheKey);
+      if (cached) {
+        activeLeases = typeof cached === "string" ? JSON.parse(cached) : (cached as any);
       }
-    });
+    } catch {}
+
+    if (!activeLeases) {
+      activeLeases = await prisma.resourceLease.findMany({
+        where: {
+          libraryId,
+          expiresAt: { gt: new Date() }
+        },
+        select: {
+          resourceType: true,
+          resourceId: true,
+        }
+      });
+      try {
+        await redis.set(leasesCacheKey, activeLeases, { ex: 30 });
+      } catch {}
+    }
 
     const occupiedSeatIds = [
       ...activeBookings

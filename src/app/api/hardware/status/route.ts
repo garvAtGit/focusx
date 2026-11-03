@@ -45,7 +45,8 @@ export async function POST(req: Request) {
       });
     }
 
-    if (modules && typeof modules === 'object') {
+    // Only update Redis if status changed or >60s elapsed to prevent high frequency Redis writes
+    if (modules && typeof modules === 'object' && (relay.status !== 'ONLINE' || now - lastSyncTime > 60_000)) {
       try {
         const { redis } = await import('@/lib/redis');
         await redis.set(`relay:modules:${relay.id}`, JSON.stringify({

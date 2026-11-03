@@ -1,6 +1,11 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from "react"
+import { createClient } from "@supabase/supabase-js"
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
+const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null
 import { 
   MapPin, Check, Loader2, Clock, Phone, Navigation, Lock, Share, Heart, Star,
   Snowflake, Droplet, Video, Car, ShieldCheck, VolumeX, Wifi, Bath, Coffee, Plug, CheckCircle2 
@@ -300,12 +305,55 @@ export function LibraryClient({
   }, [library.id]);
 
   useEffect(() => {
+    let disposed = false;
+    let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
+
     const initialLoad = window.setTimeout(() => void loadDynamicData(), 0);
-    const interval = window.setInterval(() => {
-      if (document.visibilityState !== "hidden") {
-        void loadDynamicData(false);
-      }
-    }, 15_000);
+
+    const debouncedRefresh = () => {
+      if (refreshTimeout) clearTimeout(refreshTimeout);
+      refreshTimeout = setTimeout(() => {
+        if (!disposed && document.visibilityState !== "hidden") {
+          void loadDynamicData(false);
+        }
+      }, 300);
+    };
+
+    // Realtime channel: zero-latency push from Supabase instead of continuous 15s polling
+    const channel = supabase
+      ? supabase
+          .channel(`seats_realtime_${library.id}`)
+          .on(
+            "postgres_changes",
+            { event: "*", schema: "public", table: "Booking", filter: `libraryId=eq.${library.id}` },
+            debouncedRefresh
+          )
+          .on(
+            "postgres_changes",
+            { event: "*", schema: "public", table: "CheckinLog", filter: `libraryId=eq.${library.id}` },
+            debouncedRefresh
+          )
+          .on(
+            "postgres_changes",
+            { event: "*", schema: "public", table: "ResourceLease", filter: `libraryId=eq.${library.id}` },
+            debouncedRefresh
+          )
+          .on(
+            "broadcast",
+            { event: "scanner_update" },
+            debouncedRefresh
+          )
+          .subscribe()
+      : null;
+
+    // Safety fallback: only if Supabase Realtime is unavailable, use slow 2-minute interval
+    const fallbackInterval = !supabase
+      ? window.setInterval(() => {
+          if (document.visibilityState !== "hidden") {
+            void loadDynamicData(false);
+          }
+        }, 120_000)
+      : null;
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
@@ -328,10 +376,15 @@ export function LibraryClient({
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("pageshow", handlePageShow);
     return () => {
+      disposed = true;
       window.clearTimeout(initialLoad);
-      window.clearInterval(interval);
+      if (refreshTimeout) clearTimeout(refreshTimeout);
+      if (fallbackInterval) window.clearInterval(fallbackInterval);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("pageshow", handlePageShow);
+      if (channel && supabase) {
+        supabase.removeChannel(channel);
+      }
     };
   }, [loadDynamicData, library.id]);
 

@@ -4,6 +4,28 @@ import { Prisma } from "@prisma/client";
 export type RelayWithLibrary = Prisma.RelayGetPayload<{ include: { library: true } }>;
 export type RelayBasic = Prisma.RelayGetPayload<{}>;
 
+type CachedRelayEntry = {
+  data: any;
+  expiresAt: number;
+};
+
+// High-speed in-memory cache to eliminate repetitive DB queries from hardware pings
+const relayResolveCache = new Map<string, CachedRelayEntry>();
+const CACHE_TTL_MS = 60_000; // 60s cache prevents 20-30 DB queries per minute per device
+
+export function invalidateRelayResolverCache(identifier?: string) {
+  if (identifier) {
+    const id = identifier.trim().toLowerCase();
+    for (const key of relayResolveCache.keys()) {
+      if (key.toLowerCase().includes(id)) {
+        relayResolveCache.delete(key);
+      }
+    }
+  } else {
+    relayResolveCache.clear();
+  }
+}
+
 /**
  * Robust Hardware Relay Resolver
  * Resolves incoming device IDs, MAC addresses, BLE reader IDs, NFC tags, or claim codes
@@ -30,6 +52,12 @@ export async function resolveRelay(
   const id = rawIdentifier.trim();
   if (!id) return null;
 
+  const cacheKey = `${id}:${Boolean(options?.includeLibrary)}`;
+  const cached = relayResolveCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.data;
+  }
+
   const includeClause = options?.includeLibrary ? { library: true } : undefined;
 
   // 1. Direct match on Relay table
@@ -45,7 +73,10 @@ export async function resolveRelay(
     include: includeClause
   });
 
-  if (relay) return relay;
+  if (relay) {
+    relayResolveCache.set(cacheKey, { data: relay, expiresAt: Date.now() + CACHE_TTL_MS });
+    return relay;
+  }
 
   // 2. MAC address formatting variations (with or without colons/dashes)
   const hexOnly = id.replace(/[:-]/g, "").toUpperCase();
@@ -62,7 +93,10 @@ export async function resolveRelay(
       },
       include: includeClause
     });
-    if (relay) return relay;
+    if (relay) {
+      relayResolveCache.set(cacheKey, { data: relay, expiresAt: Date.now() + CACHE_TTL_MS });
+      return relay;
+    }
   }
 
   // 3. Fallback: Check HardwareClaim table
@@ -89,14 +123,20 @@ export async function resolveRelay(
       },
       include: includeClause
     });
-    if (relay) return relay;
+    if (relay) {
+      relayResolveCache.set(cacheKey, { data: relay, expiresAt: Date.now() + CACHE_TTL_MS });
+      return relay;
+    }
 
     // Secondary fallback: return any active relay belonging to the claimed library
     relay = await prisma.relay.findFirst({
       where: { libraryId: claim.libraryId },
       include: includeClause
     });
-    if (relay) return relay;
+    if (relay) {
+      relayResolveCache.set(cacheKey, { data: relay, expiresAt: Date.now() + CACHE_TTL_MS });
+      return relay;
+    }
   }
 
   // 4. Fallback for known legacy device mappings for Kripa Library
@@ -115,8 +155,13 @@ export async function resolveRelay(
       where: { id: "b018a625-0a12-44a0-98b1-745a99a3d0d8" },
       include: includeClause
     });
-    if (relay) return relay;
+    if (relay) {
+      relayResolveCache.set(cacheKey, { data: relay, expiresAt: Date.now() + CACHE_TTL_MS });
+      return relay;
+    }
   }
 
+  // Cache negative result for 5s to avoid tight loop on bad IDs
+  relayResolveCache.set(cacheKey, { data: null, expiresAt: Date.now() + 5_000 });
   return null;
 }

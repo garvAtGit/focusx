@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { WhatsAppIcon } from '@/components/icons/WhatsAppIcon';
-import { openWhatsAppChat } from '@/lib/whatsapp';
+import { openWhatsAppChat, openWhatsAppDesktop } from '@/lib/whatsapp';
 import { Phone, Copy, Check } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -56,7 +56,7 @@ export function WhatsAppMessageModal({
     },
   ];
 
-  const handleSend = () => {
+  const handleSendDesktop = () => {
     if (!recipientPhone) {
       toast.error('No phone number available for this student.');
       return;
@@ -67,14 +67,44 @@ export function WhatsAppMessageModal({
       return;
     }
 
-    // Opens focused compact single-chat window (hiding WhatsApp sidebar)
-    const opened = openWhatsAppChat(recipientPhone, message.trim(), true);
+    // Auto-copy text as safety backup
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(message.trim()).catch(() => {});
+    }
+
+    const opened = openWhatsAppDesktop(recipientPhone, message.trim());
     if (opened) {
-      toast.success(`Opening direct WhatsApp chat for ${recipientName}`);
+      toast.success(`Opening WhatsApp Desktop for ${recipientName}`);
       onOpenChange(false);
       if (onSent) onSent();
     } else {
-      toast.error('Could not open WhatsApp. Please check your browser popup settings.');
+      toast.error('Could not open WhatsApp Desktop.');
+    }
+  };
+
+  const handleSendWeb = () => {
+    if (!recipientPhone) {
+      toast.error('No phone number available for this student.');
+      return;
+    }
+
+    if (!message.trim()) {
+      toast.error('Please type a message before sending.');
+      return;
+    }
+
+    // Auto-copy text as safety backup
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(message.trim()).catch(() => {});
+    }
+
+    const opened = openWhatsAppChat(recipientPhone, message.trim(), true);
+    if (opened) {
+      toast.success(`Opening WhatsApp Web for ${recipientName}`);
+      onOpenChange(false);
+      if (onSent) onSent();
+    } else {
+      toast.error('Could not open WhatsApp Web.');
     }
   };
 
@@ -148,37 +178,41 @@ export function WhatsAppMessageModal({
           </div>
         </div>
 
-        <DialogFooter className="flex-col sm:flex-row gap-2 pt-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={handleCopy}
-            className="flex items-center gap-1.5 text-xs font-semibold"
-          >
-            {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-            {copied ? 'Copied' : 'Copy Text'}
-          </Button>
-
-          <div className="flex gap-2 w-full sm:w-auto justify-end">
+        <div className="pt-2 border-t border-border/60 flex flex-col gap-2">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
             <Button
               type="button"
               variant="outline"
-              onClick={() => onOpenChange(false)}
-              className="text-xs font-semibold"
+              onClick={handleCopy}
+              className="flex items-center gap-1.5 text-xs font-semibold"
             >
-              Cancel
+              {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? 'Copied' : 'Copy Text'}
             </Button>
-            <Button
-              type="button"
-              onClick={handleSend}
-              disabled={!recipientPhone || !message.trim()}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-2 shadow-sm transition-all active:scale-95 disabled:opacity-50"
-            >
-              <WhatsAppIcon className="w-4 h-4" />
-              Send on WhatsApp
-            </Button>
+
+            <div className="flex flex-wrap items-center gap-2 justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleSendWeb}
+                disabled={!recipientPhone || !message.trim()}
+                title="Open via WhatsApp Web in browser"
+                className="text-xs font-semibold text-muted-foreground hover:text-foreground"
+              >
+                Open in Web
+              </Button>
+              <Button
+                type="button"
+                onClick={handleSendDesktop}
+                disabled={!recipientPhone || !message.trim()}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-2 shadow-sm transition-all active:scale-95 disabled:opacity-50"
+              >
+                <WhatsAppIcon className="w-4 h-4" />
+                Send on WhatsApp
+              </Button>
+            </div>
           </div>
-        </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );
