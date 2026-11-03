@@ -8,8 +8,8 @@
  * accidental quota consumption or data corruption.
  */
 
-// Force test environment
-process.env.NODE_ENV = 'test';
+// Force test environment safely without triggering TypeScript readonly constraint
+Reflect.set(process.env, 'NODE_ENV', 'test');
 
 // Isolated local database URL (points to local test container only, never cloud Supabase)
 process.env.DATABASE_URL = process.env.TEST_DATABASE_URL || 'postgresql://postgres:testpassword@127.0.0.1:5432/focusx_test';
