@@ -13,6 +13,15 @@ type CachedRelayEntry = {
 const relayResolveCache = new Map<string, CachedRelayEntry>();
 const CACHE_TTL_MS = 60_000; // 60s cache prevents 20-30 DB queries per minute per device
 
+export function primeRelayResolverCache(identifier: string, data: any, ttlMs: number = CACHE_TTL_MS) {
+  const id = identifier.trim();
+  const cacheKeyWithoutLib = `${id}:false`;
+  const cacheKeyWithLib = `${id}:true`;
+  const entry = { data, expiresAt: Date.now() + ttlMs };
+  relayResolveCache.set(cacheKeyWithoutLib, entry);
+  relayResolveCache.set(cacheKeyWithLib, entry);
+}
+
 export function invalidateRelayResolverCache(identifier?: string) {
   if (identifier) {
     const id = identifier.trim().toLowerCase();
