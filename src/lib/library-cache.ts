@@ -29,6 +29,7 @@ export async function invalidateLibraryRuntimeCache(libraryId: string): Promise<
       libraryDetailsCacheKey(libraryId),
       librarySeatLayoutCacheKey(libraryId),
       activeBookingsCacheKey(libraryId),
+      `library:${libraryId}:active_leases`,
       `library_students:${libraryId}`,
     )
     await invalidateStudentsCache(libraryId)

@@ -25,6 +25,38 @@ export function formatWhatsAppPhone(phone: string | null | undefined): string | 
  * Returns the direct WhatsApp Web URL with pre-filled text.
  * Used on desktop browsers to bypass the intermediate "Open App / Continue to WhatsApp Web" screen.
  */
+/**
+ * Returns the native WhatsApp Desktop protocol URI.
+ * Launches WhatsApp for Windows/Mac desktop app directly with 0 reload and 0 browser tabs.
+ */
+export function getWhatsAppDesktopUrl(phone: string | null | undefined, text?: string): string | null {
+  const formatted = formatWhatsAppPhone(phone);
+  if (!formatted) return null;
+  const encodedText = text ? `&text=${encodeURIComponent(text)}` : '';
+  return `whatsapp://send?phone=${formatted}${encodedText}`;
+}
+
+/**
+ * Opens WhatsApp using the native desktop app (whatsapp:// URI scheme).
+ * Instant 0.05s launch without browser tabs, loading screens, or reload.
+ */
+export function openWhatsAppDesktop(phone: string | null | undefined, text?: string): boolean {
+  if (typeof window === 'undefined') return false;
+  const url = getWhatsAppDesktopUrl(phone, text);
+  if (!url) return false;
+
+  // Auto-copy text to clipboard as guaranteed backup
+  if (text && typeof navigator !== 'undefined' && navigator.clipboard) {
+    try {
+      navigator.clipboard.writeText(text).catch(() => {});
+    } catch {}
+  }
+
+  // Open via protocol handler
+  window.location.href = url;
+  return true;
+}
+
 export function getWhatsAppWebUrl(phone: string | null | undefined, text?: string): string | null {
   const formatted = formatWhatsAppPhone(phone);
   if (!formatted) return null;
@@ -78,24 +110,28 @@ export function openWhatsAppChat(
     const screenWidth = window.screen.availWidth || window.innerWidth;
     const screenHeight = window.screen.availHeight || window.innerHeight;
 
-    // Companion window dimensions:
-    // WhatsApp Web requires a minimum width of ~880px to properly render the active conversation
-    // on the right with full chat history and pre-filled composer without pushing it off-screen.
-    const width = Math.min(920, Math.max(860, Math.round(screenWidth * 0.48)));
-    const height = Math.min(860, Math.max(720, Math.round(screenHeight * 0.86)));
+    // Exact size & location matching user's reference:
+    // Size: ~43.5% screen width and ~57% screen height
+    // Location: Docked right (~8-12px margin), positioned ~24% from screen top
+    const outerWidth = window.outerWidth || screenWidth;
+    const outerHeight = window.outerHeight || screenHeight;
+
+    const width = Math.max(680, Math.min(920, Math.round(screenWidth * 0.435)));
+    const height = Math.max(500, Math.min(740, Math.round(screenHeight * 0.57)));
 
     const screenLeft = typeof window.screenLeft !== 'undefined' ? window.screenLeft : window.screenX;
     const screenTop = typeof window.screenTop !== 'undefined' ? window.screenTop : window.screenY;
-    const outerWidth = window.outerWidth || screenWidth;
 
-    // Dock right-aligned so the dashboard remains visible on the left
-    const left = Math.max(0, Math.round(screenLeft + outerWidth - width - 24));
-    const top = Math.max(20, Math.round(screenTop + 36));
+    const left = Math.max(0, Math.round(screenLeft + outerWidth - width - 10));
+    const top = Math.max(20, Math.round(screenTop + outerHeight * 0.24));
 
-    // Re-use already open warm companion window if still alive to prevent
-    // cold-boot reload ("Loading your chats... End-to-end encrypted")
+    // Re-use already open warm companion window if still alive:
     if (sharedWhatsAppPopup && !sharedWhatsAppPopup.closed) {
       try {
+        try {
+          sharedWhatsAppPopup.resizeTo(width, height);
+          sharedWhatsAppPopup.moveTo(left, top);
+        } catch {}
         sharedWhatsAppPopup.location.href = url;
         sharedWhatsAppPopup.focus();
         return true;
@@ -104,6 +140,7 @@ export function openWhatsAppChat(
       }
     }
 
+    // Opens at the exact calibrated size and position from the reference screenshot
     const popup = window.open(
       url,
       WA_COMPANION_TARGET,

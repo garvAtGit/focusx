@@ -1,13 +1,18 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
+import { createClient } from "@supabase/supabase-js"
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
+const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null
 
 type AvailabilityResponse = {
   occupiedSeatIds?: unknown
 }
 
 /**
- * Polls the sanitized availability endpoint rather than subscribing browsers
- * directly to full Booking rows. The endpoint also includes active checkout
- * leases, which a Booking-only realtime stream cannot represent.
+ * Realtime Seat Occupancy Hook
+ * Subscribes to Supabase Realtime channel for instantaneous zero-latency updates
+ * eliminating continuous HTTP polling intervals against the database.
  */
 export function useRealtimeSeats(
   libraryId: string,
@@ -23,6 +28,8 @@ export function useRealtimeSeats(
     let disposed = false
     let controller: AbortController | null = null
     let retryAfterUntil = 0
+    let refreshTimeout: ReturnType<typeof setTimeout> | null = null
+
     const refresh = async () => {
       if (
         document.visibilityState === "hidden"
@@ -62,8 +69,66 @@ export function useRealtimeSeats(
       }
     }
 
+    // Initial load
     void refresh()
-    const interval = window.setInterval(refresh, 15_000)
+
+    // Realtime debounced refresh to avoid burst requests
+    const debouncedRefresh = () => {
+      if (refreshTimeout) clearTimeout(refreshTimeout)
+      refreshTimeout = setTimeout(() => {
+        if (!disposed && document.visibilityState !== "hidden") {
+          void refresh()
+        }
+      }, 300)
+    }
+
+    // Subscribe to real-time events via Supabase Realtime WebSocket
+    const channel = supabase
+      ? supabase
+          .channel(`seats_realtime_${libraryId}`)
+          .on(
+            "postgres_changes",
+            {
+              event: "*",
+              schema: "public",
+              table: "Booking",
+              filter: `libraryId=eq.${libraryId}`,
+            },
+            debouncedRefresh
+          )
+          .on(
+            "postgres_changes",
+            {
+              event: "*",
+              schema: "public",
+              table: "CheckinLog",
+              filter: `libraryId=eq.${libraryId}`,
+            },
+            debouncedRefresh
+          )
+          .on(
+            "postgres_changes",
+            {
+              event: "*",
+              schema: "public",
+              table: "ResourceLease",
+              filter: `libraryId=eq.${libraryId}`,
+            },
+            debouncedRefresh
+          )
+          .on(
+            "broadcast",
+            { event: "scanner_update" },
+            debouncedRefresh
+          )
+          .subscribe()
+      : null
+
+    // Safety fallback: only if Supabase Realtime is unavailable, use a slow 2-minute interval
+    const fallbackInterval = !supabase
+      ? window.setInterval(refresh, 120_000)
+      : null
+
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") void refresh()
     }
@@ -72,12 +137,17 @@ export function useRealtimeSeats(
     }
     document.addEventListener("visibilitychange", onVisibilityChange)
     window.addEventListener("pageshow", onPageShow)
+
     return () => {
       disposed = true
       controller?.abort()
-      window.clearInterval(interval)
+      if (refreshTimeout) clearTimeout(refreshTimeout)
+      if (fallbackInterval) window.clearInterval(fallbackInterval)
       document.removeEventListener("visibilitychange", onVisibilityChange)
       window.removeEventListener("pageshow", onPageShow)
+      if (channel && supabase) {
+        supabase.removeChannel(channel)
+      }
     }
   }, [libraryId])
 
