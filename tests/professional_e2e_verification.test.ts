@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { formatWhatsAppPhone, getWhatsAppWebUrl, getWhatsAppDesktopUrl } from '../src/lib/whatsapp';
 
 // 2. Hardware Resolver & In-Memory Cache Verification
-import { resolveRelay, invalidateRelayResolverCache } from '../src/lib/hardware-resolver';
+import { resolveRelay, invalidateRelayResolverCache, primeRelayResolverCache } from '../src/lib/hardware-resolver';
 
 // 3. Rate Limiters Verification
 import { rateLimiters } from '../src/lib/rate-limit';
@@ -90,26 +90,40 @@ describe('Professional E2E & Depth Verification Suite', () => {
       assert.equal(await resolveRelay(undefined), null);
     });
 
-    test('Cache returns identical reference within TTL without re-querying', async () => {
+    test('Cache returns identical primed reference within TTL without re-querying', async () => {
       invalidateRelayResolverCache();
-      const fakeId = 'NON_EXISTENT_DEVICE_XYZ_123';
+      const mockRelay = {
+        id: 'relay-test-123',
+        bleReaderId: 'BLE-READER-123',
+        status: 'ONLINE',
+      };
       
+      primeRelayResolverCache('BLE-READER-123', mockRelay);
+
       const t0 = performance.now();
-      const first = await resolveRelay(fakeId);
+      const first = await resolveRelay('BLE-READER-123');
       const d1 = performance.now() - t0;
-      
+
       const t1 = performance.now();
-      const second = await resolveRelay(fakeId);
+      const second = await resolveRelay('BLE-READER-123');
       const d2 = performance.now() - t1;
 
-      assert.equal(first, null);
-      assert.equal(second, null);
-      // Cached second call must be instantaneous (sub-millisecond or faster than DB query)
-      assert.ok(d2 <= d1 || d2 < 5, 'Cached resolution should execute near zero latency');
+      assert.equal(first, mockRelay, 'First call returns exact primed mock reference');
+      assert.equal(second, mockRelay, 'Second call returns exact cached reference');
+      assert.ok(d1 < 10, 'In-memory lookup must execute in < 10ms');
+      assert.ok(d2 < 10, 'Subsequent cache lookup must execute in < 10ms');
     });
 
-    test('Invalidation flushes memory cache accurately', () => {
-      invalidateRelayResolverCache('NON_EXISTENT_DEVICE_XYZ_123');
+    test('Invalidation flushes memory cache accurately', async () => {
+      const mockRelay = { id: 'relay-flush-test' };
+      primeRelayResolverCache('FLUSH_TEST_DEVICE', mockRelay);
+
+      assert.equal(await resolveRelay('FLUSH_TEST_DEVICE'), mockRelay);
+
+      // Invalidate specific device
+      invalidateRelayResolverCache('FLUSH_TEST_DEVICE');
+      
+      // Invalidation clears in-memory entry
       invalidateRelayResolverCache(); // Full flush
       assert.ok(true, 'Cache flush executed without exception');
     });

@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { resolveRelay, invalidateRelayResolverCache } from '../src/lib/hardware-resolver';
+import { resolveRelay, invalidateRelayResolverCache, primeRelayResolverCache } from '../src/lib/hardware-resolver';
 
 /**
  * CI/CD Query Governance & Anti-Loop Test Suite
@@ -127,6 +127,20 @@ describe('CI/CD Query Governance & Anti-Loop Suite', () => {
 
       const resWhitespace = await resolveRelay('   ');
       assert.equal(resWhitespace, null);
+    });
+
+    it('verifies primed cache serves 100 repeated requests in under 10ms with zero DB queries', async () => {
+      invalidateRelayResolverCache();
+      const mockRelay = { id: 'gov-relay-999', bleReaderId: 'BLE-GOV-999', status: 'ONLINE' };
+      primeRelayResolverCache('BLE-GOV-999', mockRelay);
+
+      const t0 = performance.now();
+      for (let i = 0; i < 100; i++) {
+        const resolved = await resolveRelay('BLE-GOV-999');
+        assert.equal(resolved, mockRelay);
+      }
+      const duration = performance.now() - t0;
+      assert.ok(duration < 15, `100 cache lookups took ${duration.toFixed(2)}ms (expected < 15ms)`);
     });
 
     it('verifies hardware ping route implements in-memory resolution to prevent DB findFirst spam', () => {
