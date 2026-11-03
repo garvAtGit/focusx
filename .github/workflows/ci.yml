@@ -16,15 +16,45 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    # Spin up 100% isolated, ephemeral local test services inside GitHub Actions
+    # NEVER connects to live Supabase or Upstash, preserving production quotas
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: focusx_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     env:
       NODE_ENV: test
       CI: true
-      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/focusx_test"
-      DIRECT_URL: "postgresql://postgres:postgres@localhost:5432/focusx_test"
-      NEXT_PUBLIC_SUPABASE_URL: "https://mock.supabase.co"
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: "mock-supabase-anon-key"
-      UPSTASH_REDIS_REST_URL: "https://mock.upstash.io"
-      UPSTASH_REDIS_REST_TOKEN: "mock-token"
+      # Point strictly to the local ephemeral GitHub Actions container
+      DATABASE_URL: "postgresql://postgres:testpassword@localhost:5432/focusx_test"
+      DIRECT_URL: "postgresql://postgres:testpassword@localhost:5432/focusx_test"
+      TEST_DATABASE_URL: "postgresql://postgres:testpassword@localhost:5432/focusx_test"
+      # Fake mock endpoints (never touch cloud providers)
+      NEXT_PUBLIC_SUPABASE_URL: "https://mock-fake-supabase.supabase.co"
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "mock-fake-anon-key"
+      UPSTASH_REDIS_REST_URL: "https://mock-fake-redis.upstash.io"
+      UPSTASH_REDIS_REST_TOKEN: "mock-fake-token"
 
     steps:
       - name: Checkout Code Repository
@@ -42,6 +72,9 @@ jobs:
       - name: Generate Prisma Client
         run: npx prisma generate
 
+      - name: Push Schema to Ephemeral Local Test DB
+        run: npx prisma db push --skip-generate
+
       - name: Execute Professional E2E & Query Governance Suite
         run: npm run test:ci
 
@@ -54,12 +87,13 @@ jobs:
     env:
       NODE_ENV: production
       CI: true
-      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/focusx_ci_build"
-      DIRECT_URL: "postgresql://postgres:postgres@localhost:5432/focusx_ci_build"
-      NEXT_PUBLIC_SUPABASE_URL: "https://mock.supabase.co"
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: "mock-supabase-anon-key"
-      UPSTASH_REDIS_REST_URL: "https://mock.upstash.io"
-      UPSTASH_REDIS_REST_TOKEN: "mock-token"
+      # Isolated dummy connection string for build-time static generation
+      DATABASE_URL: "postgresql://postgres:testpassword@localhost:5432/focusx_test"
+      DIRECT_URL: "postgresql://postgres:testpassword@localhost:5432/focusx_test"
+      NEXT_PUBLIC_SUPABASE_URL: "https://mock-fake-supabase.supabase.co"
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "mock-fake-anon-key"
+      UPSTASH_REDIS_REST_URL: "https://mock-fake-redis.upstash.io"
+      UPSTASH_REDIS_REST_TOKEN: "mock-fake-token"
 
     steps:
       - name: Checkout Code Repository
@@ -88,4 +122,3 @@ jobs:
 
       - name: Build Next.js Application (Webpack Engine)
         run: npx next build --webpack
-
