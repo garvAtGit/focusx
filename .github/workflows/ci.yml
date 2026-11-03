@@ -73,7 +73,7 @@ jobs:
         run: npx prisma generate
 
       - name: Push Schema to Ephemeral Local Test DB
-        run: npx prisma db push --skip-generate
+        run: npx prisma db push --accept-data-loss
 
       - name: Execute Professional E2E & Query Governance Suite
         run: npm run test:ci
