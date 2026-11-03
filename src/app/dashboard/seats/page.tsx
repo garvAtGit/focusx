@@ -589,15 +589,59 @@ export default function SeatsManagerPage() {
                     </label>
 
                     {selectedSeat.hasLocker && (
-                      <div className="pl-6 space-y-1">
-                        <label className="text-xs font-medium text-muted-foreground block">Daily Locker Price (₹)</label>
-                        <input 
-                          type="number" 
-                          value={selectedSeat.lockerPriceDaily} 
-                          onChange={(e) => updateSelectedSeat('lockerPriceDaily', e.target.value)}
-                          placeholder="e.g. 100"
-                          className="w-full p-2 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary text-sm"
-                        />
+                      <div className="pl-6 space-y-2.5">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-xs font-semibold text-foreground flex items-center justify-between">
+                              <span>Monthly Price (₹)</span>
+                              <span className="text-[10px] text-muted-foreground font-normal">30 days</span>
+                            </label>
+                            <input 
+                              type="number" 
+                              min={0}
+                              value={selectedSeat.lockerPriceDaily ? Math.round(Number(selectedSeat.lockerPriceDaily) * 30) || "" : ""}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                if (!val || Number(val) <= 0) {
+                                  updateSelectedSeat('lockerPriceDaily', "");
+                                } else {
+                                  const daily = Math.round(Number(val) / 30);
+                                  updateSelectedSeat('lockerPriceDaily', String(daily));
+                                }
+                              }}
+                              placeholder="e.g. 300"
+                              className="w-full p-2 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary text-sm font-medium"
+                            />
+                            <p className="text-[10px] text-muted-foreground">Fill monthly rate</p>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-xs font-semibold text-foreground flex items-center justify-between">
+                              <span>Daily Price (₹)</span>
+                              {selectedSeat.lockerPriceDaily && (
+                                <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">
+                                  ₹{selectedSeat.lockerPriceDaily}/d
+                                </span>
+                              )}
+                            </label>
+                            <input 
+                              type="number" 
+                              min={0}
+                              value={selectedSeat.lockerPriceDaily}
+                              onChange={(e) => updateSelectedSeat('lockerPriceDaily', e.target.value)}
+                              placeholder="e.g. 10"
+                              className="w-full p-2 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary text-sm font-medium"
+                            />
+                            <p className="text-[10px] text-muted-foreground">Daily rate for billing</p>
+                          </div>
+                        </div>
+
+                        {selectedSeat.lockerPriceDaily && Number(selectedSeat.lockerPriceDaily) > 0 && (
+                          <div className="text-[11px] bg-primary/5 text-primary border border-primary/20 px-2.5 py-1.5 rounded-lg flex items-center justify-between">
+                            <span>Locker Daily Rate: <strong>₹{selectedSeat.lockerPriceDaily}/day</strong></span>
+                            <span className="text-muted-foreground">(₹{Number(selectedSeat.lockerPriceDaily) * 30}/month)</span>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -774,13 +818,41 @@ export default function SeatsManagerPage() {
                     className="w-full p-2 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary text-sm font-medium"
                   />
                 </div>
-                <div className="flex-1 space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">Daily Price (₹)</label>
+                <div className="w-32 sm:w-36 space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground flex items-center justify-between">
+                    <span>Monthly (₹)</span>
+                    <span className="text-[10px] text-muted-foreground/80">30d</span>
+                  </label>
                   <input 
                     type="number" 
-                    value={locker.price} 
+                    min={0}
+                    value={locker.price ? Math.round(Number(locker.price) * 30) || "" : ""}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (!val || Number(val) <= 0) {
+                        updateStandaloneLocker(locker.id, 'price', "");
+                      } else {
+                        const daily = Math.round(Number(val) / 30);
+                        updateStandaloneLocker(locker.id, 'price', String(daily));
+                      }
+                    }}
+                    placeholder="e.g. 300"
+                    className="w-full p-2 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary text-sm font-medium"
+                  />
+                </div>
+                <div className="w-32 sm:w-36 space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground flex items-center justify-between">
+                    <span>Daily Price (₹)</span>
+                    {locker.price && Number(locker.price) > 0 && (
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">₹{locker.price}/d</span>
+                    )}
+                  </label>
+                  <input 
+                    type="number" 
+                    min={0}
+                    value={locker.price}
                     onChange={(e) => updateStandaloneLocker(locker.id, 'price', e.target.value)}
-                    placeholder="e.g. 50"
+                    placeholder="e.g. 10"
                     className="w-full p-2 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary text-sm font-medium"
                   />
                 </div>
@@ -975,32 +1047,58 @@ export default function SeatsManagerPage() {
               </div>
             </div>
 
+            <div className="space-y-1.5">
+              <Label htmlFor="bulk-count">Quantity to Add</Label>
+              <Input
+                id="bulk-count"
+                type="number"
+                min={1}
+                max={200}
+                value={bulkCount}
+                onChange={(e) => setBulkCount(e.target.value)}
+                placeholder="10"
+              />
+              <p className="text-[11px] text-muted-foreground">Count of lockers to create</p>
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <Label htmlFor="bulk-count">Quantity to Add</Label>
+                <Label htmlFor="bulk-monthly-price">Monthly Price (₹)</Label>
                 <Input
-                  id="bulk-count"
+                  id="bulk-monthly-price"
                   type="number"
-                  min={1}
-                  max={200}
-                  value={bulkCount}
-                  onChange={(e) => setBulkCount(e.target.value)}
-                  placeholder="10"
+                  min={0}
+                  value={bulkPrice ? Math.round(Number(bulkPrice) * 30) || "" : ""}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (!val || Number(val) <= 0) {
+                      setBulkPrice("");
+                    } else {
+                      const daily = Math.round(Number(val) / 30);
+                      setBulkPrice(String(daily));
+                    }
+                  }}
+                  placeholder="e.g. 300"
                 />
-                <p className="text-[11px] text-muted-foreground">Count of lockers to create</p>
+                <p className="text-[11px] text-muted-foreground">Calculates daily rate (÷ 30)</p>
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="bulk-price">Daily Price (₹)</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="bulk-price">Daily Price (₹)</Label>
+                  {bulkPrice && Number(bulkPrice) > 0 && (
+                    <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400">₹{bulkPrice}/day</span>
+                  )}
+                </div>
                 <Input
                   id="bulk-price"
                   type="number"
                   min={0}
                   value={bulkPrice}
                   onChange={(e) => setBulkPrice(e.target.value)}
-                  placeholder="e.g. 50"
+                  placeholder="e.g. 10"
                 />
-                <p className="text-[11px] text-muted-foreground">Default price per locker</p>
+                <p className="text-[11px] text-muted-foreground">Per day rate for student billing</p>
               </div>
             </div>
 
@@ -1013,7 +1111,7 @@ export default function SeatsManagerPage() {
                 </span>
                 {bulkPrice && parseFloat(bulkPrice) >= 0 && (
                   <span className="text-xs bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold px-2 py-0.5 rounded">
-                    ₹{bulkPrice}/day
+                    ₹{bulkPrice}/day (≈ ₹{Math.round(parseFloat(bulkPrice) * 30)}/mo)
                   </span>
                 )}
               </div>

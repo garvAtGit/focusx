@@ -134,8 +134,8 @@ describe('Professional E2E & Depth Verification Suite', () => {
 
   describe('6. Heartbeat Screen & Modules Throttling Safety Verification', () => {
     test('Screen change comparison detects difference only on actual change', () => {
-      const lastLine0 = 'Welcome Student';
-      const lastLine1 = 'Scan RFID Below';
+      const lastLine0: string = 'Welcome Student';
+      const lastLine1: string = 'Scan RFID Below';
 
       // Exact same text
       const screenUnchanged = (lastLine0 === 'Welcome Student') && (lastLine1 === 'Scan RFID Below');
