@@ -75,88 +75,64 @@ export function getWhatsAppUrl(phone: string | null | undefined, text?: string):
   return `https://api.whatsapp.com/send/?phone=${formatted}${encodedText}`;
 }
 
-// Reusable companion window reference and target name so consecutive student messages
-// focus and update the existing warm WhatsApp Web session rather than cold-booting
-// and reloading WhatsApp from scratch every time.
-let sharedWhatsAppPopup: Window | null = null;
-const WA_COMPANION_TARGET = 'focusx_whatsapp_companion';
-
 /**
  * Opens a WhatsApp chat directly for that person.
  *
  * On desktop:
- * Opens WhatsApp Web directly (skipping the intermediate "Download / Continue to Web" page)
- * as a companion side window (740px x 800px) docked gracefully to the right side of the screen
- * so the dashboard remains visible on the left and WhatsApp chat opens immediately with pre-filled text.
+ * Opens WhatsApp Web directly in a new browser tab with the student's conversation
+ * and pre-filled message text.
  *
  * On mobile:
- * Opens via deep link to launch the native WhatsApp app directly.
+ * Opens via deep link (api.whatsapp.com / wa.me) to launch the native WhatsApp app directly.
  */
 export function openWhatsAppChat(
   phone: string | null | undefined, 
   text?: string, 
-  asCompactPopup: boolean = true
+  asCompactPopup?: boolean
 ): boolean {
   if (typeof window === 'undefined') return false;
 
   const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 640;
+  
+  // Auto-copy text to clipboard as guaranteed backup so text is never lost
+  if (text && typeof navigator !== 'undefined' && navigator.clipboard) {
+    try {
+      navigator.clipboard.writeText(text).catch(() => {});
+    } catch {}
+  }
+
   const url = isMobile 
     ? getWhatsAppUrl(phone, text) 
     : getWhatsAppWebUrl(phone, text);
 
   if (!url) return false;
 
-  if (!isMobile && asCompactPopup) {
-    const screenWidth = window.screen.availWidth || window.innerWidth;
-    const screenHeight = window.screen.availHeight || window.innerHeight;
-
-    // Exact size & location matching user's reference:
-    // Size: ~43.5% screen width and ~57% screen height
-    // Location: Docked right (~8-12px margin), positioned ~24% from screen top
-    const outerWidth = window.outerWidth || screenWidth;
-    const outerHeight = window.outerHeight || screenHeight;
-
-    const width = Math.max(680, Math.min(920, Math.round(screenWidth * 0.435)));
-    const height = Math.max(500, Math.min(740, Math.round(screenHeight * 0.57)));
-
-    const screenLeft = typeof window.screenLeft !== 'undefined' ? window.screenLeft : window.screenX;
-    const screenTop = typeof window.screenTop !== 'undefined' ? window.screenTop : window.screenY;
-
-    const left = Math.max(0, Math.round(screenLeft + outerWidth - width - 10));
-    const top = Math.max(20, Math.round(screenTop + outerHeight * 0.24));
-
-    // Re-use already open warm companion window if still alive:
-    if (sharedWhatsAppPopup && !sharedWhatsAppPopup.closed) {
-      try {
-        try {
-          sharedWhatsAppPopup.resizeTo(width, height);
-          sharedWhatsAppPopup.moveTo(left, top);
-        } catch {}
-        sharedWhatsAppPopup.location.href = url;
-        sharedWhatsAppPopup.focus();
-        return true;
-      } catch {
-        // Fallback to window.open if cross-origin navigation is restricted
-      }
-    }
-
-    // Opens at the exact calibrated size and position from the reference screenshot
-    const popup = window.open(
-      url,
-      WA_COMPANION_TARGET,
-      `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no,location=no,status=no,scrollbars=yes,resizable=yes`
-    );
-
-    if (popup) {
-      sharedWhatsAppPopup = popup;
-      popup.focus();
+  // 1. Primary: open in a fresh, unblocked browser tab
+  try {
+    const win = window.open(url, '_blank', 'noopener,noreferrer');
+    if (win && !win.closed) {
+      win.focus();
       return true;
     }
+  } catch (err) {
+    console.warn('[WhatsApp] window.open failed, trying link fallback:', err);
   }
 
-  // Fallback for mobile devices or if popup was blocked
-  window.open(url, '_blank', 'noopener,noreferrer');
-  return true;
+  // 2. Fallback: Native anchor trigger (completely immune to popup blockers in modern browsers)
+  try {
+    const link = document.createElement('a');
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    return true;
+  } catch (linkErr) {
+    console.warn('[WhatsApp] Anchor trigger failed, using location.href:', linkErr);
+    window.location.href = url;
+    return true;
+  }
 }
 
 /**
