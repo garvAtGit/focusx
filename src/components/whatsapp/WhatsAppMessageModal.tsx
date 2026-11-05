@@ -194,22 +194,22 @@ export function WhatsAppMessageModal({
               <Button
                 type="button"
                 variant="outline"
-                onClick={handleSendDesktop}
+                onClick={handleSendWeb}
                 disabled={!recipientPhone || !message.trim()}
-                title="Launch Windows/Mac WhatsApp Desktop Application"
-                className="text-xs font-semibold text-muted-foreground hover:text-foreground"
+                title="Open in WhatsApp Web (Browser tab)"
+                className="text-xs font-semibold text-muted-foreground hover:text-foreground border-border/80"
               >
-                Open in App
+                Open in Web
               </Button>
               <Button
                 type="button"
-                onClick={handleSendWeb}
+                onClick={handleSendDesktop}
                 disabled={!recipientPhone || !message.trim()}
-                title="Open WhatsApp Web in a new browser tab with pre-filled message"
+                title="Launch WhatsApp Desktop Application directly"
                 className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-2 shadow-sm transition-all active:scale-95 disabled:opacity-50"
               >
                 <WhatsAppIcon className="w-4 h-4" />
-                Send on WhatsApp
+                WhatsApp Desktop
               </Button>
             </div>
           </div>

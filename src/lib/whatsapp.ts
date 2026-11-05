@@ -38,7 +38,7 @@ export function getWhatsAppDesktopUrl(phone: string | null | undefined, text?: s
 
 /**
  * Opens WhatsApp using the native desktop app (whatsapp:// URI scheme).
- * Instant 0.05s launch without browser tabs, loading screens, or reload.
+ * Instant launch without browser tabs or reload, and strictly no auto-fallback to web.
  */
 export function openWhatsAppDesktop(phone: string | null | undefined, text?: string): boolean {
   if (typeof window === 'undefined') return false;
@@ -52,9 +52,18 @@ export function openWhatsAppDesktop(phone: string | null | undefined, text?: str
     } catch {}
   }
 
-  // Open via protocol handler
-  window.location.href = url;
-  return true;
+  // Open via protocol handler without navigating away or auto-falling back
+  try {
+    const link = document.createElement('a');
+    link.href = url;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    return true;
+  } catch {
+    window.location.href = url;
+    return true;
+  }
 }
 
 export function getWhatsAppWebUrl(phone: string | null | undefined, text?: string): string | null {
