@@ -430,30 +430,23 @@ export default function LoginPage() {
                     <span>{loading && otpChannel === 'WHATSAPP' ? "Sending code..." : "Send OTP via WhatsApp"}</span>
                   </Button>
 
-                  {/* Divider */}
-                  <div className="relative my-3">
-                    <div className="absolute inset-0 flex items-center">
-                      <div className="w-full border-t border-slate-200/80" />
-                    </div>
-                    <div className="relative flex justify-center text-xs">
-                      <span className="bg-white px-2.5 text-slate-400 font-medium">or</span>
-                    </div>
+                  {/* Single Clean Line below button for SMS */}
+                  <div className="text-center pt-2">
+                    <button
+                      type="button"
+                      onClick={() => sendOtp('SMS')}
+                      disabled={loading || phone.length !== 10}
+                      className="text-xs text-slate-500 hover:text-slate-800 font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:underline"
+                    >
+                      {loading && otpChannel === 'SMS' ? (
+                        <span className="inline-flex items-center gap-1.5 text-slate-600">
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Sending SMS code...
+                        </span>
+                      ) : (
+                        <span>Send code via SMS</span>
+                      )}
+                    </button>
                   </div>
-
-                  {/* Below button: send through SMS option */}
-                  <button
-                    type="button"
-                    onClick={() => sendOtp('SMS')}
-                    disabled={loading || phone.length !== 10}
-                    className="w-full h-11 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-medium text-xs sm:text-sm flex items-center justify-center gap-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:border-slate-300 shadow-2xs"
-                  >
-                    {loading && otpChannel === 'SMS' ? (
-                      <Loader2 className="w-4 h-4 animate-spin text-slate-500" />
-                    ) : (
-                      <Smartphone className="w-4 h-4 text-slate-500" />
-                    )}
-                    <span>Send code via SMS</span>
-                  </button>
                 </form>
               </motion.div>
             )}
