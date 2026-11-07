@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   RecaptchaVerifier,
   signInWithPhoneNumber,
+  signInWithCustomToken,
   updateProfile,
   type ConfirmationResult,
   type User,
@@ -21,6 +22,7 @@ import {
   InputOTPSlot,
 } from "@/components/ui/input-otp"
 import { Loader2, Smartphone, ArrowLeft, ArrowRight } from 'lucide-react'
+import { WhatsAppIcon } from '@/components/icons/WhatsAppIcon'
 import { syncUserOnSignup, checkUserExists, getPostLoginRedirect } from '@/app/actions/auth-actions'
 import toast from 'react-hot-toast'
 
@@ -42,6 +44,7 @@ export default function LoginPage() {
   const [phone, setPhone] = useState('')
   const [otp, setOtp] = useState('')
   const [loading, setLoading] = useState(false)
+  const [authChannel, setAuthChannel] = useState<'WHATSAPP' | 'SMS'>('WHATSAPP')
   const [step, setStep] = useState<'PHONE' | 'OTP' | 'NAME'>('PHONE')
   const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null)
   
@@ -160,7 +163,7 @@ export default function LoginPage() {
     return phone.trim().startsWith('+') ? `+${digits}` : `+91${digits}`;
   };
 
-  async function sendOtp() {
+  async function sendWhatsAppOtp() {
     const formattedPhone = getFormattedPhone();
     const digitsOnly = formattedPhone.replace(/\D/g, '');
 
@@ -170,6 +173,44 @@ export default function LoginPage() {
     }
 
     setLoading(true);
+    setAuthChannel('WHATSAPP');
+
+    try {
+      const res = await fetch('/api/auth/whatsapp-otp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: formattedPhone }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to dispatch WhatsApp OTP');
+      }
+
+      setStep('OTP');
+      setOtp('');
+      lastSubmittedOtp.current = '';
+      setResendTimer(30);
+      toast.success('Verification code sent to your WhatsApp!');
+    } catch (error: unknown) {
+      console.error(error);
+      toast.error(getErrorMessage(error, 'Failed to send WhatsApp code. Try SMS below.'));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function sendSmsOtp() {
+    const formattedPhone = getFormattedPhone();
+    const digitsOnly = formattedPhone.replace(/\D/g, '');
+
+    if (digitsOnly.length < 10) {
+      toast.error('Please enter a valid 10-digit mobile number');
+      return;
+    }
+
+    setLoading(true);
+    setAuthChannel('SMS');
 
     try {
       if (!window.recaptchaVerifier) {
@@ -202,7 +243,7 @@ export default function LoginPage() {
 
   function handleSendOtp(e?: React.FormEvent) {
     if (e) e.preventDefault();
-    return sendOtp();
+    return sendWhatsAppOtp();
   }
 
   const submittingOtpRef = useRef(false)
@@ -216,11 +257,29 @@ export default function LoginPage() {
     const formattedPhone = getFormattedPhone()
 
     try {
-      if (!confirmationResult) {
-        throw new Error("OTP session expired. Please request a new code.")
+      let firebaseUser: User;
+
+      if (authChannel === 'WHATSAPP') {
+        const res = await fetch('/api/auth/whatsapp-otp/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: formattedPhone, otp }),
+        });
+
+        const data = await res.json();
+        if (!res.ok || !data.customToken) {
+          throw new Error(data.error || 'Invalid verification code. Please try again.');
+        }
+
+        const cred = await signInWithCustomToken(auth, data.customToken);
+        firebaseUser = cred.user;
+      } else {
+        if (!confirmationResult) {
+          throw new Error("OTP session expired. Please request a new code.")
+        }
+        const result = await confirmationResult.confirm(otp)
+        firebaseUser = result.user
       }
-      const result = await confirmationResult.confirm(otp)
-      const firebaseUser = result.user
 
       const idToken = await firebaseUser.getIdToken()
       const dbCheck = await checkUserExists(formattedPhone, idToken);
@@ -411,18 +470,43 @@ export default function LoginPage() {
                   {/* reCAPTCHA container for invisible app verification */}
                   <div id="recaptcha-container" />
 
-                  {/* Single Clean Primary Blue Button for SMS OTP */}
+                  {/* Primary WhatsApp OTP Button */}
                   <Button 
                     type="submit" 
-                    className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl shadow-sm hover:shadow transition-all text-sm flex items-center justify-center gap-2 active:scale-[0.99] disabled:opacity-50 mt-2"
+                    className="w-full h-12 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl shadow-sm hover:shadow transition-all text-sm flex items-center justify-center gap-2 active:scale-[0.99] disabled:opacity-50 mt-2"
                     disabled={loading || phone.length !== 10}
                   >
-                    {loading ? (
+                    {loading && authChannel === 'WHATSAPP' ? (
                       <Loader2 className="w-5 h-5 animate-spin" />
                     ) : (
-                      <Smartphone className="w-4 h-4 text-white" />
+                      <WhatsAppIcon className="w-4 h-4 text-white" />
                     )}
-                    <span>{loading ? "Sending code..." : "Send Verification Code"}</span>
+                    <span>{loading && authChannel === 'WHATSAPP' ? "Sending WhatsApp code..." : "Continue with WhatsApp"}</span>
+                  </Button>
+
+                  {/* Secondary SMS Fallback Button */}
+                  <div className="relative my-2">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-slate-200" />
+                    </div>
+                    <div className="relative flex justify-center text-xs uppercase">
+                      <span className="bg-white px-2 text-slate-400 font-medium">Or</span>
+                    </div>
+                  </div>
+
+                  <Button 
+                    type="button" 
+                    variant="outline"
+                    onClick={() => sendSmsOtp()}
+                    className="w-full h-11 border-slate-200 hover:bg-slate-50 text-slate-700 font-medium rounded-xl transition-all text-xs flex items-center justify-center gap-2 disabled:opacity-50"
+                    disabled={loading || phone.length !== 10}
+                  >
+                    {loading && authChannel === 'SMS' ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-slate-600" />
+                    ) : (
+                      <Smartphone className="w-4 h-4 text-slate-600" />
+                    )}
+                    <span>{loading && authChannel === 'SMS' ? "Sending SMS..." : "Send code via SMS"}</span>
                   </Button>
                 </form>
               </motion.div>
@@ -451,8 +535,8 @@ export default function LoginPage() {
 
                   <div className="text-center">
                     <h2 className="text-xl font-bold tracking-tight text-slate-900">Enter verification code</h2>
-                    <p className="text-xs sm:text-sm text-slate-500 mt-1">
-                      Sent via SMS to{' '}
+                    <p className="text-xs sm:text-sm text-slate-500 mt-1 flex items-center justify-center gap-1.5">
+                      <span>Sent via {authChannel === 'WHATSAPP' ? 'WhatsApp' : 'SMS'} to</span>
                       <span className="font-semibold text-slate-800">+91 {phone}</span>
                     </p>
                   </div>
@@ -478,24 +562,51 @@ export default function LoginPage() {
 
                   <Button 
                     type="submit" 
-                    className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-sm shadow-sm transition-all" 
+                    className={`w-full h-12 text-white font-semibold rounded-xl text-sm shadow-sm transition-all ${
+                      authChannel === 'WHATSAPP' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700'
+                    }`} 
                     disabled={loading || otp.length !== 6}
                   >
                     {loading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : null}
                     {loading ? "Verifying..." : "Verify & Continue"}
                   </Button>
 
-                  <div className="text-center pt-2 border-t border-slate-100">
+                  <div className="text-center pt-2 border-t border-slate-100 flex flex-col gap-1.5 items-center">
                     <button 
                       type="button" 
-                      onClick={() => resendTimer === 0 ? sendOtp() : undefined}
+                      onClick={() => {
+                        if (resendTimer === 0) {
+                          if (authChannel === 'WHATSAPP') sendWhatsAppOtp();
+                          else sendSmsOtp();
+                        }
+                      }}
                       disabled={resendTimer > 0 || loading}
                       className={`text-xs sm:text-sm font-medium ${resendTimer > 0 ? 'text-slate-400 cursor-not-allowed' : 'text-blue-600 hover:underline'}`}
                     >
                       {resendTimer > 0 
-                        ? `Resend code via SMS in ${resendTimer}s` 
-                        : "Resend code via SMS"}
+                        ? `Resend code via ${authChannel === 'WHATSAPP' ? 'WhatsApp' : 'SMS'} in ${resendTimer}s` 
+                        : `Resend code via ${authChannel === 'WHATSAPP' ? 'WhatsApp' : 'SMS'}`}
                     </button>
+
+                    {authChannel === 'WHATSAPP' ? (
+                      <button
+                        type="button"
+                        onClick={() => sendSmsOtp()}
+                        disabled={loading}
+                        className="text-xs text-slate-500 hover:text-slate-800 font-medium transition-colors"
+                      >
+                        Didn&apos;t get WhatsApp code? <span className="text-blue-600 underline">Send via SMS</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => sendWhatsAppOtp()}
+                        disabled={loading}
+                        className="text-xs text-slate-500 hover:text-slate-800 font-medium transition-colors"
+                      >
+                        Prefer WhatsApp? <span className="text-emerald-600 underline">Send via WhatsApp</span>
+                      </button>
+                    )}
                   </div>
                 </form>
               </motion.div>
