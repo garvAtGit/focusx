@@ -196,8 +196,8 @@ export function WhatsAppMessageModal({
                 variant="outline"
                 onClick={handleSendWeb}
                 disabled={!recipientPhone || !message.trim()}
-                title="Open via WhatsApp Web in browser"
-                className="text-xs font-semibold text-muted-foreground hover:text-foreground"
+                title="Open in WhatsApp Web (Browser tab)"
+                className="text-xs font-semibold text-muted-foreground hover:text-foreground border-border/80"
               >
                 Open in Web
               </Button>
@@ -205,10 +205,11 @@ export function WhatsAppMessageModal({
                 type="button"
                 onClick={handleSendDesktop}
                 disabled={!recipientPhone || !message.trim()}
+                title="Launch WhatsApp Desktop Application directly"
                 className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-2 shadow-sm transition-all active:scale-95 disabled:opacity-50"
               >
                 <WhatsAppIcon className="w-4 h-4" />
-                Send on WhatsApp
+                WhatsApp Desktop
               </Button>
             </div>
           </div>

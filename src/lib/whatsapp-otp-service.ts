@@ -79,7 +79,7 @@ export async function createAndStoreWhatsAppOtp(phone: string): Promise<{
       const digitsOnly = phone.replace(/\D/g, '');
       const templateName = process.env.WHATSAPP_OTP_TEMPLATE_NAME || 'focusx_auth_otp';
 
-      const response = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
+      let response = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${whatsappToken}`,
@@ -107,6 +107,39 @@ export async function createAndStoreWhatsAppOtp(phone: string): Promise<{
           },
         }),
       });
+
+      // If template structure does not have the URL button or parameter count differs, retry with body-only payload
+      if (!response.ok) {
+        const initialError = await response.clone().json().catch(() => null);
+        console.warn('[WhatsApp Cloud API Initial Attempt]:', initialError);
+
+        const retryResponse = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${whatsappToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            to: digitsOnly,
+            type: 'template',
+            template: {
+              name: templateName,
+              language: { code: 'en' },
+              components: [
+                {
+                  type: 'body',
+                  parameters: [{ type: 'text', text: otp }],
+                },
+              ],
+            },
+          }),
+        });
+
+        if (retryResponse.ok) {
+          response = retryResponse;
+        }
+      }
 
       if (!response.ok) {
         const errorData = await response.json();

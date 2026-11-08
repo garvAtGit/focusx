@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   RecaptchaVerifier,
   signInWithPhoneNumber,
+  signInWithCustomToken,
   updateProfile,
   type ConfirmationResult,
   type User,
@@ -20,7 +21,8 @@ import {
   InputOTPGroup,
   InputOTPSlot,
 } from "@/components/ui/input-otp"
-import { Loader2, Smartphone, ArrowLeft, ArrowRight } from 'lucide-react'
+import { Loader2, Smartphone, ArrowLeft, ArrowRight, ShieldCheck } from 'lucide-react'
+import { WhatsAppIcon } from '@/components/icons/WhatsAppIcon'
 import { syncUserOnSignup, checkUserExists, getPostLoginRedirect } from '@/app/actions/auth-actions'
 import toast from 'react-hot-toast'
 
@@ -43,6 +45,8 @@ export default function LoginPage() {
   const [otp, setOtp] = useState('')
   const [loading, setLoading] = useState(false)
   const [step, setStep] = useState<'PHONE' | 'OTP' | 'NAME'>('PHONE')
+  const [otpChannel, setOtpChannel] = useState<'WHATSAPP' | 'SMS'>('WHATSAPP')
+  const [previewOtp, setPreviewOtp] = useState<string | null>(null)
   const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null)
   
   // Resend OTP state
@@ -108,19 +112,6 @@ export default function LoginPage() {
     return () => { isMounted = false; };
   }, []);
 
-  // Pre-warm reCAPTCHA early so user doesn't wait 5-10s when clicking "Send Code"
-  const prewarmRecaptcha = () => {
-    if (typeof window === 'undefined') return;
-    if (!window.recaptchaVerifier) {
-      try {
-        window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-          size: 'invisible',
-        });
-        window.recaptchaVerifier.render().catch(() => {});
-      } catch {}
-    }
-  };
-
   // Handle countdown for resend OTP
   useEffect(() => {
     if (resendTimer > 0) {
@@ -142,67 +133,108 @@ export default function LoginPage() {
   }, [otp, step, loading]);
 
   const getFormattedPhone = () => {
+    // Strip all non-digit characters (spaces, hyphens, parentheses)
     let digits = phone.replace(/\D/g, '');
 
-    // Strip leading 0 if provided (e.g. 09876543210 -> 9876543210)
+    // If student typed leading 0 (e.g. 09876543210), strip the leading 0
     if (digits.length === 11 && digits.startsWith('0')) {
       digits = digits.slice(1);
     }
 
+    // Standard 10-digit Indian mobile number
     if (digits.length === 10) {
       return `+91${digits}`;
     }
 
+    // 12-digit already prefixed with country code 91
     if (digits.length === 12 && digits.startsWith('91')) {
       return `+${digits}`;
     }
 
+    // Fallback for international numbers or pre-prefixed input
     return phone.trim().startsWith('+') ? `+${digits}` : `+91${digits}`;
   };
 
-  async function sendOtp() {
+  async function sendOtp(targetChannel: 'WHATSAPP' | 'SMS') {
     const formattedPhone = getFormattedPhone();
     const digitsOnly = formattedPhone.replace(/\D/g, '');
 
+    // Quick client-side check so invalid numbers don't hang waiting for carrier rejection
     if (digitsOnly.length < 10) {
       toast.error('Please enter a valid 10-digit mobile number');
       return;
     }
 
+    setOtpChannel(targetChannel);
     setLoading(true);
 
-    try {
-      if (!window.recaptchaVerifier) {
-        window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-          size: 'invisible',
+    if (targetChannel === 'WHATSAPP') {
+      try {
+        const res = await fetch('/api/auth/whatsapp-otp/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: formattedPhone }),
         });
-        await window.recaptchaVerifier.render();
-      }
+        const data = await res.json();
 
-      const appVerifier = window.recaptchaVerifier;
-      const confirmation = await signInWithPhoneNumber(auth, formattedPhone, appVerifier);
-      setConfirmationResult(confirmation);
-      setStep('OTP');
-      setOtp('');
-      lastSubmittedOtp.current = '';
-      setResendTimer(45);
-      toast.success('Verification code sent via SMS!');
-    } catch (error: unknown) {
-      console.error(error);
-      toast.error(getErrorMessage(error, "Failed to send SMS OTP. Please check your number and try again."));
-      if (window.recaptchaVerifier) {
-        window.recaptchaVerifier.render().then((widgetId) => {
-          window.grecaptcha?.reset(widgetId);
-        });
+        if (!res.ok || data.error) {
+          throw new Error(data.error || 'Failed to send WhatsApp OTP');
+        }
+
+        setStep('OTP');
+        setOtp('');
+        lastSubmittedOtp.current = '';
+        setResendTimer(30);
+
+        if (data.simulated && data.previewOtp) {
+          setPreviewOtp(data.previewOtp);
+          toast.success(`WhatsApp OTP (Sandbox): ${data.previewOtp}`, { duration: 6000 });
+        } else {
+          setPreviewOtp(null);
+          toast.success('OTP sent to your WhatsApp!');
+        }
+      } catch (error: unknown) {
+        console.error(error);
+        toast.error(getErrorMessage(error, 'Failed to send WhatsApp OTP. Try SMS instead.'));
+      } finally {
+        setLoading(false);
       }
-    } finally {
-      setLoading(false);
+    } else {
+      // SMS via Firebase Phone Auth
+      try {
+        if (!window.recaptchaVerifier) {
+          window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+            size: 'invisible',
+          });
+          await window.recaptchaVerifier.render();
+        }
+
+        const appVerifier = window.recaptchaVerifier;
+        const confirmation = await signInWithPhoneNumber(auth, formattedPhone, appVerifier);
+        setConfirmationResult(confirmation);
+        setStep('OTP');
+        setOtp('');
+        lastSubmittedOtp.current = '';
+        setResendTimer(45); // 45s cooldown for faster retry if carrier queues are slow
+        setPreviewOtp(null);
+        toast.success('OTP sent via SMS!');
+      } catch (error: unknown) {
+        console.error(error);
+        toast.error(getErrorMessage(error, "Failed to send SMS OTP. Try WhatsApp instead."));
+        if (window.recaptchaVerifier) {
+          window.recaptchaVerifier.render().then((widgetId) => {
+            window.grecaptcha?.reset(widgetId);
+          });
+        }
+      } finally {
+        setLoading(false);
+      }
     }
   }
 
   function handleSendOtp(e?: React.FormEvent) {
     if (e) e.preventDefault();
-    return sendOtp();
+    return sendOtp(otpChannel);
   }
 
   const submittingOtpRef = useRef(false)
@@ -216,11 +248,30 @@ export default function LoginPage() {
     const formattedPhone = getFormattedPhone()
 
     try {
-      if (!confirmationResult) {
-        throw new Error("OTP session expired. Please request a new code.")
+      let firebaseUser: User;
+
+      if (otpChannel === 'WHATSAPP') {
+        const res = await fetch('/api/auth/whatsapp-otp/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: formattedPhone, otp }),
+        });
+        const data = await res.json();
+
+        if (!res.ok || data.error) {
+          throw new Error(data.error || 'Invalid OTP code.');
+        }
+
+        // Authenticate client with minted custom token
+        const cred = await signInWithCustomToken(auth, data.customToken);
+        firebaseUser = cred.user;
+      } else {
+        if (!confirmationResult) {
+          throw new Error("OTP session expired. Please request a new code.")
+        }
+        const result = await confirmationResult.confirm(otp)
+        firebaseUser = result.user
       }
-      const result = await confirmationResult.confirm(otp)
-      const firebaseUser = result.user
 
       const idToken = await firebaseUser.getIdToken()
       const dbCheck = await checkUserExists(formattedPhone, idToken);
@@ -237,7 +288,7 @@ export default function LoginPage() {
       }
     } catch (error: unknown) {
       console.error(error)
-      toast.error(getErrorMessage(error, "Invalid verification code. Please try again."))
+      toast.error(getErrorMessage(error, "Invalid OTP code."))
       setLoading(false)
     } finally {
       submittingOtpRef.current = false;
@@ -289,6 +340,10 @@ export default function LoginPage() {
         const urlParams = new URLSearchParams(window.location.search)
         
         if (urlParams.get('popup') === 'true') {
+          // The embedded (iframe) checkout can't rely on the session cookie due to
+          // third-party cookie blocking, so it authenticates with this ID token.
+          // Scope the message to our OWN origin — never '*', which would leak the
+          // token to any page that happened to open this popup.
           window.opener?.postMessage({ type: 'LOGIN_SUCCESS', token: idToken }, window.location.origin);
           window.close();
           return;
@@ -323,11 +378,11 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-[#FBFBFA] flex flex-col justify-between relative overflow-hidden font-sans selection:bg-blue-100 selection:text-blue-900">
-      {/* Ambient background canvas */}
+      {/* Ambient background decoration */}
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(59,130,246,0.07),rgba(255,255,255,0))] pointer-events-none" />
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#8080800a_1px,transparent_1px),linear-gradient(to_bottom,#8080800a_1px,transparent_1px)] bg-[size:28px_28px] pointer-events-none" />
       <div className="pointer-events-none absolute -top-40 -left-40 w-96 h-96 bg-blue-500/5 rounded-full blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-40 -right-40 w-96 h-96 bg-indigo-500/5 rounded-full blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-40 -right-40 w-96 h-96 bg-emerald-500/5 rounded-full blur-3xl" />
 
 
       {/* Top Navigation Bar */}
@@ -394,9 +449,7 @@ export default function LoginPage() {
                         id="phone" 
                         type="tel" 
                         value={phone}
-                        onFocus={prewarmRecaptcha}
                         onChange={(e) => {
-                          prewarmRecaptcha();
                           const val = e.target.value.replace(/\D/g, '');
                           if (val.length <= 10) setPhone(val);
                         }}
@@ -408,22 +461,40 @@ export default function LoginPage() {
                     </div>
                   </div>
 
-                  {/* reCAPTCHA container for invisible app verification */}
+                  {/* reCAPTCHA container */}
                   <div id="recaptcha-container" />
 
-                  {/* Single Clean Primary Blue Button for SMS OTP */}
+                  {/* Primary Button: WhatsApp OTP by default (matching classic blue) */}
                   <Button 
                     type="submit" 
-                    className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl shadow-sm hover:shadow transition-all text-sm flex items-center justify-center gap-2 active:scale-[0.99] disabled:opacity-50 mt-2"
+                    className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl shadow-sm hover:shadow transition-all text-sm flex items-center justify-center gap-2 active:scale-[0.99] disabled:opacity-50"
                     disabled={loading || phone.length !== 10}
                   >
-                    {loading ? (
+                    {loading && otpChannel === 'WHATSAPP' ? (
                       <Loader2 className="w-5 h-5 animate-spin" />
                     ) : (
-                      <Smartphone className="w-4 h-4 text-white" />
+                      <WhatsAppIcon className="w-4 h-4 text-white" />
                     )}
-                    <span>{loading ? "Sending code..." : "Send Verification Code"}</span>
+                    <span>{loading && otpChannel === 'WHATSAPP' ? "Sending code..." : "Send OTP via WhatsApp"}</span>
                   </Button>
+
+                  {/* Single Clean Line below button for SMS */}
+                  <div className="text-center pt-2">
+                    <button
+                      type="button"
+                      onClick={() => sendOtp('SMS')}
+                      disabled={loading || phone.length !== 10}
+                      className="text-xs text-slate-500 hover:text-slate-800 font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:underline"
+                    >
+                      {loading && otpChannel === 'SMS' ? (
+                        <span className="inline-flex items-center gap-1.5 text-slate-600">
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Sending SMS code...
+                        </span>
+                      ) : (
+                        <span>Send code via SMS</span>
+                      )}
+                    </button>
+                  </div>
                 </form>
               </motion.div>
             )}
@@ -443,6 +514,7 @@ export default function LoginPage() {
                       setStep('PHONE');
                       setOtp('');
                       setResendTimer(0);
+                      setPreviewOtp(null);
                     }}
                     className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 font-medium mb-1 transition-colors"
                   >
@@ -452,10 +524,22 @@ export default function LoginPage() {
                   <div className="text-center">
                     <h2 className="text-xl font-bold tracking-tight text-slate-900">Enter verification code</h2>
                     <p className="text-xs sm:text-sm text-slate-500 mt-1">
-                      Sent via SMS to{' '}
+                      Sent via {otpChannel === 'WHATSAPP' ? 'WhatsApp' : 'SMS'} to{' '}
                       <span className="font-semibold text-slate-800">+91 {phone}</span>
                     </p>
                   </div>
+
+                  {previewOtp && (
+                    <motion.div 
+                      initial={{ scale: 0.95, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      onClick={() => setOtp(previewOtp)} 
+                      className="cursor-pointer mx-auto my-1 inline-flex items-center gap-1.5 text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1 rounded-full font-mono hover:bg-emerald-100 transition-colors shadow-2xs"
+                      title="Click to auto-fill sandbox OTP"
+                    >
+                      <span>⚡ Sandbox OTP: <strong>{previewOtp}</strong> (click to fill)</span>
+                    </motion.div>
+                  )}
 
                   <div className="flex justify-center pt-1">
                     <InputOTP 
@@ -485,16 +569,38 @@ export default function LoginPage() {
                     {loading ? "Verifying..." : "Verify & Continue"}
                   </Button>
 
-                  <div className="text-center pt-2 border-t border-slate-100">
+                  <div className="flex flex-col space-y-2.5 text-center pt-3 border-t border-slate-100">
                     <button 
                       type="button" 
-                      onClick={() => resendTimer === 0 ? sendOtp() : undefined}
+                      onClick={() => resendTimer === 0 ? sendOtp(otpChannel) : undefined}
                       disabled={resendTimer > 0 || loading}
                       className={`text-xs sm:text-sm font-medium ${resendTimer > 0 ? 'text-slate-400 cursor-not-allowed' : 'text-blue-600 hover:underline'}`}
                     >
                       {resendTimer > 0 
-                        ? `Resend code via SMS in ${resendTimer}s` 
-                        : "Resend code via SMS"}
+                        ? `Resend via ${otpChannel === 'WHATSAPP' ? 'WhatsApp' : 'SMS'} in ${resendTimer}s` 
+                        : `Resend via ${otpChannel === 'WHATSAPP' ? 'WhatsApp' : 'SMS'}`}
+                    </button>
+
+                    {/* Cross-channel fallback */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const fallbackChannel = otpChannel === 'WHATSAPP' ? 'SMS' : 'WHATSAPP';
+                        sendOtp(fallbackChannel);
+                      }}
+                      disabled={loading}
+                      className="text-xs text-slate-500 hover:text-slate-800 inline-flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                      <span>Didn&apos;t receive code?</span>
+                      {otpChannel === 'WHATSAPP' ? (
+                        <span className="text-blue-600 font-semibold hover:underline inline-flex items-center gap-1">
+                          <Smartphone className="w-3.5 h-3.5" /> Send via SMS instead
+                        </span>
+                      ) : (
+                        <span className="text-emerald-600 font-semibold hover:underline inline-flex items-center gap-1">
+                          <WhatsAppIcon className="w-3.5 h-3.5 text-[#25D366]" /> Send via WhatsApp instead
+                        </span>
+                      )}
                     </button>
                   </div>
                 </form>
