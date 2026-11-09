@@ -1,6 +1,8 @@
 import crypto from "crypto"
 import { BookingIntentStatus } from "@prisma/client"
 import { NextResponse } from "next/server"
+import * as Sentry from "@sentry/nextjs"
+import { isNextControlFlowError } from "@/lib/sentry-utils"
 import prisma from "@/lib/prisma"
 import {
   BookingAuthorityError,
@@ -314,6 +316,14 @@ export async function POST(req: Request) {
     await recordProcessedEvent(eventId, eventType, payloadHash)
     return NextResponse.json({ status: "ignored" })
   } catch (error) {
+    if (isNextControlFlowError(error)) throw error;
+    Sentry.withScope((scope) => {
+      scope.setTag("feature", "razorpay-webhook");
+      scope.setTag("eventId", eventId);
+      // Non-sensitive error message only: never attach payment payload, amounts, or customer info
+      const sanitized = new Error(error instanceof Error ? error.message : "Razorpay webhook processing failed");
+      Sentry.captureException(sanitized);
+    });
     console.error("Razorpay webhook processing failed:", error)
     return NextResponse.json(
       { error: "Webhook handler failed" },

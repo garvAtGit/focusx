@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import * as Sentry from '@sentry/nextjs';
 import { AlertTriangle, RefreshCw, LayoutDashboard } from 'lucide-react';
 import Link from 'next/link';
 
@@ -13,6 +14,7 @@ export default function AdminError({
 }) {
   useEffect(() => {
     console.error('Super Admin Dashboard Error:', error);
+    Sentry.captureException(error);
   }, [error]);
 
   return (

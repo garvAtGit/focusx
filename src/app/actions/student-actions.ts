@@ -17,6 +17,8 @@ import { invalidateLibraryRuntimeCache } from "@/lib/library-cache"
 import { invalidateStudentsCache } from "@/lib/student-cache"
 import { getActiveLibrary } from "@/lib/dashboard-utils"
 import { requirePermission, hasPermission } from "@/lib/permissions"
+import * as Sentry from "@sentry/nextjs"
+import { isNextControlFlowError } from "@/lib/sentry-utils"
 
 function isPrismaUniqueError(error: unknown, target?: string): boolean {
   if (
@@ -144,6 +146,10 @@ export async function approveReceptionPayment(bookingId: string, paymentMethod: 
   try {
     await confirmPendingReceptionBooking(bookingId, paymentMethod);
   } catch (error) {
+    if (isNextControlFlowError(error)) throw error;
+    if (!(error instanceof BookingAuthorityError)) {
+      Sentry.captureException(error, { tags: { feature: "booking-approve" } });
+    }
     return {
       error:
         error instanceof Error
@@ -264,6 +270,8 @@ export async function addStudentProfile(formData: FormData) {
       if (isPrismaUniqueError(error)) {
         return { error: "A student with this phone, email, or auth credentials already exists in the system but couldn't be matched." };
       }
+      if (isNextControlFlowError(error)) throw error;
+      Sentry.captureException(error, { tags: { feature: "create-student" } });
       return { error: "Failed to create student record." };
     }
   }
@@ -372,6 +380,8 @@ export async function addStudentWithBooking(formData: FormData) {
       if (isPrismaUniqueError(error)) {
         return { error: "A student with this phone, email, or auth credentials already exists in the system but couldn't be matched." };
       }
+      if (isNextControlFlowError(error)) throw error;
+      Sentry.captureException(error, { tags: { feature: "create-student" } });
       return { error: "Failed to create student record." };
     }
   }
@@ -430,6 +440,8 @@ export async function addStudentWithBooking(formData: FormData) {
       ) {
         return { error: "Seat is already booked for this duration" };
       }
+      if (isNextControlFlowError(error)) throw error;
+      Sentry.captureException(error, { tags: { feature: "create-booking-manual" } });
       return {
         error: error instanceof Error ? error.message : "Failed to create booking",
       };
@@ -459,6 +471,8 @@ export async function extendBookingExact(bookingId: string) {
     ) {
       return { error: "Cannot extend: Seat is already booked for the extended duration" };
     }
+    if (isNextControlFlowError(error)) throw error;
+    Sentry.captureException(error, { tags: { feature: "extend-booking" } });
     return { error: error instanceof Error ? error.message : "Operation failed" };
   }
 
@@ -717,6 +731,8 @@ export async function createOfflineStudentWithRFID(libraryId: string, name: stri
     if (isPrismaUniqueError(error, "rfidTag")) {
       return { error: 'This RFID tag is already assigned to another user.' };
     }
+    if (isNextControlFlowError(error)) throw error;
+    Sentry.captureException(error, { tags: { feature: "create-offline-student" } });
     return { error: 'Failed to create student' };
   }
 }

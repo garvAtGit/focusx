@@ -31,6 +31,7 @@ const CSRF_EXEMPT_PREFIXES = [
   '/api/razorpay/callback',
   '/api/vitals',
   '/api/mobile',
+  '/monitoring',
 ];
 
 function getAllowedOrigins(request: NextRequest): Set<string> {
@@ -55,6 +56,12 @@ function getAllowedOrigins(request: NextRequest): Set<string> {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // Sentry tunnel route exemption (never block, rate-limit, or require auth for telemetry)
+  if (pathname === '/monitoring' || pathname.startsWith('/monitoring/')) {
+    return NextResponse.next();
+  }
+
   const isApi = pathname.startsWith('/api');
   // Server Actions are POSTs to page routes carrying the `Next-Action` header.
   // Without this, all mutations (bookings, admin, plans) would be unthrottled.

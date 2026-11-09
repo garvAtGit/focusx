@@ -14,6 +14,8 @@ import { loadBookingFacts } from "@/lib/booking-engine/server/server-fact-loader
 import { evaluateBookingSelection } from "@/lib/booking-engine/evaluate-selection"
 import type { BookingDraft, BookingResult } from "@/lib/booking-engine/types"
 import { createManualConfirmedBooking } from "@/lib/booking-authority"
+import * as Sentry from "@sentry/nextjs"
+import { isNextControlFlowError } from "@/lib/sentry-utils"
 
 async function authorizeBookingMutation(
   bookingId: string,
@@ -115,6 +117,8 @@ export async function previewBookingDraft(draft: Partial<BookingDraft>): Promise
     const facts = await loadBookingFacts(draft, actor, prisma)
     return evaluateBookingSelection(draft, facts)
   } catch (error) {
+    if (isNextControlFlowError(error)) throw error;
+    Sentry.captureException(error, { tags: { feature: "booking-preview" } });
     console.error("Preview evaluation failed:", error)
     return {
       status: 'BLOCKED',
@@ -168,6 +172,10 @@ export async function executeBookingWorkflowAction(draft: BookingDraft, _idempot
     const booking = await createManualConfirmedBooking(input);
     return { success: true, bookingId: booking.id };
   } catch (error) {
+    if (isNextControlFlowError(error)) throw error;
+    if (!(error instanceof BookingAuthorityError)) {
+      Sentry.captureException(error, { tags: { feature: "booking-workflow" } });
+    }
     console.error("Workflow Execution Failed:", error);
     return { 
       error: error instanceof Error ? error.message : "Workflow failed to execute"
@@ -355,6 +363,13 @@ export async function addLockerToExistingBookingAction(input: {
       lockerName,
     };
   } catch (err: unknown) {
+    if (isNextControlFlowError(err)) throw err;
+    Sentry.withScope((scope) => {
+      scope.setTag("feature", "payment-locker-link");
+      scope.setTag("bookingId", booking.id);
+      const sanitizedError = new Error(err instanceof Error ? err.message : "Razorpay payment link creation failed");
+      Sentry.captureException(sanitizedError);
+    });
     console.error("Online payment link creation failed:", err);
     return {
       success: false,

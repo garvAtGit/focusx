@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { adminAuth } from '@/lib/firebase/firebaseAdmin';
 import { redis } from '@/lib/redis';
+import * as Sentry from '@sentry/nextjs';
+import { isNextControlFlowError } from '@/lib/sentry-utils';
 
 function getCookieDomain(req: Request): string | undefined {
   const host = req.headers.get('host') || req.headers.get('x-forwarded-host');
@@ -61,6 +63,8 @@ export async function POST(req: Request) {
 
     return response;
   } catch (error: unknown) {
+    if (isNextControlFlowError(error)) throw error;
+    Sentry.captureException(error, { tags: { feature: 'auth-session-create' } });
     console.error("Session creation error:", error);
     return NextResponse.json({ error: "Failed to create session" }, { status: 401 });
   }

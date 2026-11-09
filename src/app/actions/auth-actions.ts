@@ -7,6 +7,8 @@ import { adminAuth } from "@/lib/firebase/firebaseAdmin"
 import { redis } from "@/lib/redis"
 import { verifyFirebaseIdToken } from "@/lib/verify-firebase-token"
 import type { Role } from "@prisma/client"
+import * as Sentry from "@sentry/nextjs"
+import { isNextControlFlowError } from "@/lib/sentry-utils"
 
 // Short TTL keeps per-request auth cheap while bounding role/profile staleness.
 const SESSION_CACHE_TTL_SECONDS = 30
@@ -252,6 +254,8 @@ export async function verifyAdminLogin(
 
     return { success: true, isNewUser: false };
   } catch (error) {
+    if (isNextControlFlowError(error)) throw error;
+    Sentry.captureException(error, { tags: { feature: "auth-verify-admin" } });
     console.error('verifyAdminLogin error:', error);
     return { error: 'Failed to verify admin authorization.' };
   }
@@ -352,6 +356,8 @@ export async function syncUserOnSignup(idToken: string, phone: string, name?: st
     return { success: true, isNewUser: true };
     
   } catch (e) {
+    if (isNextControlFlowError(e)) throw e;
+    Sentry.captureException(e, { tags: { feature: "auth-sync-signup" } });
     console.error("Failed to sync user to DB on signup:", e);
     return { error: "Failed to sync user." };
   }

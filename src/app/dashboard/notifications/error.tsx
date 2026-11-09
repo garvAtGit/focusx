@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import * as Sentry from '@sentry/nextjs';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 
@@ -13,6 +14,7 @@ export default function NotificationsError({
 }) {
   useEffect(() => {
     console.error('Notifications page error:', error);
+    Sentry.captureException(error);
   }, [error]);
 
   return (

@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { withSentryConfig } from "@sentry/nextjs/config";
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["firebase-admin"],
@@ -70,7 +71,7 @@ const nextConfig: NextConfig = {
               "style-src 'self' 'unsafe-inline' https:",
               "img-src 'self' data: blob: https:",
               "font-src 'self' data: https:",
-              "connect-src 'self' https: wss:",
+              "connect-src 'self' https: wss: https://*.ingest.sentry.io https://*.sentry.io",
               "frame-src 'self' https://*.razorpay.com https://api.razorpay.com https://www.google.com https://maps.google.com https://*.firebaseapp.com",
               "media-src 'self' https: data:",
               "worker-src 'self' blob:",
@@ -85,4 +86,16 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+export default withSentryConfig(nextConfig, {
+  org: process.env.SENTRY_ORG,
+  project: process.env.SENTRY_PROJECT,
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+
+  silent: false,
+  widenClientFileUpload: true,
+  tunnelRoute: "/monitoring",
+
+  sourcemaps: {
+    deleteSourcemapsAfterUpload: true,
+  },
+});
