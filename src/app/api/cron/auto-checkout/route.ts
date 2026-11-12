@@ -1,83 +1,157 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { invalidateLibraryRuntimeCache } from '@/lib/library-cache';
+import { incrementLibraryRevision } from '@/lib/hardware-sync';
+import { checkDurationAndNotify } from '@/lib/notification-utils';
+import * as Sentry from '@sentry/nextjs';
+import { isNextControlFlowError } from '@/lib/sentry-utils';
+
+export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 export async function GET(request: Request) {
   try {
-    // Only allow cron requests in production (Vercel sets this header)
+    const cronSecret = process.env.CRON_SECRET;
     const authHeader = request.headers.get('authorization');
-    if (
-      process.env.NODE_ENV === 'production' &&
-      authHeader !== `Bearer ${process.env.CRON_SECRET}`
-    ) {
+    if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    // Look back up to 7 days for any open checkin sessions that were never closed
+    const lookbackLimit = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-    // Find all active check-ins that haven't been checked out today
-    // To do this reliably, we'll fetch today's logs for all students
-    const todayLogs = await prisma.checkinLog.findMany({
+    // Fetch recent checkin logs in descending order
+    const recentLogs = await prisma.checkinLog.findMany({
       where: {
-        timestamp: { gte: startOfDay }
+        timestamp: { gte: lookbackLimit }
       },
-      orderBy: { timestamp: 'asc' }
+      orderBy: { timestamp: 'desc' },
+      select: {
+        id: true,
+        studentId: true,
+        libraryId: true,
+        status: true,
+        timestamp: true
+      }
     });
 
-    const entryLogs = await prisma.entryLog.findMany({
-      where: {
-        timestamp: { gte: startOfDay },
-        status: { in: ['IN', 'OUT', 'SUCCESS'] }
-      },
-      orderBy: { timestamp: 'asc' }
-    });
+    // Group by studentId + libraryId to find their absolute latest status
+    const seen = new Set<string>();
+    const pendingCheckouts: { studentId: string; libraryId: string; checkinTime: Date }[] = [];
 
-    // Group logs by studentId + libraryId to find their current state
-    const studentState = new Map<string, { status: string, libraryId: string }>();
-
-    for (const log of todayLogs) {
+    for (const log of recentLogs) {
       const key = `${log.studentId}_${log.libraryId}`;
-      studentState.set(key, { status: log.status, libraryId: log.libraryId });
-    }
+      if (seen.has(key)) continue;
+      seen.add(key);
 
-    for (const log of entryLogs) {
-      if (!log.userId) continue;
-      const key = `${log.userId}_${log.libraryId}`;
-      const status = log.status === 'OUT' ? 'CHECK_OUT' : 'CHECK_IN';
-      studentState.set(key, { status, libraryId: log.libraryId });
-    }
-
-    // Now, find all keys where status is currently 'CHECK_IN'
-    const pendingCheckouts: { studentId: string, libraryId: string }[] = [];
-    for (const [key, state] of studentState.entries()) {
-      if (state.status === 'CHECK_IN') {
-        const [studentId, libraryId] = key.split('_');
-        pendingCheckouts.push({ studentId, libraryId });
+      if (log.status === 'CHECK_IN') {
+        pendingCheckouts.push({
+          studentId: log.studentId,
+          libraryId: log.libraryId,
+          checkinTime: log.timestamp
+        });
       }
     }
 
-    // Auto checkout these students
-    let createdCount = 0;
-    const { checkDurationAndNotify } = require("@/lib/notification-utils");
-    
-    for (const { studentId, libraryId } of pendingCheckouts) {
-      await prisma.checkinLog.create({
-        data: {
-          studentId,
-          libraryId,
-          status: 'CHECK_OUT',
-          isOfflineSync: false,
-          timestamp: now
-        }
+    if (pendingCheckouts.length === 0) {
+      return NextResponse.json({
+        success: true,
+        checkedOutCount: 0,
+        message: 'No open check-in sessions found.'
       });
-      createdCount++;
-      
-      // We don't want to block the cron execution if one notify fails
-      checkDurationAndNotify(studentId, libraryId).catch(console.error);
     }
 
-    return NextResponse.json({ success: true, checkedOutCount: createdCount });
+    let createdCount = 0;
+    const affectedLibraries = new Set<string>();
+
+    for (const { studentId, libraryId } of pendingCheckouts) {
+      affectedLibraries.add(libraryId);
+
+      // Execute checkout in an atomic transaction to avoid race conditions
+      await prisma.$transaction(async (tx) => {
+        // Double-check latest state inside transaction
+        const latestLog = await tx.checkinLog.findFirst({
+          where: { studentId, libraryId },
+          orderBy: { timestamp: 'desc' },
+          select: { status: true }
+        });
+
+        if (latestLog && latestLog.status !== 'CHECK_IN') {
+          return;
+        }
+
+        const checkoutLog = await tx.checkinLog.create({
+          data: {
+            studentId,
+            libraryId,
+            status: 'CHECK_OUT',
+            isOfflineSync: false,
+            timestamp: now
+          }
+        });
+
+        // Also record in EntryLog so physical access logs reflect checkout
+        await tx.entryLog.create({
+          data: {
+            libraryId,
+            userId: studentId,
+            timestamp: now,
+            status: 'OUT',
+            reason: 'AUTO_CHECKOUT'
+          }
+        });
+
+        // Publish to realtime outbox so live monitors and mobile update immediately
+        const logicalEventId = `autocheckout_${checkoutLog.id}`;
+        await tx.realtimeOutbox.create({
+          data: {
+            eventId: logicalEventId,
+            checkinLogId: checkoutLog.id,
+            studentId,
+            type: "REALTIME",
+            payload: {
+              type: 'ATTENDANCE_UPDATE',
+              action: 'CHECK_OUT',
+              status: 'CHECK_OUT',
+              studentId,
+              libraryId,
+              timestamp: now.toISOString(),
+              reason: 'AUTO_CHECKOUT'
+            }
+          }
+        });
+
+        createdCount++;
+      });
+
+      // Calculate overstay/duration & notify (non-blocking)
+      checkDurationAndNotify(studentId, libraryId).catch((err) => {
+        console.error(`[Auto-Checkout] Duration notification failed for ${studentId}:`, err);
+      });
+    }
+
+    // Invalidate runtime cache and increment revision for all affected libraries
+    await Promise.all(
+      Array.from(affectedLibraries).map(async (libId) => {
+        try {
+          await invalidateLibraryRuntimeCache(libId);
+          await incrementLibraryRevision(libId);
+        } catch (syncErr) {
+          console.error(`[Auto-Checkout] Sync update failed for library ${libId}:`, syncErr);
+        }
+      })
+    );
+
+    return NextResponse.json({
+      success: true,
+      checkedOutCount: createdCount,
+      librariesProcessed: affectedLibraries.size,
+      timestamp: now.toISOString()
+    });
   } catch (error) {
+    if (isNextControlFlowError(error)) throw error;
+    Sentry.captureException(error, { tags: { feature: 'cron-auto-checkout' } });
     console.error('Auto-checkout cron failed:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
