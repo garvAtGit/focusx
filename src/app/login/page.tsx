@@ -320,7 +320,9 @@ export default function LoginPage() {
 
   async function completeLogin(firebaseUser: User, phone: string, userName: string) {
     try {
-      const idToken = await firebaseUser.getIdToken()
+      // Force refresh (true) to ensure the ID token was minted in the last 60 seconds
+      // Firebase createSessionCookie requires a freshly minted token with recent auth_time
+      const idToken = await firebaseUser.getIdToken(true)
 
       const syncResult = await syncUserOnSignup(idToken, phone, userName)
       if (syncResult && 'error' in syncResult) {
@@ -335,15 +337,13 @@ export default function LoginPage() {
         body: JSON.stringify({ idToken })
       })
 
-      if (res.ok) {
+      const sessionData = await res.json().catch(() => ({}));
+
+      if (res.ok && sessionData.success) {
         toast.success("Successfully logged in!")
         const urlParams = new URLSearchParams(window.location.search)
         
         if (urlParams.get('popup') === 'true') {
-          // The embedded (iframe) checkout can't rely on the session cookie due to
-          // third-party cookie blocking, so it authenticates with this ID token.
-          // Scope the message to our OWN origin — never '*', which would leak the
-          // token to any page that happened to open this popup.
           window.opener?.postMessage({ type: 'LOGIN_SUCCESS', token: idToken }, window.location.origin);
           window.close();
           return;
@@ -361,12 +361,13 @@ export default function LoginPage() {
           }
         }
       } else {
-        toast.error("Verified, but failed to create secure session")
+        console.error("Session creation failed:", sessionData);
+        toast.error(sessionData.error || "Verified, but failed to create secure session")
         setLoading(false)
       }
     } catch (error: unknown) {
-      console.error(error)
-      toast.error("Failed to complete login.")
+      console.error("completeLogin error:", error)
+      toast.error(getErrorMessage(error, "Failed to complete login."))
       setLoading(false)
     }
   }

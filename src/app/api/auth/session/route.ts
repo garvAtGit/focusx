@@ -62,11 +62,12 @@ export async function POST(req: Request) {
     });
 
     return response;
-  } catch (error: unknown) {
+  } catch (error: any) {
     if (isNextControlFlowError(error)) throw error;
     Sentry.captureException(error, { tags: { feature: 'auth-session-create' } });
     console.error("Session creation error:", error);
-    return NextResponse.json({ error: "Failed to create session" }, { status: 401 });
+    const message = error?.message || "Failed to create session";
+    return NextResponse.json({ error: message, code: error?.code }, { status: 401 });
   }
 }
 
