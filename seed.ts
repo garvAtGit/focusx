@@ -11,6 +11,7 @@ async function main() {
       data: {
         email: "librarian@FocusX.com",
         name: "Admin Librarian",
+        username: "admin_librarian",
         role: "LIBRARIAN",
         uniqueId: "LIB001"
       }
@@ -60,6 +61,7 @@ async function main() {
       student = await prisma.user.create({
         data: {
           name,
+          username: name.toLowerCase().replace(/\s+/g, '_'),
           email,
           role: "STUDENT",
           phone: "+9876543210",

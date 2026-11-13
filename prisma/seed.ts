@@ -18,6 +18,7 @@ async function main() {
       role: Role.LIBRARIAN,
       email: 'librarian@example.com',
       name: 'Sarah The Librarian',
+      username: 'librarian_sarah',
       phone: '+1234567890',
       uniqueId: 'LIB001'
     }
@@ -30,6 +31,7 @@ async function main() {
       role: Role.STUDENT,
       email: 'student@example.com',
       name: 'John Student',
+      username: 'student_john',
       phone: '+0987654321',
       uniqueId: 'STU001'
     }

@@ -49,6 +49,19 @@ model User {
   currentStreak               Int                @default(0)
   lastActiveDate              DateTime?
   adminPermissions            String[]           @default([])
+  username                    String             @unique
+  usernameConfirmed           Boolean            @default(false)
+  displayName                 String?
+  legalName                   String?
+  aadhaarLast4                String?
+  kycStatus                   String             @default("NOT_STARTED")
+  kycVerifiedAt               DateTime?
+  kycReferenceId              String?
+  guardianName                String?
+  guardianContactNumber       String?
+  usernameChangeLogs          UsernameChangeLog[]
+  studentInfoRequests         StudentInfoRequest[] @relation("StudentInfoRequests")
+  librarianInfoRequests       StudentInfoRequest[] @relation("LibrarianInfoRequests")
   winterArcEnrollment         WinterArcEnrollment?
   bookings                    Booking[]
   bookingIntents              BookingIntent[]
@@ -123,6 +136,7 @@ model Library {
   standaloneLockers StandaloneLocker[]
   staff             User[]             @relation("LibraryStaff")
   staffMemberships  LibraryStaff[]     @relation("LibraryStaffMemberships")
+  studentInfoRequests StudentInfoRequest[]
 
   @@index([librarianId])
   @@index([kycStatus])
@@ -925,5 +939,37 @@ model StaffAuditLog {
   @@index([actorId])
   @@index([createdAt])
 }
+
+model UsernameChangeLog {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  oldUsername String
+  newUsername String
+  changedAt   DateTime @default(now())
+
+  @@index([userId, changedAt])
+}
+
+model StudentInfoRequest {
+  id           String    @id @default(uuid())
+  studentId    String
+  student      User      @relation("StudentInfoRequests", fields: [studentId], references: [id], onDelete: Cascade)
+  librarianId  String
+  librarian    User      @relation("LibrarianInfoRequests", fields: [librarianId], references: [id], onDelete: Cascade)
+  libraryId    String
+  library      Library   @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  reason       String
+  documentUrl  String?
+  status       String    @default("PENDING") // PENDING, APPROVED, REJECTED, EXPIRED
+  fields       String[]
+  createdAt    DateTime  @default(now())
+  respondedAt  DateTime?
+  expiresAt    DateTime?
+
+  @@index([studentId, status])
+  @@index([librarianId, libraryId])
+}
+
 
 
