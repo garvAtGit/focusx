@@ -265,8 +265,12 @@ export function AccessQRModal({ libraryId, studentId, iconOnly, isCheckedIn: ini
     };
 
     initQR();
-    // Safety fallback polling (only active when Realtime is disconnected)
-    const pollInterval = setInterval(pollStatus, 3000);
+    // Safety fallback polling: strictly throttled to 30s and only runs if Realtime WebSocket is disconnected
+    const pollInterval = setInterval(() => {
+      if (!isRealtimeSubscribed.current && !showSuccess && active) {
+        void pollStatus();
+      }
+    }, 30000);
     // Regenerate QR every 4.5 mins for security
     const qrInterval = setInterval(initQR, 270000); 
 

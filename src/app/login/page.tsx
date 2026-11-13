@@ -81,6 +81,19 @@ export default function LoginPage() {
         await auth.authStateReady();
         const user = auth.currentUser;
         if (user) {
+          // Loop guard: prevent infinite reload cycles between login and protected routes
+          try {
+            const REDIRECT_GUARD_KEY = 'focusx_login_redirect_attempt';
+            const lastAttempt = sessionStorage.getItem(REDIRECT_GUARD_KEY);
+            const now = Date.now();
+            if (lastAttempt && now - parseInt(lastAttempt, 10) < 6000) {
+              console.warn('[AUTH] Rapid redirect loop detected. Aborting auto-redirect to prevent request flood.');
+              if (isMounted) setCheckingExistingSession(false);
+              return;
+            }
+            sessionStorage.setItem(REDIRECT_GUARD_KEY, String(now));
+          } catch {}
+
           const idToken = await user.getIdToken();
           const res = await fetch('/api/auth/session', {
             method: 'POST',

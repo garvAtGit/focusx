@@ -13,6 +13,29 @@ import { generateInitialUniqueUsername } from "@/lib/username-validator"
 
 // Short TTL keeps per-request auth cheap while bounding role/profile staleness.
 const SESSION_CACHE_TTL_SECONDS = 30
+
+// In-memory request deduplication cache to eliminate repeated Redis calls within the same server tick/render
+const sessionMemoryCache = new Map<string, { session: SessionData | null; expires: number }>();
+
+function getSessionFromMemory(cookie: string): SessionData | null | undefined {
+  const cached = sessionMemoryCache.get(cookie);
+  if (cached && Date.now() < cached.expires) {
+    return cached.session;
+  }
+  if (cached && Date.now() >= cached.expires) {
+    sessionMemoryCache.delete(cookie);
+  }
+  return undefined;
+}
+
+function setSessionInMemory(cookie: string, session: SessionData | null): void {
+  // Cap cache size at 500 entries to prevent memory leak
+  if (sessionMemoryCache.size > 500) {
+    const firstKey = sessionMemoryCache.keys().next().value;
+    if (firstKey) sessionMemoryCache.delete(firstKey);
+  }
+  sessionMemoryCache.set(cookie, { session, expires: Date.now() + 2000 }); // 2-second in-memory dedup
+}
 // Revoked sessions are remembered for the full cookie lifetime (14 days).
 const REVOCATION_TTL_SECONDS = 60 * 60 * 24 * 14
 
@@ -112,35 +135,46 @@ export async function getSession(): Promise<SessionData | null> {
 
   if (!sessionCookie || !adminAuth) return null;
 
+  // 1. Fast in-memory check (0ms, 0 Redis queries): deduplicates calls within the same server tick
+  const inMemory = getSessionFromMemory(sessionCookie);
+  if (inMemory !== undefined) {
+    return inMemory;
+  }
+
   try {
     const decodedClaims = await adminAuth.verifySessionCookie(sessionCookie);
     const authId = decodedClaims.uid;
 
+    const cacheKey = `usersess:${authId}`;
     try {
-      if (await redis.get(`revoked:${authId}`)) {
-        // Session has been explicitly revoked (e.g. logout on another device).
-        // Reject it immediately. The session/route.ts clears this flag on fresh
-        // login, so a new login will restore access cleanly.
+      // 2. Fetch both revocation status AND cached session in a SINGLE pipelined mget roundtrip (1 trip vs 2)
+      const [revokedVal, cachedVal] = await redis.mget<[string | null, string | object | null]>(
+        `revoked:${authId}`,
+        cacheKey
+      );
+
+      if (revokedVal) {
+        setSessionInMemory(sessionCookie, null);
         return null;
+      }
+
+      if (cachedVal) {
+        const parsed: unknown = typeof cachedVal === 'string' ? JSON.parse(cachedVal) : cachedVal;
+        if (isSessionData(parsed)) {
+          setSessionInMemory(sessionCookie, parsed);
+          return parsed;
+        }
       }
     } catch {
       // Redis unavailable: fall through — Firebase cookie verification still
       // happened above so the session is at least cryptographically valid.
     }
 
-    const cacheKey = `usersess:${authId}`;
-    try {
-      const cached = await redis.get(cacheKey);
-      if (cached) {
-        const parsed: unknown = typeof cached === 'string' ? JSON.parse(cached) : cached;
-        if (isSessionData(parsed)) return parsed;
-      }
-    } catch {
-      // Ignore cache read errors
-    }
-
     const user = await prisma.user.findUnique({ where: { authId } });
-    if (!user) return null;
+    if (!user) {
+      setSessionInMemory(sessionCookie, null);
+      return null;
+    }
 
     const sessionData: SessionData = { 
       userId: user.id, 
@@ -156,9 +190,11 @@ export async function getSession(): Promise<SessionData | null> {
     } catch {
       // Cache write failures are non-fatal
     }
+    setSessionInMemory(sessionCookie, sessionData);
     return sessionData;
   } catch (error) {
     console.error("Session verification failed:", error);
+    setSessionInMemory(sessionCookie, null);
     return null;
   }
 }

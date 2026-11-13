@@ -47,27 +47,22 @@ export default async function AdminMachinesPage() {
     });
   }, 30);
 
-  // Parallel non-blocking fetch for relay module diagnostics
+  // Batched non-blocking fetch for relay module diagnostics (single mget roundtrip vs N requests)
   const allRelays = libraries.flatMap((l) => l.relays);
   const initialModulesMap: Record<string, any> = {};
 
   if (allRelays.length > 0) {
-    const moduleResults = await Promise.all(
-      allRelays.map(async (relay) => {
-        try {
-          const raw = await redis.get<string | object>(`relay:modules:${relay.id}`);
-          if (raw) {
-            return { id: relay.id, data: typeof raw === "string" ? JSON.parse(raw) : raw };
-          }
-        } catch {
-          // ignore cache miss
+    try {
+      const relayKeys = allRelays.map((relay) => `relay:modules:${relay.id}`);
+      const rawList = await redis.mget<(string | object | null)[]>(...relayKeys);
+      allRelays.forEach((relay, idx) => {
+        const raw = rawList?.[idx];
+        if (raw) {
+          initialModulesMap[relay.id] = typeof raw === "string" ? JSON.parse(raw) : raw;
         }
-        return null;
-      })
-    );
-
-    for (const res of moduleResults) {
-      if (res) initialModulesMap[res.id] = res.data;
+      });
+    } catch {
+      // ignore cache miss
     }
   }
 

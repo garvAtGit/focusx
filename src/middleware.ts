@@ -57,8 +57,8 @@ function getAllowedOrigins(request: NextRequest): Set<string> {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Sentry tunnel route exemption (never block, rate-limit, or require auth for telemetry)
-  if (pathname === '/monitoring' || pathname.startsWith('/monitoring/')) {
+  // Sentry tunnel and session restore route exemptions (never block or rate-limit session restore)
+  if (pathname === '/monitoring' || pathname.startsWith('/monitoring/') || pathname === '/auth/restore') {
     return NextResponse.next();
   }
 

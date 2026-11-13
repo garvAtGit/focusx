@@ -170,7 +170,8 @@ const todayStart = startOfDayIST(new Date());
     />;
   }
 
-  if (!student) redirect("/login");
+  // If session is authenticated but user record is missing/unlinked, route to profile to prevent /login redirect loops
+  if (!student) redirect("/student/profile");
 
   // Build unique libraries list for student inquiry support
   const libraryMap = new Map<string, { id: string; name: string; whatsapp: string | null; managerPhone: string | null }>();
