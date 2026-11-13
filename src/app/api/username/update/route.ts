@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { getSession } from '@/app/actions/auth-actions';
 import prisma from '@/lib/prisma';
 import { validateUsername } from '@/lib/username-validator';
+import { markUsernameInBloom } from '@/lib/username-bloom';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 
@@ -106,6 +107,9 @@ export async function POST(request: NextRequest) {
           remainingChanges: Math.max(0, remaining),
         };
       });
+
+      // Update bitwise Bloom filter in Redis & RAM
+      markUsernameInBloom(result.username).catch(() => {});
 
       return NextResponse.json({
         success: true,

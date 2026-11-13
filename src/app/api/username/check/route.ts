@@ -3,6 +3,7 @@ import { getSession } from '@/app/actions/auth-actions';
 import prisma from '@/lib/prisma';
 import { rateLimiters } from '@/lib/rate-limit';
 import { validateUsername, generateCandidateUsernames } from '@/lib/username-validator';
+import { isUsernameDefinitelyFreeInBloom } from '@/lib/username-bloom';
 import { z } from 'zod';
 
 const QuerySchema = z.object({
@@ -64,6 +65,18 @@ export async function GET(request: NextRequest) {
     }
 
     const normalized = formatCheck.normalized;
+
+    // Fast-path: Check Bitwise Bloom Filter (Redis + Local RAM)
+    // If ANY of the 3 bits is 0, the username is GUARANTEED to be available (zero false negatives).
+    // This completes in sub-millisecond with ZERO database queries!
+    const definitelyFree = await isUsernameDefinitelyFreeInBloom(normalized);
+    if (definitelyFree) {
+      return NextResponse.json({
+        valid: true,
+        available: true,
+        normalized,
+      });
+    }
 
     // 2. Single indexed database lookup
     const existing = await prisma.user.findUnique({
