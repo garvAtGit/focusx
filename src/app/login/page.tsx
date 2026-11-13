@@ -353,8 +353,12 @@ export default function LoginPage() {
         if (returnUrl && returnUrl.startsWith('/') && !returnUrl.startsWith('//')) {
           window.location.href = returnUrl
         } else {
-          const dest = await getPostLoginRedirect()
-          window.location.href = dest
+          try {
+            const dest = await getPostLoginRedirect()
+            window.location.href = dest || '/'
+          } catch {
+            window.location.href = '/'
+          }
         }
       } else {
         toast.error("Verified, but failed to create secure session")
