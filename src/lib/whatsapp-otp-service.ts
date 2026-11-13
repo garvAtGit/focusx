@@ -16,9 +16,9 @@ const globalForOtp = globalThis as unknown as {
 const otpStore: Map<string, StoredOtp> =
   globalForOtp.whatsappOtpStore || (globalForOtp.whatsappOtpStore = new Map());
 
-// Clean up expired OTPs periodically
+// Clean up expired OTPs periodically (unreferenced so it does not hold the process alive)
 if (typeof setInterval !== 'undefined') {
-  setInterval(() => {
+  const cleanupTimer = setInterval(() => {
     const now = Date.now();
     for (const [phone, record] of otpStore.entries()) {
       if (record.expiresAt < now) {
@@ -26,6 +26,7 @@ if (typeof setInterval !== 'undefined') {
       }
     }
   }, 60_000);
+  if (cleanupTimer.unref) cleanupTimer.unref();
 }
 
 /**
