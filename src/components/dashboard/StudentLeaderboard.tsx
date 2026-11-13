@@ -7,6 +7,7 @@ import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-f
 export type LeaderboardEntry = {
   id?: string;
   name: string;
+  username?: string | null;
   avatar: string | null;
   minutes: number;
   rank: number;
@@ -123,6 +124,9 @@ export function StudentLeaderboard({ libraryName, leaderboards }: StudentLeaderb
                     <h3 className={`font-bold text-sm truncate ${student.isCurrentUser ? 'text-blue-600' : 'text-slate-900'}`}>
                       {displayName}
                     </h3>
+                    {student.username && (
+                      <p className="text-[11px] font-mono text-slate-400 font-medium">@{student.username}</p>
+                    )}
                     <div className="flex items-center gap-1 mt-0.5">
                       <div className="h-1.5 bg-slate-100 rounded-full w-full max-w-[100px] overflow-hidden">
                         <div 

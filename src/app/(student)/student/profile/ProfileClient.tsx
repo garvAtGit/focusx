@@ -1,14 +1,15 @@
 'use client'
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { updateStudentProfile } from "@/app/actions/student-profile-actions"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
-import { User, Camera, ShieldCheck, Loader2 } from "lucide-react"
+import { User, Camera, ShieldCheck, Loader2, Check, X, Sparkles, AlertCircle } from "lucide-react"
 import { ImageCropperModal } from "@/components/ImageCropperModal"
 import type { User as UserRecord } from "@prisma/client"
+import toast from "react-hot-toast"
 
 import { UpdatePhoneModal } from "./UpdatePhoneModal"
 
@@ -27,6 +28,13 @@ type ProfileUser = Omit<
     | "profilePhotoUrl"
     | "qualification"
     | "uniqueId"
+    | "username"
+    | "usernameConfirmed"
+    | "displayName"
+    | "legalName"
+    | "guardianName"
+    | "guardianContactNumber"
+    | "kycStatus"
   >,
   "dob"
 > & {
@@ -48,6 +56,94 @@ export function ProfileClient({ user: initialUser }: { user: ProfileUser }) {
   const [photoUrl, setPhotoUrl] = useState<string | null>(user.profilePhotoUrl || "")
   const [uncroppedImageSrc, setUncroppedImageSrc] = useState<string | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+
+  // Username Engine State
+  const [usernameInput, setUsernameInput] = useState(user.username || "")
+  const [usernameStatus, setUsernameStatus] = useState<'IDLE' | 'CHECKING' | 'AVAILABLE' | 'TAKEN' | 'INVALID'>('IDLE')
+  const [usernameReason, setUsernameReason] = useState<string>("")
+  const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([])
+  const [savingUsername, setSavingUsername] = useState(false)
+  const abortControllerRef = useRef<AbortController | null>(null)
+
+  // 350ms Debounced Username Validation with Stale Request Cancellation
+  useEffect(() => {
+    const trimmed = usernameInput.trim().toLowerCase()
+    if (!trimmed || trimmed === user.username?.toLowerCase()) {
+      setUsernameStatus('IDLE')
+      setUsernameReason("")
+      setUsernameSuggestions([])
+      return
+    }
+
+    // Cancel in-flight stale request so out-of-order responses never show wrong state
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
+    setUsernameStatus('CHECKING')
+    setUsernameReason("")
+    setUsernameSuggestions([])
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/username/check?username=${encodeURIComponent(trimmed)}`, {
+          signal: controller.signal,
+        })
+        const data = await res.json()
+        if (controller.signal.aborted) return
+
+        if (!res.ok || !data.valid) {
+          setUsernameStatus('INVALID')
+          setUsernameReason(data.reason || 'Invalid username')
+        } else if (data.available) {
+          setUsernameStatus('AVAILABLE')
+          setUsernameReason('Available!')
+        } else {
+          setUsernameStatus('TAKEN')
+          setUsernameReason('Username is already taken')
+          setUsernameSuggestions(data.suggestions || [])
+        }
+      } catch (err: unknown) {
+        if ((err as Error)?.name === 'AbortError') return
+        setUsernameStatus('INVALID')
+        setUsernameReason('Unable to verify username')
+      }
+    }, 350)
+
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [usernameInput, user.username])
+
+  const handleUpdateUsername = async (chosenName?: string) => {
+    const target = (chosenName || usernameInput).trim().toLowerCase()
+    if (!target) return
+    setSavingUsername(true)
+    try {
+      const res = await fetch('/api/username/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: target }),
+      })
+      const data = await res.json()
+      if (!res.ok || data.error) {
+        toast.error(data.error || 'Failed to update username')
+      } else {
+        setUser((prev) => ({ ...prev, username: data.username, usernameConfirmed: true }))
+        setUsernameInput(data.username)
+        setUsernameStatus('IDLE')
+        setUsernameSuggestions([])
+        toast.success(`Username updated to @${data.username}! (${data.remainingChanges} changes left this 14-day window)`)
+      }
+    } catch {
+      toast.error('Network error updating username')
+    } finally {
+      setSavingUsername(false)
+    }
+  }
 
   const verifyCashfreeReturn = useCallback(async (verification_id: string) => {
     setVerifying(true);
@@ -153,6 +249,100 @@ export function ProfileClient({ user: initialUser }: { user: ProfileUser }) {
         </div>
       )}
 
+      {/* Non-blocking Username Choice Banner */}
+      {!user.usernameConfirmed && (
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200/80 rounded-2xl p-4 flex items-start gap-3.5 shadow-xs mb-6">
+          <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 shrink-0 mt-0.5">
+            <Sparkles className="w-4 h-4" />
+          </div>
+          <div className="flex-1">
+            <h4 className="font-bold text-sm text-slate-900">Choose your FocusX username</h4>
+            <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">
+              You currently have a default handle (<strong className="font-mono text-blue-600">@{user.username}</strong>). Pick your permanent username below anytime.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* FocusX Handle & Username Engine Card */}
+      <div className="bg-slate-50/80 border border-slate-200/80 rounded-2xl p-6 mb-8 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <span>FocusX Handle</span>
+              <span className="text-xs font-mono font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                @{user.username}
+              </span>
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Your public handle for Digital Pass and Study Leaderboards. (Max 2 changes per 14 days)
+            </p>
+          </div>
+          {usernameStatus === 'AVAILABLE' && (
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => handleUpdateUsername()}
+              disabled={savingUsername}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-xs"
+            >
+              {savingUsername ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Check className="w-3.5 h-3.5 mr-1" />}
+              Save @{usernameInput.trim().toLowerCase()}
+            </Button>
+          )}
+        </div>
+
+        <div className="relative max-w-md">
+          <div className="flex items-center rounded-xl border border-slate-200 bg-white focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 transition-all overflow-hidden shadow-2xs">
+            <span className="pl-3.5 pr-1 text-slate-400 font-mono font-bold select-none text-sm">@</span>
+            <Input
+              value={usernameInput}
+              onChange={(e) => setUsernameInput(e.target.value.toLowerCase().replace(/\s+/g, '_'))}
+              placeholder="choose_handle"
+              className="border-0 shadow-none focus-visible:ring-0 text-sm font-mono h-11 text-slate-900"
+            />
+            <div className="pr-3 flex items-center">
+              {usernameStatus === 'CHECKING' && <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />}
+              {usernameStatus === 'AVAILABLE' && <Check className="w-4 h-4 text-emerald-600" />}
+              {usernameStatus === 'TAKEN' && <X className="w-4 h-4 text-rose-500" />}
+              {usernameStatus === 'INVALID' && <AlertCircle className="w-4 h-4 text-amber-500" />}
+            </div>
+          </div>
+
+          {usernameReason && (
+            <p className={`text-xs mt-1.5 font-medium ${
+              usernameStatus === 'AVAILABLE' ? 'text-emerald-600' :
+              usernameStatus === 'TAKEN' ? 'text-rose-600' :
+              usernameStatus === 'INVALID' ? 'text-amber-600' : 'text-slate-500'
+            }`}>
+              {usernameReason}
+            </p>
+          )}
+        </div>
+
+        {/* Suggestion Pills when handle is taken */}
+        {usernameSuggestions.length > 0 && (
+          <div className="pt-2">
+            <span className="text-[11px] font-semibold text-slate-500 block mb-2">Available Suggestions:</span>
+            <div className="flex flex-wrap gap-2">
+              {usernameSuggestions.map((sug) => (
+                <button
+                  key={sug}
+                  type="button"
+                  onClick={() => {
+                    setUsernameInput(sug);
+                    handleUpdateUsername(sug);
+                  }}
+                  className="px-3 py-1 rounded-lg bg-white border border-slate-200 hover:border-blue-400 hover:bg-blue-50 text-slate-700 hover:text-blue-700 font-mono text-xs font-semibold transition-all shadow-2xs cursor-pointer flex items-center gap-1 active:scale-95"
+                >
+                  <span>@{sug}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
       <form key={user.digilockerVerified ? 'verified' : 'unverified'} action={handleSubmit} className="space-y-8 mt-4">
         
         {/* Profile Picture Section */}
@@ -209,9 +399,32 @@ export function ProfileClient({ user: initialUser }: { user: ProfileUser }) {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <Label htmlFor="name">Full Legal Name *</Label>
-              <Input id="name" name="name" defaultValue={user.name} required readOnly={user.digilockerVerified} className={user.digilockerVerified ? "bg-muted cursor-not-allowed text-muted-foreground" : ""} />
+              <Label htmlFor="name" className="flex items-center gap-1.5">
+                <span>Legal Name</span>
+                {user.digilockerVerified && (
+                  <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-1.5 py-0.5 rounded">Verified</span>
+                )}
+              </Label>
+              <Input 
+                id="name" 
+                name="name" 
+                defaultValue={user.legalName || user.name} 
+                required 
+                readOnly={user.digilockerVerified} 
+                className={user.digilockerVerified ? "bg-muted cursor-not-allowed text-muted-foreground font-medium" : ""} 
+              />
             </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="displayName">Display / Preferred Name</Label>
+              <Input 
+                id="displayName" 
+                name="displayName" 
+                defaultValue={user.displayName || user.name} 
+                placeholder="How you want to be called" 
+              />
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="uniqueId">FocusX ID</Label>
               <Input id="uniqueId" value={user.uniqueId || "Not Generated"} readOnly className="bg-muted font-mono font-bold cursor-not-allowed text-muted-foreground" />
@@ -249,6 +462,27 @@ export function ProfileClient({ user: initialUser }: { user: ProfileUser }) {
                   </SelectContent>
                 </Select>
               )}
+            </div>
+
+            {/* Optional Guardian Details */}
+            <div className="space-y-2">
+              <Label htmlFor="guardianName">Guardian Name (Optional)</Label>
+              <Input 
+                id="guardianName" 
+                name="guardianName" 
+                defaultValue={user.guardianName || ""} 
+                placeholder="Parent or Guardian name" 
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="guardianContactNumber">Guardian Contact Number (Optional)</Label>
+              <Input 
+                id="guardianContactNumber" 
+                name="guardianContactNumber" 
+                defaultValue={user.guardianContactNumber || ""} 
+                placeholder="Parent or Guardian phone" 
+              />
             </div>
 
             <div className="space-y-2 md:col-span-2">

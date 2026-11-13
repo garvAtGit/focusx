@@ -8,6 +8,7 @@ import toast from "react-hot-toast"
 import { Loader2, ShieldCheck, CalendarDays, Lock, LayoutGrid, RefreshCw, History, User, Pause, PlayCircle } from "lucide-react"
 import { AttendanceCalendar } from "./AttendanceCalendar"
 import type { Prisma } from "@prisma/client"
+import type { LibrarianStudentBasicDTO } from "@/lib/student-serializer"
 
 interface StudentProfileModalProps {
   studentId: string | null;
@@ -17,17 +18,12 @@ interface StudentProfileModalProps {
   onRenewPlan?: (bookingId: string, planId: string, seatId: string, hasLocker: boolean, standaloneLockerId: string | null) => void;
 }
 
-type ProfileStudent = Prisma.UserGetPayload<{
-  include: {
-    bookings: {
-      include: {
-        plan: true;
-      };
-    };
-    entryLogs: true;
-    checkins: true;
-  };
-}>;
+type ProfileStudent = LibrarianStudentBasicDTO & {
+  bookings: any[];
+  entryLogs: any[];
+  checkins: any[];
+  [key: string]: any;
+};
 
 export function StudentProfileModal({ studentId, open, onOpenChange, onChangeSeat, onRenewPlan }: StudentProfileModalProps) {
   const [profileStudent, setProfileStudent] = useState<ProfileStudent | null>(null);
@@ -182,8 +178,14 @@ export function StudentProfileModal({ studentId, open, onOpenChange, onChangeSea
                     )}
                   </div>
                   <div className="flex-1 pb-2 min-w-0">
-                    <h2 className="text-2xl font-black text-slate-900 tracking-tight leading-none truncate">{profileStudent.name}</h2>
-                    <p className="text-[13px] font-bold text-slate-500 mt-1.5 opacity-80 truncate">{profileStudent.uniqueId} • {profileStudent.phone}</p>
+                    <h2 className="text-2xl font-black text-slate-900 tracking-tight leading-none truncate">
+                      {profileStudent.legalName || profileStudent.displayName || profileStudent.name}
+                    </h2>
+                    <p className="text-[13px] font-bold text-slate-500 mt-1.5 opacity-80 truncate">
+                      {profileStudent.uniqueId && `${profileStudent.uniqueId} • `}
+                      {profileStudent.username && `@${profileStudent.username} • `}
+                      {profileStudent.phone}
+                    </p>
                     
                     <div className="flex items-center gap-2 mt-3 flex-wrap">
                       {currentBooking && (
@@ -196,9 +198,18 @@ export function StudentProfileModal({ studentId, open, onOpenChange, onChangeSea
                           {isExpired ? 'EXPIRED' : currentBooking.status}
                         </span>
                       )}
-                      {profileStudent.digilockerVerified && (
+                      {profileStudent.isKycVerified || profileStudent.digilockerVerified ? (
                         <span className="text-[10px] bg-emerald-50 px-2 py-1 rounded-md font-bold text-emerald-600 ring-1 ring-emerald-500/20 flex items-center gap-1">
-                          <ShieldCheck className="w-3 h-3" /> Verified
+                          <ShieldCheck className="w-3 h-3" /> Verified Legal Name
+                        </span>
+                      ) : (
+                        <span className="text-[10px] bg-amber-50 px-2 py-1 rounded-md font-bold text-amber-700 ring-1 ring-amber-500/20 flex items-center gap-1">
+                          Unverified
+                        </span>
+                      )}
+                      {profileStudent.guardianName && (
+                        <span className="text-[10px] bg-blue-50 px-2 py-1 rounded-md font-semibold text-blue-700 ring-1 ring-blue-500/20">
+                          Guardian: {profileStudent.guardianName} ({profileStudent.guardianContactNumber || 'No Phone'})
                         </span>
                       )}
                       {currentBooking?.seatId && <span className="text-[10px] bg-slate-50 px-2 py-1 rounded-md font-bold text-slate-600 ring-1 ring-slate-200/60">Seat Assgn.</span>}

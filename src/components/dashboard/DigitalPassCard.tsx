@@ -8,6 +8,7 @@ import { BluetoothUnlockButton } from './BluetoothUnlockButton';
 interface DigitalPassCardProps {
   student: {
     name: string | null;
+    username?: string | null;
     uniqueId: string;
     profilePhotoUrl: string | null;
   };
@@ -91,6 +92,9 @@ export function DigitalPassCard({ student, currentStreak, libraryId, studentId, 
           <div className="flex items-end justify-between border-b-2 border-black/10 dark:border-white/10 pb-4">
             <div className="flex flex-col">
               <span className="font-mono font-bold text-2xl tracking-[0.1em]">{student.uniqueId}</span>
+              {student.username && (
+                <span className="font-mono font-bold text-xs text-[#2781CA] tracking-wider mt-0.5">@{student.username}</span>
+              )}
             </div>
           </div>
 

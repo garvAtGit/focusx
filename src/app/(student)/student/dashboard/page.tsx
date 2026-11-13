@@ -281,7 +281,7 @@ const todayStart = startOfDayIST(new Date());
       const logs = await prisma.checkinLog.findMany({
         where: { libraryId: activeLibraryId, timestamp: { gte: startDate, lte: now } },
         orderBy: { timestamp: 'asc' },
-        include: { student: { select: { id: true, name: true, profilePhotoUrl: true } } }
+        include: { student: { select: { id: true, name: true, username: true, displayName: true, profilePhotoUrl: true } } }
       });
 
       const logsByStudent: Record<string, typeof logs> = {};
@@ -290,7 +290,7 @@ const todayStart = startOfDayIST(new Date());
         logsByStudent[log.studentId].push(log);
       });
 
-      const durations: { id: string, name: string; avatar: string | null; minutes: number }[] = [];
+      const durations: { id: string, name: string; username?: string | null; avatar: string | null; minutes: number }[] = [];
 
       for (const [sId, studentLogs] of Object.entries(logsByStudent)) {
         let totalMinutes = 0;
@@ -305,7 +305,13 @@ const todayStart = startOfDayIST(new Date());
         if (lastCheckin) totalMinutes += differenceInMinutes(now, lastCheckin);
 
         if (totalMinutes > 0) {
-          durations.push({ id: sId, name: studentLogs[0].student.name, avatar: studentLogs[0].student.profilePhotoUrl, minutes: totalMinutes });
+          durations.push({
+            id: sId,
+            name: studentLogs[0].student.displayName || studentLogs[0].student.name,
+            username: studentLogs[0].student.username,
+            avatar: studentLogs[0].student.profilePhotoUrl,
+            minutes: totalMinutes,
+          });
         }
       }
 
