@@ -68,9 +68,12 @@ export async function middleware(request: NextRequest) {
   const isServerAction = request.method === 'POST' && request.headers.has('next-action');
 
   // --- Rate Limiting ---
-  const isHardware = pathname.startsWith('/api/hardware');
+  const isMachineOrHardware =
+    pathname.startsWith('/api/hardware') ||
+    pathname.startsWith('/api/relay') ||
+    pathname.startsWith('/api/student/checkin');
   const isVitals = pathname === '/api/vitals';
-  if ((isApi || isServerAction) && !isHardware && !isVitals) {
+  if ((isApi || isServerAction) && !isMachineOrHardware && !isVitals) {
     const isSensitive =
       pathname.startsWith('/api/auth') ||
       pathname.startsWith('/api/razorpay') ||

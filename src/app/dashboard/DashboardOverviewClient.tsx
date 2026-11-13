@@ -163,15 +163,24 @@ export function DashboardOverviewClient({
     };
   }, [library?.id, router, supabaseToken]);
 
+  // Synchronize initial or server-provided chartData for default 30d view
   useEffect(() => {
     if (dateRange === "30d" && !customStart) {
       setActiveChartData(chartData);
+    }
+  }, [dateRange, customStart, chartData]);
+
+  // Fetch analytics for custom or selected presets without chartData in dependencies
+  useEffect(() => {
+    if (dateRange === "30d" && !customStart) {
       return;
     }
 
     if (dateRange === "custom" && (!customStart || !customEnd)) {
       return;
     }
+
+    const abortController = new AbortController();
 
     const fetchChartData = async () => {
       setIsLoadingChart(true);
@@ -196,7 +205,9 @@ export function DashboardOverviewClient({
         const startStr = start.toISOString().split('T')[0];
         const endStr = end.toISOString().split('T')[0];
         
-        const res = await fetch(`/api/dashboard/analytics/bookings?start=${startStr}&end=${endStr}`);
+        const res = await fetch(`/api/dashboard/analytics/bookings?start=${startStr}&end=${endStr}`, {
+          signal: abortController.signal
+        });
         if (!res.ok) throw new Error("Failed to fetch");
         
         const data = await res.json();
@@ -223,15 +234,21 @@ export function DashboardOverviewClient({
         }
         
         setActiveChartData(transformedData);
-      } catch (e) {
-        console.error(e);
+      } catch (e: any) {
+        if (e?.name !== "AbortError") {
+          console.error(e);
+        }
       } finally {
         setIsLoadingChart(false);
       }
     };
     
     fetchChartData();
-  }, [dateRange, customStart, customEnd, chartData]);
+
+    return () => {
+      abortController.abort();
+    };
+  }, [dateRange, customStart, customEnd]);
 
   // Prevent hydration mismatch
   const [mounted, setMounted] = useState(false);

@@ -10,6 +10,9 @@ import { supabaseServer } from "@/lib/supabase-server";
 const RELEASE_DIR = path.join(process.cwd(), "firmware_releases");
 const MANIFEST_PATH = path.join(RELEASE_DIR, "manifest.json");
 
+// In-memory deduplication of screen writes to Redis to protect Upstash quota
+const lastScreenWrittenMap = new Map<string, { hash: string; at: number }>();
+
 function getManifest() {
   if (!fs.existsSync(MANIFEST_PATH)) return null;
   try {
@@ -61,6 +64,7 @@ export async function POST(request: NextRequest) {
     const line1 = statusPayload.screenLine1 !== undefined ? String(statusPayload.screenLine1) : (screenObj.line1 !== undefined ? String(screenObj.line1) : undefined);
     const backlight = statusPayload.screenBacklight !== undefined ? Number(statusPayload.screenBacklight) : (screenObj.backlight !== undefined ? Number(screenObj.backlight) : undefined);
     const screenChanged = (line0 !== undefined && line0 !== (relay as any).lastScreenLine0) || (line1 !== undefined && line1 !== (relay as any).lastScreenLine1);
+    const lastScreenUpdate = (relay as any).lastScreenUpdatedAt ? new Date((relay as any).lastScreenUpdatedAt).getTime() : 0;
 
     // Parse diagnostic telemetry
     const diagObj = statusPayload.diag || {};
@@ -68,9 +72,15 @@ export async function POST(request: NextRequest) {
     const droppedCount = typeof statusPayload.diagDroppedCount === "number" ? statusPayload.diagDroppedCount : (typeof diagObj.dropped === "number" ? diagObj.dropped : undefined);
     const resetReason = statusPayload.resetReason ? String(statusPayload.resetReason) : (diagObj.rst ? String(diagObj.rst) : undefined);
 
-    // Non-blocking screen cache in Redis (throttled to state change or max once per 60s to protect Redis quota)
-    const lastScreenUpdate = (relay as any).lastScreenUpdatedAt ? new Date((relay as any).lastScreenUpdatedAt).getTime() : 0;
-    if ((line0 !== undefined || line1 !== undefined) && (screenChanged || now - lastScreenUpdate > 60_000)) {
+    // Non-blocking screen cache in Redis (deduplicated to state change or max once per 240s to protect Upstash Redis quota)
+    const screenHash = `${line0 ?? ""}|${line1 ?? ""}|${backlight ?? 1}`;
+    const lastWritten = lastScreenWrittenMap.get(relay.id);
+    const hasContent = line0 !== undefined || line1 !== undefined;
+    const isStateChanged = !lastWritten || lastWritten.hash !== screenHash;
+    const isTtlExpiring = lastWritten ? now - lastWritten.at > 240_000 : true;
+
+    if (hasContent && (isStateChanged || isTtlExpiring)) {
+      lastScreenWrittenMap.set(relay.id, { hash: screenHash, at: now });
       try {
         const { redis } = await import("@/lib/redis");
         await redis.set(`relay:screen:${relay.id}`, JSON.stringify({

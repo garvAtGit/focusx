@@ -3,6 +3,9 @@ import prisma from '@/lib/prisma';
 import { verifyRelayKey } from '@/lib/relay-auth';
 import { resolveRelay } from '@/lib/hardware-resolver'; // Assuming verifyRelayKey is in your auth lib
 
+// Module-level deduplication of relay module status writes to Redis to protect Upstash quota
+const lastModulesWrittenMap = new Map<string, { hash: string; at: number }>();
+
 export async function POST(req: Request) {
   try {
     const authHeader = req.headers.get('authorization');
@@ -45,8 +48,14 @@ export async function POST(req: Request) {
       });
     }
 
-    // Only update Redis if status changed or >60s elapsed to prevent high frequency Redis writes
-    if (modules && typeof modules === 'object' && (relay.status !== 'ONLINE' || now - lastSyncTime > 60_000)) {
+    // Only update Redis if modules actually changed or key is expiring (>240s) to protect Upstash Redis quota
+    const modulesHash = JSON.stringify(modules || {});
+    const lastWritten = lastModulesWrittenMap.get(relay.id);
+    const isModulesChanged = !lastWritten || lastWritten.hash !== modulesHash;
+    const isTtlExpiring = lastWritten ? now - lastWritten.at > 240_000 : true;
+
+    if (modules && typeof modules === 'object' && (isModulesChanged || isTtlExpiring)) {
+      lastModulesWrittenMap.set(relay.id, { hash: modulesHash, at: now });
       try {
         const { redis } = await import('@/lib/redis');
         await redis.set(`relay:modules:${relay.id}`, JSON.stringify({
