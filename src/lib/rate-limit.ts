@@ -5,8 +5,18 @@ import { Redis } from '@upstash/redis';
 const availabilityCache = new Map();
 const apiCache = new Map();
 const sensitiveCache = new Map();
+const usernameCheckCache = new Map();
 
 export const rateLimiters = {
+  // Username check: 30 requests per minute per user/IP
+  usernameCheck: new Ratelimit({
+    redis: Redis.fromEnv(),
+    limiter: Ratelimit.slidingWindow(30, '1 m'),
+    analytics: false,
+    ephemeralCache: usernameCheckCache,
+    prefix: '@upstash/ratelimit:usernameCheck',
+  }),
+
   // Availability is intentionally isolated from the general API bucket.
   // Library pages poll this read-only endpoint while visible, and those reads
   // must not consume the same quota as checkout or dashboard operations.
