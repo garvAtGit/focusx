@@ -37,6 +37,9 @@ export async function updateStudentProfile(formData: FormData): Promise<{ succes
   const locality = getFormString(formData, "locality");
   const qualification = getFormString(formData, "qualification");
   const organization = getFormString(formData, "organization");
+  const displayName = getFormString(formData, "displayName");
+  const guardianName = getFormString(formData, "guardianName");
+  const guardianContactNumber = getFormString(formData, "guardianContactNumber");
   const profilePhotoEntry = formData.get("profilePhotoFile");
   const profilePhotoFile = profilePhotoEntry instanceof File ? profilePhotoEntry : null;
 
@@ -83,6 +86,9 @@ export async function updateStudentProfile(formData: FormData): Promise<{ succes
         locality: locality || null,
         qualification: qualification || null,
         organization: organization || null,
+        displayName: displayName || (isVerified ? undefined : name),
+        guardianName: guardianName || null,
+        guardianContactNumber: guardianContactNumber || null,
         ...(profilePhotoUrl && { profilePhotoUrl }),
       }
     });

@@ -2,6 +2,7 @@
 
 import prisma from "@/lib/prisma"
 import { getSession } from "./auth-actions"
+import { generateInitialUniqueUsername } from "@/lib/username-validator"
 import { revalidatePath } from "next/cache"
 import { verifyFirebaseIdToken } from "@/lib/verify-firebase-token"
 import { getActiveLibrary } from "@/lib/dashboard-utils"
@@ -249,6 +250,9 @@ export async function addStaffMember(formData: FormData): Promise<StaffActionRes
       user = await prisma.user.create({
         data: {
           name: candidateName,
+          displayName: candidateName,
+          username: await generateInitialUniqueUsername(candidateName, async (c) => !!(await prisma.user.findUnique({ where: { username: c } }))),
+          usernameConfirmed: false,
           phone,
           authId,
           role: 'RECEPTIONIST',

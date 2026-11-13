@@ -17,6 +17,9 @@ import { invalidateLibraryRuntimeCache } from "@/lib/library-cache"
 import { invalidateStudentsCache } from "@/lib/student-cache"
 import { getActiveLibrary } from "@/lib/dashboard-utils"
 import { requirePermission, hasPermission } from "@/lib/permissions"
+import { generateInitialUniqueUsername } from "@/lib/username-validator"
+import { serializeStudentForLibrarian } from "@/lib/student-serializer"
+import { getActiveGrantForLibrarian } from "./student-info-request-actions"
 import * as Sentry from "@sentry/nextjs"
 import { isNextControlFlowError } from "@/lib/sentry-utils"
 
@@ -258,6 +261,9 @@ export async function addStudentProfile(formData: FormData) {
           authId: authId || null,
           role: Role.STUDENT,
           name,
+          displayName: name,
+          username: await generateInitialUniqueUsername(name, async (c) => !!(await prisma.user.findUnique({ where: { username: c } }))),
+          usernameConfirmed: false,
           email: email || null,
           phone: phone || null,
           uniqueId: await generateUniqueId(),
@@ -368,6 +374,9 @@ export async function addStudentWithBooking(formData: FormData) {
           authId: authId || null,
           role: Role.STUDENT,
           name,
+          displayName: name,
+          username: await generateInitialUniqueUsername(name, async (c) => !!(await prisma.user.findUnique({ where: { username: c } }))),
+          usernameConfirmed: false,
           email: email || null,
           phone: phone || null,
           uniqueId: await generateUniqueId(),
@@ -637,7 +646,26 @@ export async function getStudentProfile(studentId: string) {
     });
 
     if (!student) return { error: 'Student not found' };
-    return { success: true, student };
+
+    // Library scoping: Student must have a booking in this library (unless super admin)
+    const hasLibraryEnrollment = student.bookings.length > 0;
+    if (!hasLibraryEnrollment && session.role !== 'ADMIN') {
+      return { error: 'Access Denied: Student is not registered in your library.' };
+    }
+
+    // Check if librarian has an approved, unexpired extra-access grant (valid for 7 days)
+    const extraGrant = await getActiveGrantForLibrarian(studentId, libraryId);
+    const serialized = serializeStudentForLibrarian(student, extraGrant);
+
+    return {
+      success: true,
+      student: {
+        ...serialized,
+        bookings: student.bookings,
+        entryLogs: student.entryLogs,
+        checkins: student.checkins,
+      },
+    };
   } catch (error) {
     console.error("Failed to fetch student profile:", error);
     return { error: 'Failed to fetch student profile' };
@@ -682,6 +710,9 @@ export async function createOfflineStudentWithRFID(libraryId: string, name: stri
     const newStudent = await prisma.user.create({
       data: {
         name,
+        displayName: name,
+        username: await generateInitialUniqueUsername(name, async (c) => !!(await prisma.user.findUnique({ where: { username: c } }))),
+        usernameConfirmed: false,
         gender,
         uniqueId,
         rfidTag,

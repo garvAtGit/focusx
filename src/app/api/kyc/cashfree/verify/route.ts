@@ -134,8 +134,17 @@ export async function POST(req: Request) {
       );
     }
 
+    // Extract Aadhaar last 4 digits only (Never store full number)
+    const rawAadhaar = String(aadhaarData.aadhaar_number || aadhaarData.uid || '').replace(/\D/g, '');
+    const aadhaarLast4 = rawAadhaar.length >= 4 ? rawAadhaar.slice(-4) : undefined;
+
     const mappedData = {
       name: aadhaarData.name.trim(),
+      legalName: aadhaarData.name.trim(),
+      kycStatus: 'VERIFIED',
+      kycVerifiedAt: new Date(),
+      kycReferenceId: String(data.reference_id || data.referenceId || verification_id),
+      ...(aadhaarLast4 && { aadhaarLast4 }),
       dob: parsedDob,
       gender: aadhaarData.gender === 'M' ? 'MALE' : aadhaarData.gender === 'F' ? 'FEMALE' : 'OTHER',
       address: addressStr !== 'Verified Address' ? addressStr : undefined,

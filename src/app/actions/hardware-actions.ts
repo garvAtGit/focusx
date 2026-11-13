@@ -11,6 +11,7 @@ import {
 } from "@/lib/booking-authority";
 import { invalidateLibraryRuntimeCache } from "@/lib/library-cache";
 import { invalidateStudentsCache } from "@/lib/student-cache";
+import { generateInitialUniqueUsername } from "@/lib/username-validator";
 
 export async function generateEntryQR(libraryId: string, doorId: string = "MAIN_GATE", overrideUserId?: string) {
   let finalUserId = overrideUserId;
@@ -355,6 +356,9 @@ export async function addOfflineStudentWithRFID(formData: FormData) {
         data: {
           role: "STUDENT",
           name,
+          displayName: name,
+          username: await generateInitialUniqueUsername(name, async (c) => !!(await tx.user.findUnique({ where: { username: c } }))),
+          usernameConfirmed: false,
           phone: dummyPhone,
           uniqueId: newUniqueId,
           rfidTag,

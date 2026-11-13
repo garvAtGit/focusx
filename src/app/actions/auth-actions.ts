@@ -9,6 +9,7 @@ import { verifyFirebaseIdToken } from "@/lib/verify-firebase-token"
 import type { Role } from "@prisma/client"
 import * as Sentry from "@sentry/nextjs"
 import { isNextControlFlowError } from "@/lib/sentry-utils"
+import { generateInitialUniqueUsername } from "@/lib/username-validator"
 
 // Short TTL keeps per-request auth cheap while bounding role/profile staleness.
 const SESSION_CACHE_TTL_SECONDS = 30
@@ -247,6 +248,9 @@ export async function verifyAdminLogin(
         authId,
         phone: phoneWithCode,
         name,
+        displayName: name,
+        username: await generateInitialUniqueUsername(name, async (c) => !!(await prisma.user.findUnique({ where: { username: c } }))),
+        usernameConfirmed: false,
         role: 'ADMIN',
         uniqueId: await generateFocusXId(),
       },
@@ -349,6 +353,9 @@ export async function syncUserOnSignup(idToken: string, phone: string, name?: st
         authId,
         phone: (phone && phone.trim() !== '' && phone !== '+91') ? phone : null,
         name,
+        displayName: name,
+        username: await generateInitialUniqueUsername(name, async (c) => !!(await prisma.user.findUnique({ where: { username: c } }))),
+        usernameConfirmed: false,
         role: "STUDENT",
         uniqueId: await generateFocusXId()
       }

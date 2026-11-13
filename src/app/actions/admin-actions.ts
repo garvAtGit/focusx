@@ -6,6 +6,7 @@ import { revalidatePath, updateTag } from "next/cache"
 import { deleteByPattern, redis } from "@/lib/redis"
 import { invalidateLibraryRuntimeCache } from "@/lib/library-cache"
 import { invalidateAdminCache } from "@/lib/admin-cache"
+import { generateInitialUniqueUsername } from "@/lib/username-validator"
 import { parseSafeUrl } from "@/lib/validation"
 import type { Role } from "@prisma/client"
 
@@ -268,6 +269,9 @@ export async function createOrPromoteAdmin(formData: FormData) {
     await prisma.user.create({
       data: {
         name,
+        displayName: name,
+        username: await generateInitialUniqueUsername(name, async (c) => !!(await prisma.user.findUnique({ where: { username: c } }))),
+        usernameConfirmed: false,
         phone: phoneWithCode,
         email,
         role: "ADMIN",
