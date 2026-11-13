@@ -355,9 +355,9 @@ export default function LoginPage() {
         } else {
           try {
             const dest = await getPostLoginRedirect()
-            window.location.href = dest || '/'
+            window.location.href = dest || '/student/dashboard'
           } catch {
-            window.location.href = '/'
+            window.location.href = '/student/dashboard'
           }
         }
       } else {

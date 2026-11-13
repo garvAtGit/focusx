@@ -172,7 +172,10 @@ export async function getPostLoginRedirect(): Promise<string> {
   if (session.role === 'LIBRARIAN' || session.role === 'RECEPTIONIST') {
     return '/dashboard';
   }
-  return '/';
+  if (session.role === 'STUDENT') {
+    return '/student/dashboard';
+  }
+  return '/student/dashboard';
 }
 
 export async function verifyAdminLogin(

@@ -16,13 +16,14 @@ test('Admin Security & Routing Tests', async (t) => {
       if (!role) return '/';
       if (role === 'ADMIN') return '/admin';
       if (role === 'LIBRARIAN' || role === 'RECEPTIONIST') return '/dashboard';
-      return '/';
+      if (role === 'STUDENT') return '/student/dashboard';
+      return '/student/dashboard';
     };
 
     assert.equal(roleRouting('ADMIN'), '/admin');
     assert.equal(roleRouting('LIBRARIAN'), '/dashboard');
     assert.equal(roleRouting('RECEPTIONIST'), '/dashboard');
-    assert.equal(roleRouting('STUDENT'), '/');
+    assert.equal(roleRouting('STUDENT'), '/student/dashboard');
     assert.equal(roleRouting(null), '/');
   });
 
