@@ -97,7 +97,25 @@ test_safe_i2c/
 FocusX_Scanner_Firmware_V5_DualRFID/build_8mb/
 FocusX_Scanner_Firmware_V5_DualRFID/build_ota_test/
 
-# Local credential exports and generated diagnostic output
+# Local scratch scripts and data exports
+check_*.js
+checkin_*.js
+inspect_*.js
+interrogate_hardware.py
+list_all_relays.js
+poll_diag_results.js
+verify_shanti_checkin.js
+*.xlsx
+all_checkin_checkout_logs_oct06_nov06.csv
+student_attendance_summary_oct06_nov06.csv
+
+# Firmware intermediate compilation artifacts
+*.elf
+*.map
+FocusX_Scanner_Firmware_V5_DualRFID/build_*/
+FocusX_Scanner_Firmware_V5_DualRFID_backup_*/
+firmware_*_build/
+
 /cf_key.txt
 /hack.json
 /push_env.js

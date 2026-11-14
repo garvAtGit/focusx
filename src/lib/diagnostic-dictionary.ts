@@ -16,24 +16,13 @@ export interface TranslatedDiagnostic {
 }
 
 export function translateResetReasonCode(code: number): string {
-  switch (code) {
-    case 1:
-      return "Power-On Reset (Cold boot)";
-    case 2:
-      return "OTA Software Reset (Clean restart)";
-    case 3:
-      return "Deep Sleep Wakeup";
-    case 4:
-      return "Task Watchdog Timer (TWDT recovery)";
-    case 5:
-      return "Brownout Reset (Voltage dip recovery)";
-    case 6:
-      return "Software CPU Reset";
-    case 7:
-      return "Core Panic Reset";
-    default:
-      return `Reset Type #${code}`;
-  }
+  const reasons: Record<number, string> = {
+    0: "Unknown Reset", 1: "Power-On Reset (Cold boot)", 2: "External Reset",
+    3: "Software Reset", 4: "Core Panic Reset", 5: "Interrupt Watchdog Timeout",
+    6: "Task Watchdog Timeout", 7: "Other Watchdog Reset", 8: "Deep Sleep Wakeup",
+    9: "Brownout Reset (Voltage dip)", 10: "SDIO Reset",
+  };
+  return reasons[code] ?? `Reset Type #${code}`;
 }
 
 export function formatBytes(bytes: number): string {
@@ -65,16 +54,19 @@ export function translateDiagnosticEvent(
       };
 
     case 1001: {
-      const resetDesc = param1 !== null ? translateResetReasonCode(param1) : "Software Reset";
+      const resetDesc = param1 !== null ? translateResetReasonCode(param1) : "Unknown Reset";
       return {
         title: `Machine Restart (${resetDesc})`,
         category: "SYSTEM",
-        explanation: `Device initiated a restart. Cause: ${resetDesc}. Attendance state was safely persisted prior to reboot.`,
+        explanation: `Device restarted. Reported cause: ${resetDesc}. Check journal recovery and crash evidence to establish the impact.`,
         param1Label: "Reboot Trigger",
         param1Formatted: resetDesc,
         param2Label: "Free RAM at Boot",
         param2Formatted: param2 !== null ? formatBytes(param2) : undefined,
-        recommendedAction: param1 === 5 ? "Check 12V/5V power adapter voltage under load." : "Normal operation.",
+        recommendedAction: param1 === 9 ? "Measure supply voltage under load and inspect relay transients."
+          : [4, 5, 6, 7].includes(param1 ?? -1) ? "Investigate the crash backtrace and task progress checkpoints."
+          : param1 === 3 ? "Correlate with a recorded reboot or OTA command."
+          : "Correlate with power, maintenance, and boot history.",
       };
     }
 
@@ -82,7 +74,7 @@ export function translateDiagnosticEvent(
       return {
         title: "Task Watchdog Supervisor Trip (TWDT)",
         category: "SYSTEM",
-        explanation: "A non-critical background task was unresponsive; watchdog recovered the processor cleanly without losing attendance records.",
+        explanation: "A watched task missed its progress deadline. Inspect the watchdog report and verify attendance journal recovery.",
         param1Label: "Triggering Core/Task",
         param1Formatted: param1 !== null ? `Core ${param1}` : "Background Task",
         param2Label: "Uptime Before Reset",
@@ -101,6 +93,21 @@ export function translateDiagnosticEvent(
         param2Formatted: param2 !== null ? formatBytes(param2) : undefined,
         recommendedAction: "Monitor memory trend; firmware auto-protects against OOM.",
       };
+
+    case 1004:
+      return { title: "Previous Boot: Network Worker Checkpoint", category: "SYSTEM",
+        explanation: "Last retained worker checkpoint from the previous boot; this is evidence of progress, not a confirmed crash location.",
+        param1Label: "Operation (0 idle, 1 heartbeat, 2 OTA, 3 scan)", param1Formatted: String(param1 ?? "Unknown"),
+        param2Label: "Previous Boot Uptime", param2Formatted: param2 !== null ? `${Math.floor(param2 / 1000)} seconds` : undefined };
+    case 1005:
+      return { title: "Previous Boot: Internal Heap", category: "SYSTEM",
+        explanation: "Internal heap measurements retained at the previous worker checkpoint.",
+        param1Label: "Internal Free Heap", param1Formatted: param1 !== null ? formatBytes(param1) : undefined,
+        param2Label: "Largest Internal Block", param2Formatted: param2 !== null ? formatBytes(param2) : undefined };
+    case 3002:
+      return { title: "Attendance Journal Integrity Failure", category: "STORAGE",
+        explanation: detail || "A journal write or recovery check failed. Inspect storage and pending attendance records.",
+        recommendedAction: "Retrieve the journal and reconcile attendance before clearing storage." };
 
     // 2000 - 2099: RFID & PN532 Sensor Subsystem
     case 2000:

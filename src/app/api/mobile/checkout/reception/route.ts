@@ -118,6 +118,8 @@ export async function POST(req: Request) {
     // 8. Create the booking via booking-authority (SERIALIZABLE transaction)
     //    Identity is the authenticated user — studentId = auth.userId.
     //    Price is computed server-side by evaluateBookingSelection().
+    const { reconcileStudentCheckouts } = await import("@/lib/mobile-checkout-preflight");
+    await reconcileStudentCheckouts(auth.userId, libraryId);
     const booking = await createPendingReceptionBooking({
       studentId: auth.userId,
       libraryId,
@@ -126,7 +128,9 @@ export async function POST(req: Request) {
       hasLocker: Boolean(hasLocker),
       standaloneLockerId: standaloneLockerId || null,
       idempotencyKey,
-      requestedStart,
+      requestedStart: body.operation && body.operation !== "ADD_STUDENT" ? undefined : requestedStart,
+      operation: body.operation === "RENEW" || body.operation === "CHANGE_PLAN" || body.operation === "UPGRADE_PLAN" ? body.operation : "ADD_STUDENT",
+      sourceBookingId: typeof body.sourceBookingId === "string" ? body.sourceBookingId : null,
     })
 
     await invalidateLibraryRuntimeCache(libraryId)

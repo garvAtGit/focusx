@@ -19,7 +19,7 @@ export function JoinNetwork() {
           >
             <img 
               src="/join-together.svg" 
-              alt="Join Focusx Network" 
+              alt="Join FocusX Network" 
               className="w-full max-w-[500px] object-contain"
             />
           </motion.div>
@@ -32,7 +32,7 @@ export function JoinNetwork() {
             className="w-full lg:w-[55%] flex flex-col items-center lg:items-start text-center lg:text-left"
           >
             <h2 className="text-[32px] sm:text-[38px] md:text-[44px] lg:text-[48px] font-bold text-[#000000] leading-[1.2]" style={{ fontFamily: 'var(--font-inter), sans-serif' }}>
-              Better <span className="text-[#3b82f6]">Together</span>, Join<br className="hidden lg:block"/> the Focusx Network
+              Better <span className="text-[#3b82f6]">Together</span>, Join<br className="hidden lg:block"/> the FocusX Network
             </h2>
             
             <p className="mt-5 md:mt-6 text-[16px] md:text-[18px] text-[#777777] max-w-xl leading-relaxed" style={{ fontFamily: 'var(--font-inter), sans-serif', fontWeight: 400 }}>

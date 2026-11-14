@@ -125,7 +125,7 @@ export async function loadBookingFacts(
     startsAt = draft.requestedStart;
   } else {
     const defaultStart = authoritativeCurrentTime;
-    startsAt = currentBookingWindow && currentBookingWindow.endsAt >= defaultStart
+    startsAt = draft.operation !== "UPGRADE_PLAN" && currentBookingWindow && currentBookingWindow.endsAt >= defaultStart
       ? new Date(currentBookingWindow.endsAt.getTime() + 1)
       : defaultStart;
   }
@@ -190,6 +190,7 @@ export async function loadBookingFacts(
 
   // 10. Load Source Booking
   let sourceBookingFact = null;
+  let sourcePlan = null;
   if (draft.sourceBookingId) {
     const sourceBooking = await db.booking.findUnique({
       where: { id: draft.sourceBookingId },
@@ -204,9 +205,12 @@ export async function loadBookingFacts(
         startTime: true,
         endTime: true,
         status: true,
+        plan: true,
       }
     });
     if (sourceBooking) {
+      const p = sourceBooking.plan;
+      sourcePlan = { id: p.id, libraryId: p.libraryId, name: p.name, type: p.type, validityDays: p.validityDays, durationHours: p.durationHours, pricePaise: Math.round(p.price * 100), discountPercentage: p.discount, isActive: p.isActive };
       sourceBookingFact = {
         id: sourceBooking.id,
         studentId: sourceBooking.studentId,
@@ -228,6 +232,7 @@ export async function loadBookingFacts(
     actorCapabilities: actor,
     student: studentFact,
     sourceBooking: sourceBookingFact,
+    sourcePlan,
     activePlans,
     selectedPlan,
     eligibleSeats,

@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { attendanceSummary } from '../src/lib/attendance-summary';
+import { lockerChargePaise } from '../src/lib/locker-pricing';
+const log=(date:string,status:string)=>({timestamp:new Date(date),status,libraryId:'lib'});
+test('attendance combines daily sessions and ignores absent days',()=>{ const r=attendanceSummary([log('2026-11-01T03:30:00Z','CHECK_IN'),log('2026-11-01T04:30:00Z','CHECK_OUT'),log('2026-11-01T05:30:00Z','CHECK_IN'),log('2026-11-01T06:30:00Z','CHECK_OUT'),log('2026-11-03T03:30:00Z','CHECK_IN'),log('2026-11-03T07:30:00Z','CHECK_OUT')],new Date('2026-11-03T08:30:00Z')); assert.equal(r.attendedDays,2);assert.equal(r.averageMinutes,180);assert.equal(r.totalMinutes,360); });
+test('today running session is separate and duplicate check-ins do not reset it',()=>{ const r=attendanceSummary([log('2026-11-03T03:30:00Z','CHECK_IN'),log('2026-11-03T04:00:00Z','CHECK_IN')],new Date('2026-11-03T04:30:00Z'));assert.equal(r.attendedDays,0);assert.equal(r.liveMinutes,60); });
+test('cross-midnight attendance is split at India midnight',()=>{ const r=attendanceSummary([log('2026-11-02T17:30:00Z','CHECK_IN'),log('2026-11-02T19:30:00Z','CHECK_OUT')],new Date('2026-11-03T00:00:00Z'));assert.equal(r.attendedDays,2);assert.equal(r.days['2026-11-02'],1);assert.equal(r.days['2026-11-03'],1); });
+test('missing historical checkout stops at midnight without invented hours',()=>{ const r=attendanceSummary([log('2026-11-02T17:30:00Z','CHECK_IN')],new Date('2026-11-03T04:30:00Z'));assert.equal(r.totalMinutes,60);assert.equal(r.liveMinutes,0); });
+test('monthly locker prorating is calculated in paise and preserves partial rupees',()=>{assert.equal(lockerChargePaise(300,30),30000);assert.equal(lockerChargePaise(300,15),15000);assert.equal(lockerChargePaise(100,1),333);assert.throws(()=>lockerChargePaise(-1,30));});

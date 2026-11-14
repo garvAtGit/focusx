@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic';
 import { NextResponse } from "next/server"
 import prisma from "@/lib/prisma"
 import { authenticateMobileRequest } from "@/lib/mobile-auth"
+import { reconcileMobilePayment } from '@/lib/mobile-payment-recovery'
 
 /**
  * Mobile Booking Status
@@ -22,15 +23,26 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url)
   const referenceId = url.searchParams.get("reference_id")
-  if (!referenceId) {
+  const idempotencyKey = url.searchParams.get('idempotency_key')?.trim().slice(0, 128)
+  if (!referenceId && !idempotencyKey) {
     return NextResponse.json(
-      { error: "reference_id is required" },
+      { error: "reference_id or idempotency_key is required" },
       { status: 400 },
     )
   }
 
+  const where = referenceId
+    ? { referenceId, studentId: auth.userId }
+    : { studentId: auth.userId, idempotencyKey: { in: [`${auth.userId}:${idempotencyKey}`, `reception:${auth.userId}:${idempotencyKey}`] } }
+  const pending = await prisma.bookingIntent.findFirst({ where })
+  if (!pending || pending.studentId !== auth.userId) return NextResponse.json({ error: 'Booking intent not found' }, { status: 404 })
+  try {
+    await reconcileMobilePayment(pending)
+  } catch {
+    return NextResponse.json({ error: 'Payment status is temporarily unavailable. Please check again before paying.' }, { status: 503 })
+  }
   const intent = await prisma.bookingIntent.findUnique({
-    where: { referenceId },
+    where: { id: pending.id },
     select: {
       id: true,
       referenceId: true,
@@ -39,6 +51,7 @@ export async function GET(req: Request) {
       libraryId: true,
       expectedAmountPaise: true,
       failureReason: true,
+      holdExpiresAt: true,
       booking: {
         select: {
           id: true,
@@ -72,6 +85,7 @@ export async function GET(req: Request) {
     reference_id: intent.referenceId,
     status: intent.status,
     failure_reason: intent.failureReason,
+    hold_expires_at: intent.holdExpiresAt,
     booking: intent.booking
       ? {
           id: intent.booking.id,

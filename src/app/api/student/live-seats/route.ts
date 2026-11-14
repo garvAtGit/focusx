@@ -3,8 +3,7 @@ import prisma from '@/lib/prisma';
 import { getSession } from '@/app/actions/auth-actions';
 import { authenticateMobileRequest } from '@/lib/mobile-auth';
 import { LeaseResourceType } from '@prisma/client';
-import { cancelStudentPendingBooking } from '@/lib/booking-authority';
-import { activeBookingsCacheKey, invalidateLibraryRuntimeCache, librarySeatLayoutCacheKey } from '@/lib/library-cache';
+import { activeBookingsCacheKey, librarySeatLayoutCacheKey } from '@/lib/library-cache';
 import { redis } from '@/lib/redis';
 
 export async function GET(req: Request) {
@@ -56,21 +55,6 @@ export async function GET(req: Request) {
 
     if (!library) {
       return NextResponse.json({ error: 'Library not found' }, { status: 404 });
-    }
-
-    // If the student returned to the seat map (backed out or cancelled mid-transaction),
-    // immediately free any uncompleted hold or lease they held so their seat is freed instantly!
-    if (userId) {
-      const cancelRes = await cancelStudentPendingBooking({
-        studentId: userId,
-        libraryId,
-      }).catch((err) => {
-        console.warn("Failed to auto-free student hold:", err);
-        return null;
-      });
-      if (cancelRes?.success) {
-        await invalidateLibraryRuntimeCache(libraryId);
-      }
     }
 
     // Get currently occupied seats: check 15-second activeBookings cache first

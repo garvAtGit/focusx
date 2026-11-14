@@ -1,7 +1,7 @@
 {
-  "version": "5.1.3-ota",
-  "name": "FocusX ESP32-S3 Dual-RFID Scanner Firmware V5.1.3 (Isolated Fault Diagnostics Subsystem, Virtual 16x2 LCD Mirror, SafeLCD Scan Telemetry & Ephemeral Live Peek)",
-  "buildDate": "2026-10-30",
+  "version": "5.1.7-ota",
+  "name": "FocusX ESP32-S3 Dual-RFID Scanner Firmware V5.1.7 (Hardware PWM Buzzer & Unified Status LED Restored)",
+  "buildDate": "2026-11-09",
   "targetChip": "ESP32-S3 rev v0.2",
   "flashMode": "DIO",
   "flashSpeed": "80MHz",
@@ -9,13 +9,18 @@
   "partitionLayout": "dual-slot 8MB zero-displacement (app0=0x10000, spiffs=0x310000, app1=0x410000)",
   "binary": {
     "filename": "FocusX_Scanner_Firmware_V5_DualRFID.ino.bin",
-    "size": 1282000,
-    "sha256": "E9FAA9A2EDF717ED02D332629F734D87CAF5BBABEF3C6D0836313BCA749DDB80"
+    "size": 1308032,
+    "sha256": "41838B98420C497B4958026744B62F1B63140F83B2482898366CBD432A1D7C41"
   },
   "capabilities": [
+    "restored dual PN532 SPI RFID readers on GPIO 10, 11, 12, 13, 14",
+    "restored hardware PWM buzzer on GPIO 8 for door alarms, nag alerts, and tap chimes",
+    "restored unified front & exit LED strips on GPIO 6 & 7 (solid Red on armed, solid Green on welcome, solid Orange on goodbye)",
+    "unregistered card push to dashboard & direct RFID assignment",
+    "reactive snapshot sync on serverAuthRevision in scan response",
+    "reed switch on GPIO 9 with internal pullup",
+    "non-aborting recursive mutex deadlock guard",
     "isolated offline-first fault diagnostics subsystem",
-    "zero-allocation 64-entry priority ring buffer",
-    "crc32-guarded persistent critical fault journal",
     "virtual 16x2 LCD screen memory mirror & backlight shadowing",
     "ephemeral 5-minute live peek accelerated sub-second screen streaming",
     "heartbeat screen telemetry & diagnostic summary streaming",

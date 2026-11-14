@@ -1,7 +1,16 @@
+#define USE_WIEGAND_HARDWARE 1
+#include "FocusX_V4_Hardware.h"
+
+#if USE_WIEGAND_HARDWARE
+Adafruit_NeoPixel stripFront(NUM_LEDS_FRONT, PIN_NEO_FRONT, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel stripLeft(NUM_LEDS_LEFT, PIN_NEO_LEFT, NEO_GRB + NEO_KHZ800);
+Adafruit_NeoPixel stripRight(NUM_LEDS_RIGHT, PIN_NEO_RIGHT, NEO_GRB + NEO_KHZ800);
+#endif
 volatile bool shouldStartBLE = false;
 struct BleAuthItem {
   char uid[40];
   bool isExit;
+  char commandId[64];
 };
 QueueHandle_t bleAuthQueue = NULL;
 
@@ -33,12 +42,17 @@ QueueHandle_t bleAuthQueue = NULL;
 #include <Update.h>
 #include <esp_ota_ops.h>
 #include "mbedtls/sha256.h"
+#include "FocusX_Reliability.h"
 #include "FocusX_Diagnostics.h"
+#include "FocusX_CrashUpload.h"
+#include "FocusX_JournalCodec.h"
+FocusXCrashUpload crashUpload;
 
 FocusXDiagnostics DiagSubsystem;
 static unsigned long liveDebugUntilMs = 0; // Ephemeral 5-minute live peek stream state
 
-#define FOCUSX_FIRMWARE_VERSION "5.1.3-ota"
+volatile bool g_pendingSnapshotSync = false;
+#define FOCUSX_FIRMWARE_VERSION "5.1.7-wiegand"
 
 
 // Task Watchdog Timer: 30-second timeout provides ample headroom for legitimate
@@ -52,6 +66,13 @@ struct AuthCredential {
   bool isInside;
 };
 std::vector<AuthCredential> authSnapshot;
+SemaphoreHandle_t snapshotMutex = nullptr;
+SemaphoreHandle_t snapshotInstallMutex = nullptr;
+SemaphoreHandle_t journalMutex = nullptr;
+TaskHandle_t accessTaskHandle = nullptr;
+bool executeDirectUnlock(bool isExit, const char* commandId = nullptr);
+constexpr size_t MAX_PENDING_EVENTS = 64;
+constexpr size_t MAX_JOURNAL_BYTES = 262144;
 
 struct ScanEvent {
   uint32_t seqNo;
@@ -139,9 +160,9 @@ Preferences preferences;
 #define RFID2_LED_PIN 7
 #define RFID2_NUM_LEDS 5
 
-// Buzzer & Reed switch disabled (-1) to avoid pin conflicts with I2C lines 4 & 5
-#define BUZZER_PIN -1
-#define REED_PIN -1
+// Buzzer & Reed switch connections:
+#define BUZZER_PIN 8
+#define REED_PIN 9
 
 // Voice Speaker Serial (Hardware UART1 on board TX pin 43, RX disconnected)
 #define VOICE_TX_PIN 43
@@ -230,7 +251,6 @@ struct SafeLCD {
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
     Wire.setClock(100000);
     Wire.setTimeOut(25);
-    
     const uint8_t primaryAddrs[] = { 0x27, 0x3F };
     for (size_t i = 0; i < sizeof(primaryAddrs); i++) {
       uint8_t addr = primaryAddrs[i];
@@ -241,7 +261,6 @@ struct SafeLCD {
         break;
       }
     }
-    
     if (detectedAddr == 0) {
       const uint8_t alternateAddrs[] = { 
         0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26,
@@ -257,7 +276,6 @@ struct SafeLCD {
         }
       }
     }
-    
     if (detectedAddr != 0) {
       if (realLcd) delete realLcd;
       realLcd = new LiquidCrystal_I2C(detectedAddr, 16, 2);
@@ -274,7 +292,6 @@ struct SafeLCD {
       Serial.println("[HARDWARE] No I2C LCD backpack detected. Operating in headless mirror mode.");
     }
   }
-  
   void backlight() {
     taskENTER_CRITICAL(&shadowMux);
     backlightState = 1;
@@ -407,24 +424,56 @@ bool hasMoreOnFlash = false;
 
 
 std::vector<ScanEvent> pendingEvents;
-portMUX_TYPE queueMutex = portMUX_INITIALIZER_UNLOCKED;
+
+
+// A partial trailing record is ignored; the next append adds a separator before new data.
+bool readJournalLine(File& file, String& line) {
+  line = ""; line.reserve(512); bool overflow = false;
+  while (file.available()) {
+    char c = file.read();
+    if (c == '\n') return !overflow;
+    if (line.length() < 512) line += c; else overflow = true;
+  }
+  return false;
+}
+
+bool ensureJournalBoundary() {
+  File f = LittleFS.open("/journal.txt", "r");
+  if (!f || f.size() == 0) { if (f) f.close(); return true; }
+  f.seek(f.size()-1); bool complete = f.read() == '\n'; f.close();
+  if (complete) return true;
+  f = LittleFS.open("/journal.txt", "a");
+  if (!f) return false;
+  bool ok = f.write((uint8_t)'\n') == 1; f.flush(); ok = ok && !f.getWriteError(); f.close(); return ok;
+}
 
 void reloadJournal() {
+  FocusXLock journalLock(journalMutex);
   File file = LittleFS.open("/journal.txt", "r");
   if (!file) {
     hasMoreOnFlash = false;
     return;
   }
 
-  portENTER_CRITICAL(&queueMutex);
+  takeFocusXMutex(journalMutex);
   pendingEvents.clear();
-  portEXIT_CRITICAL(&queueMutex);
+  xSemaphoreGiveRecursive(journalMutex);
 
+  bool invalidRecord = false;
   std::vector<String> ackedIds;
   while (file.available()) {
-    String line = file.readStringUntil('\n');
+    esp_task_wdt_reset();
+    delay(1);
+    String line;
+    if (!readJournalLine(file, line)) { invalidRecord = true; continue; }
     line.trim();
-    if (line.startsWith("ACK ")) {
+    if (line.startsWith("ACK2 ")) {
+      int split = line.lastIndexOf(' ');
+      String id = line.substring(5, split);
+      uint32_t expected = strtoul(line.substring(split+1).c_str(), nullptr, 10);
+      if (focusxJournalRecordValid(line.c_str(), line.length())) ackedIds.push_back(id);
+      else invalidRecord = true;
+    } else if (line.startsWith("ACK ")) {
       ackedIds.push_back(line.substring(4));
     }
   }
@@ -434,9 +483,17 @@ void reloadJournal() {
   uint32_t maxSeq = 0;
 
   while (file.available()) {
-    String line = file.readStringUntil('\n');
+    esp_task_wdt_reset();
+    delay(1);
+    String line;
+    if (!readJournalLine(file, line)) { invalidRecord = true; continue; }
     line.trim();
-    if (line.startsWith("ADD ")) {
+    if (line.startsWith("ADD ") || line.startsWith("ADD2 ")) {
+      bool crc32Record = line.startsWith("ADD2 ");
+      if (crc32Record) {
+        if (!focusxJournalRecordValid(line.c_str(), line.length())) { invalidRecord = true; continue; }
+        line = "ADD " + line.substring(5);
+      }
       int s1 = line.indexOf(' ', 4);
       int s2 = line.indexOf(' ', s1 + 1);
       int s3 = line.indexOf(' ', s2 + 1);
@@ -461,10 +518,9 @@ void reloadJournal() {
         }
 
         if (!isAcked) {
-          portENTER_CRITICAL(&queueMutex);
-          bool hasRoom = pendingEvents.size() < 500;
-          portEXIT_CRITICAL(&queueMutex);
-          
+          takeFocusXMutex(journalMutex);
+          bool hasRoom = pendingEvents.size() < MAX_PENDING_EVENTS;
+          xSemaphoreGiveRecursive(journalMutex);
           if (hasRoom) {
             ScanEvent e;
             e.seqNo = seq;
@@ -477,16 +533,17 @@ void reloadJournal() {
             e.authRevision = line.substring(s7 + 1, s8).toInt();
             e.offlineDecision = line.substring(s8 + 1, s9).toInt() == 1;
 
-            uint32_t crc_read = line.substring(s9 + 1).toInt();
+            uint32_t crc_read = strtoul(line.substring(s9 + 1).c_str(), nullptr, 10);
             uint32_t crc_calc = 0;
             String content = line.substring(4, s9);
             for(int i=0; i<content.length(); i++) crc_calc += content[i];
 
+            if (crc32Record) crc_calc = focusxJournalChecksum(content.c_str(), content.length(), true);
             if (crc_read == crc_calc) {
-              portENTER_CRITICAL(&queueMutex);
+              takeFocusXMutex(journalMutex);
               pendingEvents.push_back(e);
-              portEXIT_CRITICAL(&queueMutex);
-            }
+              xSemaphoreGiveRecursive(journalMutex);
+            } else { invalidRecord = true; }
           } else {
             hasMoreOnFlash = true;
           }
@@ -496,20 +553,21 @@ void reloadJournal() {
   }
   if (maxSeq > currentSeqNo) currentSeqNo = maxSeq;
   file.close();
+  if (invalidRecord) DiagSubsystem.capture(DIAG_CODE_JOURNAL_WRITE_FAIL, DIAG_SEV_ERROR, 0, 0, "JOURNAL_PARTIAL_OR_BAD_CRC");
 
-  portENTER_CRITICAL(&queueMutex);
+  takeFocusXMutex(journalMutex);
   bool isEmpty = pendingEvents.empty();
-  portEXIT_CRITICAL(&queueMutex);
+  xSemaphoreGiveRecursive(journalMutex);
 
-  if (isEmpty && !hasMoreOnFlash) {
+  if (isEmpty && !hasMoreOnFlash && !invalidRecord) {
     LittleFS.remove("/journal.txt");
   }
 }
 
 
-bool verifyAndParseSnapshot(const String &payload, uint32_t &outRev, std::vector<AuthCredential> &outVec, String &outLib, String &outDev, String &outSec) {
-  if (payload.length() == 0 || payload.length() > MAX_SNAPSHOT_SIZE) return false;
-  
+bool parseSnapshotSource(const String* payload, File* source, uint32_t &outRev, std::vector<AuthCredential> &outVec, String &outLib, String &outDev, String &outSec) {
+  size_t inputSize = source ? source->size() : payload->length();
+  if (inputSize == 0 || inputSize > MAX_SNAPSHOT_SIZE) return false;
   int fmtVersion = 0;
   String keyId = "";
   String devScope = "";
@@ -519,51 +577,51 @@ bool verifyAndParseSnapshot(const String &payload, uint32_t &outRev, std::vector
   std::vector<AuthCredential> vec;
   bool endMarkerFound = false;
   String expectedSigHex = "";
-  
   mbedtls_md_context_t ctx;
   mbedtls_md_type_t md_type = MBEDTLS_MD_SHA256;
   mbedtls_md_init(&ctx);
-  mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(md_type), 0);
-  mbedtls_md_starts(&ctx);
-  
+  if (mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(md_type), 0) != 0 || mbedtls_md_starts(&ctx) != 0) {
+    mbedtls_md_free(&ctx); return false;
+  }
   int startIdx = 0;
-  int payloadLen = payload.length();
+  int payloadLen = inputSize;
   bool sigParsed = false;
   int lineCount = 0;
-  
-  while (startIdx < payloadLen) {
+  while (source ? source->available() : startIdx < payloadLen) {
     lineCount++;
     if (lineCount % 10 == 0) {
       vTaskDelay(1);
     }
-    int nextNewline = payload.indexOf('\n', startIdx);
     String rawLine;
-    if (nextNewline == -1) {
-      rawLine = payload.substring(startIdx);
-      startIdx = payloadLen;
+    rawLine.reserve(256);
+    if (source) {
+      while (source->available()) {
+        char c = source->read(); if (c == '\n') break;
+        if (rawLine.length() >= 512) { mbedtls_md_free(&ctx); return false; }
+        rawLine += c;
+      }
     } else {
-      rawLine = payload.substring(startIdx, nextNewline);
-      startIdx = nextNewline + 1;
+      int nextNewline = payload->indexOf('\n', startIdx);
+      int end = nextNewline < 0 ? payloadLen : nextNewline;
+      if (end - startIdx > 512) { mbedtls_md_free(&ctx); return false; }
+      rawLine = payload->substring(startIdx, end);
+      startIdx = nextNewline < 0 ? payloadLen : nextNewline + 1;
     }
-    
     // Canonicalize line ending (strip \r if present)
     if (rawLine.endsWith("\r")) {
       rawLine = rawLine.substring(0, rawLine.length() - 1);
     }
-    
     if (rawLine.length() == 0) {
       if (sigParsed) break;
       mbedtls_md_free(&ctx);
       return false;
     }
-    
     if (sigParsed) {
       rawLine.trim();
       if (rawLine.length() == 0) break;
       mbedtls_md_free(&ctx);
       return false;
     }
-    
     if (rawLine.startsWith("SIG ")) {
       if (!endMarkerFound) {
         mbedtls_md_free(&ctx);
@@ -574,13 +632,10 @@ bool verifyAndParseSnapshot(const String &payload, uint32_t &outRev, std::vector
       sigParsed = true;
       continue; // SIG line is NOT hashed into ctx
     }
-    
     // Hash line into SHA256 context with canonical \n
     String canonicalLine = rawLine + "\n";
     mbedtls_md_update(&ctx, (const unsigned char*)canonicalLine.c_str(), canonicalLine.length());
-    
     String line = rawLine;
-    
     if (line.startsWith("FMT ")) {
       fmtVersion = line.substring(4).toInt();
     } else if (line.startsWith("KID ")) {
@@ -612,7 +667,6 @@ bool verifyAndParseSnapshot(const String &payload, uint32_t &outRev, std::vector
         cred.uid[39] = '\0';
         cred.validFrom = (uint32_t)line.substring(s1 + 1, s2).toInt();
         cred.validUntil = (uint32_t)line.substring(s2 + 1, s3).toInt();
-        
         int s4 = line.indexOf(' ', s3 + 1);
         if (s4 > 0) {
           cred.isInside = (line.substring(s3 + 1, s4).toInt() == 1);
@@ -643,11 +697,9 @@ bool verifyAndParseSnapshot(const String &payload, uint32_t &outRev, std::vector
       return false;
     }
   }
-  
   byte shaResult[32];
   mbedtls_md_finish(&ctx, shaResult);
   mbedtls_md_free(&ctx);
-  
   // Strict structural and header checks
   if (fmtVersion != 1 && fmtVersion != 0) return false;
   if (!endMarkerFound || !sigParsed || expectedSigHex.length() == 0) return false;
@@ -655,14 +707,11 @@ bool verifyAndParseSnapshot(const String &payload, uint32_t &outRev, std::vector
   if (libScope.length() == 0) return false;
   if (sec.length() > 0 && sec != "null" && sec.length() < 16) return false;
   if (keyId.length() == 0) keyId = "k1";
-  
   const char* pubKeyPem = getPublicKeyForKid(keyId);
   if (!pubKeyPem) return false;
-  
   if (expectedSigHex.length() % 2 != 0) return false;
   size_t sigLen = expectedSigHex.length() / 2;
   if (sigLen < 64 || sigLen > 128) return false;
-  
   byte sigBytes[128];
   for (size_t i = 0; i < sigLen; i++) {
     char h1 = expectedSigHex.charAt(i * 2);
@@ -671,7 +720,6 @@ bool verifyAndParseSnapshot(const String &payload, uint32_t &outRev, std::vector
     String byteStr = expectedSigHex.substring(i * 2, i * 2 + 2);
     sigBytes[i] = (byte)strtol(byteStr.c_str(), NULL, 16);
   }
-  
   mbedtls_pk_context pk;
   mbedtls_pk_init(&pk);
   int parseRet = mbedtls_pk_parse_public_key(&pk, (const unsigned char*)pubKeyPem, strlen(pubKeyPem) + 1);
@@ -679,39 +727,33 @@ bool verifyAndParseSnapshot(const String &payload, uint32_t &outRev, std::vector
     mbedtls_pk_free(&pk);
     return false;
   }
-  
   int verifyRet = mbedtls_pk_verify(&pk, MBEDTLS_MD_SHA256, shaResult, 32, sigBytes, sigLen);
   mbedtls_pk_free(&pk);
-  
   if (verifyRet != 0) return false;
-  
   outRev = rev;
-  outVec = vec;
+  outVec.swap(vec);
   outLib = libScope;
   outDev = devScope;
   outSec = sec;
   return true;
 }
 
-bool tryLoadSnapshot(String filename, uint32_t &outRev, std::vector<AuthCredential> &outVec, String &outLib, String &outDev) {
+bool verifyAndParseSnapshot(const String &payload, uint32_t &outRev, std::vector<AuthCredential> &outVec, String &outLib, String &outDev, String &outSec) {
+  return parseSnapshotSource(&payload, nullptr, outRev, outVec, outLib, outDev, outSec);
+}
+
+bool tryLoadSnapshot(String filename, uint32_t &outRev, std::vector<AuthCredential> &outVec, String &outLib, String &outDev, String* secret = nullptr) {
   File file = LittleFS.open(filename, "r");
   if (!file) return false;
-  
   size_t fSize = file.size();
   if (fSize == 0 || fSize > MAX_SNAPSHOT_SIZE) {
     file.close();
     return false;
   }
-  
-  String payload = file.readString();
-  file.close();
-  
   String secOut;
-  bool ok = verifyAndParseSnapshot(payload, outRev, outVec, outLib, outDev, secOut);
-  if (ok && secOut.length() > 0) {
-    strncpy(deviceSecret, secOut.c_str(), 64);
-    deviceSecret[64] = '\0';
-  }
+  bool ok = parseSnapshotSource(nullptr, &file, outRev, outVec, outLib, outDev, secOut);
+  file.close();
+  if (ok && secret) *secret = secOut;
   return ok;
 }
 
@@ -726,6 +768,7 @@ size_t nonceCount = 0;
 portMUX_TYPE nonceMutex = portMUX_INITIALIZER_UNLOCKED;
 
 void updateClockState() {
+  FocusXLock snapshotLock(snapshotMutex);
    time_t nowUnix = time(NULL);
    if (nowUnix < 1000000000) {
       clockState = CLOCK_UNKNOWN;
@@ -744,7 +787,6 @@ void updateClockState() {
 }
 
 void loadNoncesFromPreferences() {
-  portENTER_CRITICAL(&nonceMutex);
   nonceCount = 0;
   String saved = preferences.getString("ble_nonces", "");
   uint32_t nowRef = (highestTrustedTime > 0) ? highestTrustedTime : (uint32_t)time(NULL);
@@ -767,34 +809,35 @@ void loadNoncesFromPreferences() {
     if (comma == -1) break;
     start = comma + 1;
   }
-  portEXIT_CRITICAL(&nonceMutex);
 }
 
 void saveNoncesToPreferences() {
-  String out = "";
+  BleNonceEntry copy[BLE_NONCE_CACHE_SIZE];
+  size_t n;
   portENTER_CRITICAL(&nonceMutex);
-  for (size_t i = 0; i < nonceCount; i++) {
-    out += String(recentNonces[i].nonce) + ":" + String(recentNonces[i].exp) + ",";
-  }
+  n = nonceCount;
+  memcpy(copy, recentNonces, n * sizeof(BleNonceEntry));
   portEXIT_CRITICAL(&nonceMutex);
+  String out;
+  out.reserve(n * 24);
+  for (size_t i = 0; i < n; i++) out += String(copy[i].nonce) + ":" + String(copy[i].exp) + ",";
   preferences.putString("ble_nonces", out);
 }
 
 bool verifyBLEToken(String uid, String libId, String action, uint32_t iat, uint32_t exp, String nonce, String hmacHex) {
+  FocusXLock snapshotLock(snapshotMutex);
    // 1. Verify Clock is Trusted & Active
    updateClockState();
    if (clockState != CLOCK_SYNCED) {
      Serial.println("BLE Auth rejected: Clock not synced");
      return false;
    }
-   
    // 2. Strict Clock Rollback Guard
    uint32_t nowUnix = (uint32_t)time(NULL);
    if (nowUnix < highestTrustedTime) {
      Serial.println("BLE Auth rejected: Clock behind highestTrustedTime (rollback)");
      return false;
    }
-   
    // 3. Verify Expiration & Timing Window strictly
    if (nowUnix > exp) {
      Serial.println("BLE Auth rejected: Token expired");
@@ -808,13 +851,11 @@ bool verifyBLEToken(String uid, String libId, String action, uint32_t iat, uint3
      Serial.println("BLE Auth rejected: Token issued before trusted boundary");
      return false;
    }
-   
    // 4. Verify Library Scope
    if (currentLibraryId.length() > 0 && !libId.equals(currentLibraryId)) {
      Serial.println("BLE Auth rejected: Library scope mismatch (" + libId + " != " + currentLibraryId + ")");
      return false;
    }
-   
    // 5. Verify Action
    if (!action.equalsIgnoreCase("IN") && !action.equalsIgnoreCase("OUT") && !action.equalsIgnoreCase("CHECK_IN") && !action.equalsIgnoreCase("CHECK_OUT")) {
      Serial.println("BLE Auth rejected: Invalid action: " + action);
@@ -826,34 +867,30 @@ bool verifyBLEToken(String uid, String libId, String action, uint32_t iat, uint3
      Serial.println("BLE Auth rejected: Device secret not loaded");
      return false;
    }
-   
    String payload = uid + ":" + READER_ID + ":" + libId + ":" + action + ":" + String(iat) + ":" + String(exp) + ":" + nonce;
-   
    byte hmacResult[32];
    mbedtls_md_context_t ctx;
    mbedtls_md_type_t md_type = MBEDTLS_MD_SHA256;
    mbedtls_md_init(&ctx);
-   mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(md_type), 1);
-   mbedtls_md_hmac_starts(&ctx, (const unsigned char*)deviceSecret, strlen(deviceSecret));
+   if (mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(md_type), 1) != 0 ||
+       mbedtls_md_hmac_starts(&ctx, (const unsigned char*)deviceSecret, strlen(deviceSecret)) != 0) {
+     mbedtls_md_free(&ctx); return false;
+   }
    mbedtls_md_hmac_update(&ctx, (const unsigned char*)payload.c_str(), payload.length());
    mbedtls_md_hmac_finish(&ctx, hmacResult);
    mbedtls_md_free(&ctx);
-   
    String computedHex = "";
    for(int i=0; i<32; i++) {
      char buf[3];
      sprintf(buf, "%02x", hmacResult[i]);
      computedHex += buf;
    }
-   
    if (!computedHex.equalsIgnoreCase(hmacHex)) {
      Serial.println("BLE Auth rejected: HMAC signature mismatch");
      return false;
    }
-   
    // 7. Nonce Replay Check with Mutex & Expiration
    if (nonce.length() == 0 || nonce.length() > 11) return false;
-   
    portENTER_CRITICAL(&nonceMutex);
    for (size_t i = 0; i < nonceCount; i++) {
      if (strcmp(recentNonces[i].nonce, nonce.c_str()) == 0) {
@@ -862,7 +899,6 @@ bool verifyBLEToken(String uid, String libId, String action, uint32_t iat, uint3
        return false;
      }
    }
-   
    if (nonceCount < BLE_NONCE_CACHE_SIZE) {
      strncpy(recentNonces[nonceCount].nonce, nonce.c_str(), 11);
      recentNonces[nonceCount].nonce[11] = '\0';
@@ -880,32 +916,36 @@ bool verifyBLEToken(String uid, String libId, String action, uint32_t iat, uint3
      recentNonces[replaceIdx].exp = exp;
    }
    portEXIT_CRITICAL(&nonceMutex);
-   
    saveNoncesToPreferences();
    if (nowUnix > highestTrustedTime) {
      highestTrustedTime = nowUnix;
      preferences.putUInt("highTime", highestTrustedTime);
    }
-   
    return true;
 }
 
 void loadSnapshotFromFlash() {
+  FocusXLock snapshotLock(snapshotMutex);
   uint32_t trustedRev = preferences.getUInt("authRev", 0);
   activeSlot = preferences.getString("activeSlot", "A");
   String savedLib = preferences.getString("libId", "");
   if (savedLib != "") currentLibraryId = savedLib;
-  
+  String commit = preferences.getString("snapCommit", "");
+  int split1 = commit.indexOf('|'), split2 = commit.lastIndexOf('|');
+  if (split1 == 1 && split2 > split1 && (commit[0] == 'A' || commit[0] == 'B')) {
+    activeSlot = commit.substring(0, 1);
+    currentLibraryId = commit.substring(split1+1, split2);
+    trustedRev = strtoul(commit.substring(split2+1).c_str(), nullptr, 10);
+  }
   uint32_t revA = 0, revB = 0;
   std::vector<AuthCredential> vecA, vecB;
-  String libA, libB, devA, devB;
-  
-  bool okA = tryLoadSnapshot("/snapshot_A.txt", revA, vecA, libA, devA);
-  bool okB = tryLoadSnapshot("/snapshot_B.txt", revB, vecB, libB, devB);
-  
+  String libA, libB, devA, devB, secA, secB;
+  bool okA = tryLoadSnapshot("/snapshot_A.txt", revA, vecA, libA, devA, &secA);
+  bool okB = tryLoadSnapshot("/snapshot_B.txt", revB, vecB, libB, devB, &secB);
+  if (okA && currentLibraryId.length() && libA != currentLibraryId) okA = false;
+  if (okB && currentLibraryId.length() && libB != currentLibraryId) okB = false;
   if (okA && revA < trustedRev) okA = false;
   if (okB && revB < trustedRev) okB = false;
-  
   if (okA && okB) {
     if (revA > revB) {
       activeSlot = "A";
@@ -949,83 +989,56 @@ void loadSnapshotFromFlash() {
     authSnapshot.clear();
     snapshotIsValid = false;
   }
+  if (snapshotIsValid) strlcpy(deviceSecret, (activeSlot == "A" ? secA : secB).c_str(), sizeof(deviceSecret));
   Serial.println("Loaded snapshot, activeSlot: " + activeSlot + ", REV: " + String(currentAuthRevision) + ", valid: " + String(snapshotIsValid));
 }
 
 bool installCandidateSnapshot(const String &response, String &errorMsg) {
-  if (response.length() > MAX_SNAPSHOT_SIZE) {
-    errorMsg = "Payload too large: " + String(response.length());
-    return false;
-  }
-  
-  // Step 1: Pre-verify candidate in RAM. If invalid, DO NOT TOUCH FLASH!
+  FocusXLock installLock(snapshotInstallMutex);
   uint32_t candRev = 0;
-  std::vector<AuthCredential> candVec;
-  String candLib, candDev, candSec;
-  if (!verifyAndParseSnapshot(response, candRev, candVec, candLib, candDev, candSec)) {
-    errorMsg = "Candidate failed RAM verification. Flash write skipped.";
-    return false;
+  std::vector<AuthCredential> candidate;
+  String candLib, candDev, candSec, targetSlot;
+  if (!verifyAndParseSnapshot(response, candRev, candidate, candLib, candDev, candSec)) {
+    errorMsg = "Candidate signature/schema invalid"; return false;
   }
-  
-  // Step 2: Library scope check & Monotonic revision guard
-  uint32_t trustedRev = preferences.getUInt("authRev", 0);
-  if (currentLibraryId.length() > 0 && !candLib.equals(currentLibraryId)) {
-    Serial.println("[SECURITY] Library reassignment detected (" + currentLibraryId + " -> " + candLib + "). Purging old library snapshot.");
-    if (LittleFS.exists("/snapshot_A.txt")) LittleFS.remove("/snapshot_A.txt");
-    if (LittleFS.exists("/snapshot_B.txt")) LittleFS.remove("/snapshot_B.txt");
-    authSnapshot.clear();
-    snapshotIsValid = false;
-    currentAuthRevision = 0;
-    trustedRev = 0;
-    preferences.putUInt("authRev", 0);
-  } else if (snapshotIsValid) {
-    if (candRev <= currentAuthRevision) {
-      errorMsg = "Candidate revision " + String(candRev) + " not strictly greater than active " + String(currentAuthRevision);
-      return false;
+  {
+    FocusXLock snapshotLock(snapshotMutex);
+    bool reassignment = currentLibraryId.length() && currentLibraryId != candLib;
+    uint32_t trustedRev = reassignment ? 0 : preferences.getUInt("authRev", 0);
+    if ((!reassignment && snapshotIsValid && candRev <= currentAuthRevision) || candRev < trustedRev) {
+      errorMsg = "Snapshot revision rollback rejected"; return false;
     }
-  } else {
-    // Recovery mode: must not roll back below highest trusted revision from NVS
-    if (candRev < trustedRev) {
-      errorMsg = "Candidate revision " + String(candRev) + " is less than trusted NVS revision " + String(trustedRev) + " (rollback rejected)";
-      return false;
+    // Reassignment revokes old authorization immediately, retaining flash for recovery.
+    if (reassignment) snapshotIsValid = false;
+    targetSlot = activeSlot == "A" ? "B" : "A";
+  }
+  std::vector<AuthCredential>().swap(candidate);
+  String targetFile = "/snapshot_" + targetSlot + ".txt";
+  uint32_t diskRev = 0; String diskLib, diskDev;
+  {
+    FocusXLock journalLock(journalMutex);
+    File file = LittleFS.open(targetFile, "w");
+    if (!file) { errorMsg = "Cannot open inactive snapshot slot"; return false; }
+    size_t n = file.write((const uint8_t*)response.c_str(), response.length());
+    file.flush(); bool ok = n == response.length() && !file.getWriteError(); file.close();
+    if (!ok || !tryLoadSnapshot(targetFile, diskRev, candidate, diskLib, diskDev) || diskRev != candRev) {
+      errorMsg = "Snapshot write/read-back verification failed"; return false;
     }
   }
-  
-  // Step 3: Write candidate to INACTIVE slot
-  String targetFile = (activeSlot == "A") ? "/snapshot_B.txt" : "/snapshot_A.txt";
-  File file = LittleFS.open(targetFile, "w");
-  if (!file) {
-    errorMsg = "Failed to open flash target file: " + targetFile;
-    return false;
+  {
+    FocusXLock snapshotLock(snapshotMutex);
+    String commit = targetSlot + "|" + diskLib + "|" + String(diskRev);
+    if (preferences.putString("snapCommit", commit) != commit.length()) {
+      errorMsg = "Snapshot commit marker write failed"; return false;
+    }
+    activeSlot = targetSlot; currentAuthRevision = diskRev;
+    authSnapshot.swap(candidate); currentLibraryId = diskLib;
+    strlcpy(deviceSecret, candSec.c_str(), sizeof(deviceSecret));
+    preferences.putUInt("authRev", currentAuthRevision);
+    preferences.putString("activeSlot", activeSlot);
+    preferences.putString("libId", currentLibraryId);
+    snapshotIsValid = true;
   }
-  file.print(response);
-  file.flush();
-  file.close();
-  
-  // Step 4: Read back from flash and re-verify
-  uint32_t diskRev = 0;
-  std::vector<AuthCredential> diskVec;
-  String diskLib, diskDev;
-  if (!tryLoadSnapshot(targetFile, diskRev, diskVec, diskLib, diskDev) || diskRev != candRev) {
-    errorMsg = "Candidate read-back verification failed. Removing corrupted candidate.";
-    LittleFS.remove(targetFile);
-    return false;
-  }
-  
-  // Step 5: Atomic activation
-  activeSlot = (activeSlot == "A") ? "B" : "A";
-  currentAuthRevision = diskRev;
-  authSnapshot = diskVec;
-  currentLibraryId = diskLib;
-  if (candSec.length() > 0) {
-    strncpy(deviceSecret, candSec.c_str(), 64);
-    deviceSecret[64] = '\0';
-  }
-  snapshotIsValid = true;
-  
-  preferences.putUInt("authRev", currentAuthRevision);
-  preferences.putString("activeSlot", activeSlot);
-  preferences.putString("libId", currentLibraryId);
   return true;
 }
 
@@ -1058,16 +1071,17 @@ bool performOTA(const String& downloadUrl, const String& expectedSha256, size_t 
 
   WiFiClientSecure client;
   client.setCACert(rootCACertificate);
+  client.setHandshakeTimeout(5);
+  client.setTimeout(5);
   HTTPClient http;
-  
   if (!http.begin(client, targetUrl)) {
     Serial.println("[OTA ERROR] Failed to connect to OTA server.");
     preferences.putString("lastAckErr", "ERR_HTTP_CONNECT_FAILED");
     return false;
   }
-  
   http.addHeader("Authorization", String("Bearer ") + HARDWARE_API_KEY);
-  http.setTimeout(30000);
+  http.setConnectTimeout(3000);
+  http.setTimeout(8000);
 
   esp_task_wdt_reset();
   int httpCode = http.GET();
@@ -1199,18 +1213,21 @@ void syncSnapshot(bool force = false) {
   if (WiFi.status() != WL_CONNECTED) return;
   if (!force && (millis() - lastSyncAttemptMs < syncBackoffIntervalMs)) return;
   lastSyncAttemptMs = millis();
-  
-  WiFiClientSecure *client = new WiFiClientSecure;
+  WiFiClientSecure clientStorage;
+  WiFiClientSecure *client = &clientStorage;
   if (!client) return;
-  
   client->setCACert(rootCACertificate);
+    client->setHandshakeTimeout(5);
+    client->setTimeout(5);
   HTTPClient http;
-  String url = String(BACKEND_BASE_URL) + "/api/hardware/sync?macAddress=" + String(READER_ID) + "&revision=" + String(currentAuthRevision);
+  uint32_t requestedRevision;
+  { FocusXLock lock(snapshotMutex); requestedRevision = currentAuthRevision; }
+  String url = String(BACKEND_BASE_URL) + "/api/hardware/sync?macAddress=" + String(READER_ID) + "&revision=" + String(requestedRevision);
   Serial.println("[SYNC] Starting snapshot sync for rev " + String(currentAuthRevision) + " -> URL: " + url);
   http.begin(*client, url);
   http.addHeader("Authorization", "Bearer " + String(HARDWARE_API_KEY));
-  http.setTimeout(15000);
-  
+  http.setConnectTimeout(3000);
+  http.setTimeout(8000);
   esp_task_wdt_reset();
   int httpCode = http.GET();
   esp_task_wdt_reset();
@@ -1221,26 +1238,20 @@ void syncSnapshot(bool force = false) {
       Serial.println("[SYNC] Snapshot too large: " + String(contentLen));
       syncBackoffIntervalMs = min(syncBackoffIntervalMs * 2, 300000UL);
       http.end();
-      delete client;
       return;
     }
-    
-    String response = http.getString();
+    String response = boundedHttpResponse(http, MAX_SNAPSHOT_SIZE);
     http.end();
-    delete client;
-    
     if (response.length() > MAX_SNAPSHOT_SIZE) {
       Serial.println("[SYNC] Payload too large: " + String(response.length()));
       syncBackoffIntervalMs = min(syncBackoffIntervalMs * 2, 300000UL);
       return;
     }
-    
     if (response.indexOf("UP_TO_DATE") != -1) {
       Serial.println("[SYNC] Server reports UP_TO_DATE.");
       syncBackoffIntervalMs = 60000UL;
       return;
     }
-    
     String errorMsg;
     if (!installCandidateSnapshot(response, errorMsg)) {
       Serial.println("[SYNC ERROR] " + errorMsg);
@@ -1248,32 +1259,39 @@ void syncSnapshot(bool force = false) {
       return;
     }
     syncBackoffIntervalMs = 60000UL;
+    FocusXLock lock(snapshotMutex);
     Serial.println("[SYNC SUCCESS] Activated snapshot: slot " + activeSlot + ", rev " + String(currentAuthRevision) + ", items: " + String(authSnapshot.size()));
   } else {
     Serial.println("[SYNC FAILED] HTTP " + String(httpCode));
     syncBackoffIntervalMs = min(syncBackoffIntervalMs * 2, 300000UL);
     http.end();
-    delete client;
   }
 }
 
 void sendHeartbeat() {
   if (WiFi.status() != WL_CONNECTED) return;
-  WiFiClientSecure *client = new WiFiClientSecure;
+  WiFiClientSecure clientStorage;
+  WiFiClientSecure *client = &clientStorage;
   if (client) {
     client->setCACert(rootCACertificate);
+    client->setHandshakeTimeout(5);
+    client->setTimeout(5);
     HTTPClient http;
     http.begin(*client, String(BACKEND_BASE_URL) + "/api/hardware/heartbeat");
     http.addHeader("Content-Type", "application/json");
     http.addHeader("Authorization", "Bearer " + String(HARDWARE_API_KEY));
+    http.setConnectTimeout(3000);
     http.setTimeout(8000);
-    
     StaticJsonDocument<1024> doc;
     doc["deviceId"] = READER_ID;
-    doc["libraryId"] = currentLibraryId;
-    doc["currentAuthRevision"] = currentAuthRevision;
+
+    {
+      FocusXLock snapshotLock(snapshotMutex);
+      doc["libraryId"] = currentLibraryId;
+      doc["currentAuthRevision"] = currentAuthRevision;
     doc["snapshotIsValid"] = snapshotIsValid;
     doc["clockState"] = clockState;
+    }
     doc["firmwareVersion"] = FOCUSX_FIRMWARE_VERSION;
     String lastAckCmd = preferences.getString("lastAckCmd", "");
     String lastAckStat = preferences.getString("lastAckStat", "");
@@ -1286,7 +1304,14 @@ void sendHeartbeat() {
     const esp_partition_t *curP = esp_ota_get_running_partition();
     doc["runningPartition"] = curP ? curP->label : "app0";
     doc["freeBytes"] = LittleFS.totalBytes() - LittleFS.usedBytes();
-    doc["pendingEvents"] = pendingEvents.size();
+    {
+      FocusXLock journalLock(journalMutex);
+      doc["pendingEvents"] = pendingEvents.size();
+    }
+    doc["heapInternal"] = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    doc["heapMinimum"] = ESP.getMinFreeHeap();
+    doc["heapLargest"] = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    doc["workerStackFree"] = uxTaskGetStackHighWaterMark(nullptr);
 
     // Virtual 16x2 LCD mirror state
     char sc0[17], sc1[17];
@@ -1303,17 +1328,17 @@ void sendHeartbeat() {
     diagObj["qDepth"] = DiagSubsystem.getQueueDepth();
     diagObj["dropped"] = DiagSubsystem.getDroppedCount();
     diagObj["rst"] = DiagSubsystem.getResetReason();
-    
     String payload;
     serializeJson(doc, payload);
-    
-    bool needsSync = false;
+    bool needsSync = false, needsOta = false;
+    String deferredOtaUrl, deferredOtaSha;
+    size_t deferredOtaSize = 0;
     esp_task_wdt_reset();
     int code = http.POST(payload);
     esp_task_wdt_reset();
     isSystemOnline = (code == 200);
     if (code == 200) {
-       String res = http.getString();
+       String res = boundedHttpResponse(http, 8192);
        DynamicJsonDocument resDoc(1024);
        if (!deserializeJson(resDoc, res)) {
           if (resDoc.containsKey("liveDebug") && resDoc["liveDebug"].as<bool>() == true) {
@@ -1340,7 +1365,7 @@ void sendHeartbeat() {
              String currentAckCmd = preferences.getString("lastAckCmd", "");
 
              String currentAckStat = preferences.getString("lastAckStat", "");
-             if (cmdId == currentAckCmd && (currentAckStat == "SUCCESS" || currentAckStat == "DOWNLOADING" || currentAckStat == "INSTALLING")) {
+             if (cmdId == currentAckCmd && (currentAckStat == "SUCCESS" || currentAckStat == "DOWNLOADING" || currentAckStat == "INSTALLING" || currentAckStat == "QUEUED")) {
                 // Idempotency: command was already executed or is actively executing
              } else {
                 Serial.println("[CMD] Processing durable command " + cmdId + " (" + action + ")");
@@ -1351,13 +1376,8 @@ void sendHeartbeat() {
                    preferences.putString("lastAckCmd", cmdId);
                    preferences.putString("lastAckStat", "DOWNLOADING");
                    preferences.putString("lastAckErr", "NONE");
-                   bool otaOk = performOTA(otaUrl, otaSha, otaSz);
-                   if (!otaOk) {
-                      preferences.putString("lastAckStat", "FAILED");
-                      if (preferences.getString("lastAckErr", "NONE") == "NONE") {
-                         preferences.putString("lastAckErr", "ERR_OTA_DOWNLOAD_OR_VERIFY");
-                      }
-                   }
+                   deferredOtaUrl = otaUrl; deferredOtaSha = otaSha; deferredOtaSize = otaSz;
+                   needsOta = true;
                 } else if (action == "REBOOT") {
                    preferences.putString("lastAckCmd", cmdId);
                    preferences.putString("lastAckStat", "SUCCESS");
@@ -1368,17 +1388,23 @@ void sendHeartbeat() {
                    preferences.putString("lastAckCmd", cmdId);
                    preferences.putString("lastAckStat", "SUCCESS");
                    Serial.println("[CMD] Remote snapshot sync requested.");
-                   syncSnapshot(true);
+                   needsSync = true;
                 } else if (action == "OPEN_IN" || action == "open_in") {
                    preferences.putString("lastAckCmd", cmdId);
-                   preferences.putString("lastAckStat", "SUCCESS");
-                   Serial.println("[CMD] Remote gate OPEN_IN executed.");
-                   executeDirectUnlock(false);
+                   preferences.putString("lastAckStat", "QUEUED");
+                   Serial.println("[CMD] Remote gate OPEN_IN queued.");
+                   if (!executeDirectUnlock(false, cmdId.c_str())) {
+                     preferences.putString("lastAckStat", "FAILED");
+                     preferences.putString("lastAckErr", "ERR_ACCESS_QUEUE_FULL");
+                   }
                 } else if (action == "OPEN_OUT" || action == "open_out") {
                    preferences.putString("lastAckCmd", cmdId);
-                   preferences.putString("lastAckStat", "SUCCESS");
-                   Serial.println("[CMD] Remote gate OPEN_OUT executed.");
-                   executeDirectUnlock(true);
+                   preferences.putString("lastAckStat", "QUEUED");
+                   Serial.println("[CMD] Remote gate OPEN_OUT queued.");
+                   if (!executeDirectUnlock(true, cmdId.c_str())) {
+                     preferences.putString("lastAckStat", "FAILED");
+                     preferences.putString("lastAckErr", "ERR_ACCESS_QUEUE_FULL");
+                   }
                 }
              }
           } else if (resDoc.containsKey("pendingCommand") && !resDoc["pendingCommand"].isNull()) {
@@ -1420,11 +1446,14 @@ void sendHeartbeat() {
        }
     }
     http.end();
-    delete client;
 
+    if (needsOta && !performOTA(deferredOtaUrl, deferredOtaSha, deferredOtaSize)) {
+      preferences.putString("lastAckStat", "FAILED");
+      if (preferences.getString("lastAckErr", "NONE") == "NONE") preferences.putString("lastAckErr", "ERR_OTA_FAILED");
+    }
     // Perform snapshot sync AFTER heartbeat client is completely closed and freed
     if (needsSync) {
-      syncSnapshot(true);
+      g_pendingSnapshotSync = true;
     }
   }
 }
@@ -1472,7 +1501,6 @@ void initJournal() {
   // snapshots from catastrophic erasure during transient mount failures or reboots.
   if (!LittleFS.begin(false)) {
     Serial.println("[LittleFS ERROR] Mount failed. Normal boot will NOT format automatically to protect journal data.");
-    
     // Explicit technician provisioning action: requires NVS flag 'prov_format' or serial command within 3s
     bool explicitFormat = preferences.getBool("prov_format", false);
     if (!explicitFormat && Serial) {
@@ -1490,7 +1518,6 @@ void initJournal() {
         delay(10);
       }
     }
-    
     if (explicitFormat) {
       Serial.println("[PROVISIONING] Explicit format action confirmed. Formatting LittleFS...");
       preferences.remove("prov_format");
@@ -1511,32 +1538,38 @@ void initJournal() {
 bool forceJournalFail = false;
 
 bool appendToJournal(const ScanEvent& e) {
-  if (forceJournalFail) return false;
+  FocusXLock journalLock(journalMutex);
+  if (forceJournalFail || !ensureJournalBoundary()) return false;
   if (LittleFS.totalBytes() - LittleFS.usedBytes() < 10000) return false;
   File file = LittleFS.open("/journal.txt", "a");
   if (file) {
     String content = String(e.seqNo) + " " + e.eventId + " " + e.scanType + " " + e.payload + " " + String(e.timestampMs) + " " + String(e.isExit ? 1 : 0) + " " + String(e.timestampUnix) + " " + String(e.authRevision) + " " + String(e.offlineDecision ? 1 : 0);
-    uint32_t crc_calc = 0;
-    for(int i=0; i<content.length(); i++) crc_calc += content[i];
-    
-    file.print("ADD ");
-    file.print(content);
-    file.print(" ");
-    size_t written = file.println(crc_calc);
+    if (file.size() + content.length() + 32 > MAX_JOURNAL_BYTES) { file.close(); return false; }
+    uint32_t crc = focusxJournalChecksum(content.c_str(), content.length(), true);
+    String record = "ADD2 " + content + " " + String(crc) + "\n";
+    size_t written = file.write((const uint8_t*)record.c_str(), record.length());
     file.flush();
+    bool ok = written == record.length() && !file.getWriteError();
     file.close();
-    return (written > 0);
+    return ok;
   }
   return false;
 }
 
-void ackInJournal(String eventId) {
+bool ackInJournal(String eventId) {
+  FocusXLock journalLock(journalMutex);
+  if (!ensureJournalBoundary()) return false;
   File file = LittleFS.open("/journal.txt", "a");
   if (file) {
-    file.println("ACK " + eventId);
+    uint32_t crc = focusxJournalChecksum(eventId.c_str(), eventId.length(), true);
+    String record = "ACK2 " + eventId + " " + String(crc) + "\n";
+    size_t written = file.write((const uint8_t*)record.c_str(), record.length());
     file.flush();
+    bool ok = written == record.length() && !file.getWriteError();
     file.close();
+    return ok;
   }
+  return false;
 }
 
 
@@ -1552,6 +1585,10 @@ void httpWorkerTask(void *pvParameters) {
   while (true) {
     vTaskDelay(pdMS_TO_TICKS(20)); // Yield CPU to idle and IPC tasks
 
+    {
+      FocusXLock journalLock(journalMutex);
+      DiagSubsystem.persistCritical();
+    }
     // 1. Non-blocking Wi-Fi recovery supervisor
     if (WiFi.status() != WL_CONNECTED) {
       isSystemOnline = false;
@@ -1578,9 +1615,20 @@ void httpWorkerTask(void *pvParameters) {
     if (millis() - lastHeartbeatMs >= hbInterval || lastHeartbeatMs == 0) {
       lastHeartbeatMs = millis();
       esp_task_wdt_reset();
+      workerCheckpoint(1);
       sendHeartbeat();
+      workerCheckpoint(0);
       esp_task_wdt_reset();
       vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    if (g_pendingSnapshotSync) {
+      g_pendingSnapshotSync = false;
+      vTaskDelay(pdMS_TO_TICKS(100));
+      workerCheckpoint(2);
+      syncSnapshot(true);
+      workerCheckpoint(0);
+      esp_task_wdt_reset();
     }
 
     // Periodic Background Diagnostic Flusher (Core 0, decoupled from attendance)
@@ -1588,43 +1636,39 @@ void httpWorkerTask(void *pvParameters) {
     if (millis() - lastDiagFlushMs >= 30000) {
       lastDiagFlushMs = millis();
       esp_task_wdt_reset();
-      WiFiClientSecure *diagClient = new WiFiClientSecure;
+      WiFiClientSecure diagStorage;
+      WiFiClientSecure *diagClient = &diagStorage;
       if (diagClient) {
         DiagSubsystem.flush(diagClient, rootCACertificate, BACKEND_BASE_URL, HARDWARE_API_KEY, READER_ID);
-        delete diagClient;
       }
       esp_task_wdt_reset();
+      crashUpload.pump(DiagSubsystem, preferences);
       vTaskDelay(pdMS_TO_TICKS(50));
     }
 
-    portENTER_CRITICAL(&queueMutex);
+    takeFocusXMutex(journalMutex);
     bool isEmpty = pendingEvents.empty();
     bool needReload = isEmpty && hasMoreOnFlash;
-    portEXIT_CRITICAL(&queueMutex);
-    
+    xSemaphoreGiveRecursive(journalMutex);
     if (needReload) {
        reloadJournal();
        esp_task_wdt_reset();
        vTaskDelay(pdMS_TO_TICKS(50));
        continue;
     }
-    
     if (isEmpty) {
       esp_task_wdt_reset();
       vTaskDelay(pdMS_TO_TICKS(100));
       continue;
     }
-    
     ScanEvent currentEvent;
     bool hasEvent = false;
-    
-    portENTER_CRITICAL(&queueMutex);
+    takeFocusXMutex(journalMutex);
     if (!pendingEvents.empty()) {
       currentEvent = pendingEvents.front();
       hasEvent = true;
     }
-    portEXIT_CRITICAL(&queueMutex);
-    
+    xSemaphoreGiveRecursive(journalMutex);
     if (!hasEvent) {
       esp_task_wdt_reset();
       vTaskDelay(pdMS_TO_TICKS(50));
@@ -1632,11 +1676,13 @@ void httpWorkerTask(void *pvParameters) {
     }
 
     bool success = false;
-    
     if (WiFi.status() == WL_CONNECTED) {
-      WiFiClientSecure *client = new WiFiClientSecure;
+      WiFiClientSecure clientStorage;
+  WiFiClientSecure *client = &clientStorage;
       if (client) {
         client->setCACert(rootCACertificate);
+    client->setHandshakeTimeout(5);
+    client->setTimeout(5);
         HTTPClient http;
         http.begin(*client, String(BACKEND_BASE_URL) + "/api/hardware/scan");
         http.addHeader("Content-Type", "application/json");
@@ -1645,7 +1691,8 @@ void httpWorkerTask(void *pvParameters) {
         char authHeader[128];
         snprintf(authHeader, sizeof(authHeader), "Bearer %s", HARDWARE_API_KEY);
         http.addHeader("Authorization", authHeader);
-        http.setTimeout(12000);
+        http.setConnectTimeout(3000);
+        http.setTimeout(8000);
 
         StaticJsonDocument<768> reqDoc;
         reqDoc["eventId"] = currentEvent.eventId;
@@ -1666,19 +1713,29 @@ void httpWorkerTask(void *pvParameters) {
         screenObj["line0"] = sc0;
         screenObj["line1"] = sc1;
         screenObj["backlight"] = scBl;
-        
         String requestBody;
         serializeJson(reqDoc, requestBody);
-        
         Serial.printf("[HTTP] Syncing event %s (%s, payload=%s, exit=%d)...\n", currentEvent.eventId.c_str(), currentEvent.scanType.c_str(), currentEvent.payload.c_str(), currentEvent.isExit);
         esp_task_wdt_reset();
+        workerCheckpoint(3);
         int httpCode = http.POST(requestBody);
+        workerCheckpoint(0);
         esp_task_wdt_reset();
         Serial.printf("[HTTP] Scan POST code: %d\n", httpCode);
-        
         if (httpCode >= 200 && httpCode < 300) {
           success = true;
           isSystemOnline = true;
+          String res = boundedHttpResponse(http, 2048);
+          DynamicJsonDocument scanResDoc(512);
+          if (!deserializeJson(scanResDoc, res)) {
+            if (scanResDoc.containsKey("serverAuthRevision")) {
+              uint32_t svrRev = scanResDoc["serverAuthRevision"];
+              if (svrRev > currentAuthRevision) {
+                Serial.printf("[SCAN] Server reports newer revision (%u > %u). Triggering snapshot sync.\n", svrRev, currentAuthRevision);
+                g_pendingSnapshotSync = true;
+              }
+            }
+          }
         } else if (httpCode == 400) {
           File q = LittleFS.open("/quarantine.txt", "a");
           if (q) {
@@ -1700,18 +1757,15 @@ void httpWorkerTask(void *pvParameters) {
           if (httpCode < 0) isSystemOnline = false;
         }
         http.end();
-        delete client;
       }
     }
-    
-    if (success) {
-      portENTER_CRITICAL(&queueMutex);
+    if (success && ackInJournal(currentEvent.eventId)) {
+      takeFocusXMutex(journalMutex);
       if (!pendingEvents.empty() && pendingEvents.front().eventId == currentEvent.eventId) {
         pendingEvents.erase(pendingEvents.begin());
       }
-      portEXIT_CRITICAL(&queueMutex);
-      
-      ackInJournal(currentEvent.eventId);
+      xSemaphoreGiveRecursive(journalMutex);
+
     } else {
       delay(3000); // Retry backoff
     }
@@ -1736,7 +1790,9 @@ void sendHardwarePing() {
       String isoTime = getISOTime();
       if (isoTime != "") {
         WiFiClientSecure client;
-        client.setInsecure();
+        client.setCACert(rootCACertificate);
+  client.setHandshakeTimeout(5);
+  client.setTimeout(5);
         // 1. PRIMARY: Direct Supabase Realtime PATCH (Zero Vercel CPU / Invocations!)
         bool directSuccess = false;
         HTTPClient patchHttp;
@@ -1746,8 +1802,8 @@ void sendHardwarePing() {
           patchHttp.addHeader("Authorization", "Bearer " + String(SUPABASE_ANON_KEY));
           patchHttp.addHeader("Content-Type", "application/json");
           patchHttp.addHeader("Prefer", "return=minimal");
+          patchHttp.setConnectTimeout(3000);
           patchHttp.setTimeout(3000);
-          
           String payload = "{\"lastSeenAt\": \"" + isoTime + "\"}";
           int patchCode = patchHttp.PATCH(payload);
           if (patchCode == 200 || patchCode == 204) {
@@ -1768,8 +1824,8 @@ void sendHardwarePing() {
           if (http.begin(client, "https://www.focusx.in/api/hardware/status")) {
             http.addHeader("Content-Type", "application/json");
             http.addHeader("Authorization", String("Bearer ") + HARDWARE_API_KEY);
+            http.setConnectTimeout(3000);
             http.setTimeout(4000);
-            
             StaticJsonDocument<256> diagDoc;
             diagDoc["readerId"] = READER_ID.c_str();
             JsonObject mods = diagDoc.createNestedObject("modules");
@@ -1778,7 +1834,6 @@ void sendHardwarePing() {
             mods["doorReed"] = doorClosed;
             mods["ble"] = true;
             mods["rssi"] = wifiRssi;
-            
             String diagBody;
             serializeJson(diagDoc, diagBody);
             http.POST(diagBody);
@@ -1821,11 +1876,10 @@ class MyCallbacks: public NimBLECharacteristicCallbacks {
       String value = String(stdVal.c_str());
       value.trim();
       Serial.println("[BLE] Received GATT Write: " + value);
-      
       if (value.startsWith("UNLOCK_IN") || value.startsWith("UNLOCK_OUT")) {
          bool isExitCmd = value.startsWith("UNLOCK_OUT");
          Serial.printf("[BLE] Direct unlock command: %s (Exit=%d)\n", value.c_str(), isExitCmd);
-         BleAuthItem item;
+         BleAuthItem item = {};
          int colon = value.indexOf(':');
          if (colon > 0) {
            String uid = value.substring(colon + 1);
@@ -1842,35 +1896,28 @@ class MyCallbacks: public NimBLECharacteristicCallbacks {
          }
          return;
       }
-      
       if (value.startsWith("BLE:")) {
          int p1 = value.indexOf(':', 4);
          if (p1 == -1) return;
          String uid = value.substring(4, p1);
-         
          int p2 = value.indexOf(':', p1+1);
          if (p2 == -1) return;
          String libId = value.substring(p1+1, p2);
-         
          int p3 = value.indexOf(':', p2+1);
          if (p3 == -1) return;
          String action = value.substring(p2+1, p3);
-         
          int p4 = value.indexOf(':', p3+1);
          if (p4 == -1) return;
          uint32_t iat = value.substring(p3+1, p4).toInt();
-         
          int p5 = value.indexOf(':', p4+1);
          if (p5 == -1) return;
          uint32_t exp = value.substring(p4+1, p5).toInt();
-         
          int p6 = value.indexOf(':', p5+1);
          if (p6 == -1) return;
          String nonce = value.substring(p5+1, p6);
          String sig = value.substring(p6+1);
-         
          if (verifyBLEToken(uid, libId, action, iat, exp, nonce, sig)) {
-             BleAuthItem item;
+             BleAuthItem item = {};
              strncpy(item.uid, uid.c_str(), 39);
              item.uid[39] = '\0';
              item.isExit = (action.equalsIgnoreCase("OUT") || action.equalsIgnoreCase("CHECK_OUT"));
@@ -1902,7 +1949,6 @@ void initBLE() {
 
   NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
   pAdvertising->addServiceUUID(SERVICE_UUID);
-  
   NimBLEAdvertisementData oAdvertisementData = NimBLEAdvertisementData();
   oAdvertisementData.setFlags(0x06); // General discoverable and connectable
   oAdvertisementData.setName("FocusX");
@@ -1921,11 +1967,9 @@ void initBLE() {
   payload[22] = 0x00; // Minor MSB
   payload[23] = 0x01; // Minor LSB
   payload[24] = 0xC5; // TX Power
-  
   NimBLEAdvertisementData oScanResponseData = NimBLEAdvertisementData();
   oScanResponseData.setManufacturerData(std::string((char*)payload, 25));
   pAdvertising->setScanResponseData(oScanResponseData);
-  
   pAdvertising->start();
 }
 
@@ -1933,10 +1977,16 @@ void initBLE() {
 void setLEDsColor(uint8_t r, uint8_t g, uint8_t b) {
   for (int i = 0; i < NUM_LEDS; i++) strip.setPixelColor(i, strip.Color(r, g, b));
   strip.show();
+#if USE_WIEGAND_HARDWARE
+  v4SetAllStrips(stripFront.Color(r, g, b));
+#endif
 }
 void setRFID2StripColor(uint8_t r, uint8_t g, uint8_t b) {
   for (int i = 0; i < RFID2_NUM_LEDS; i++) rfid2Strip.setPixelColor(i, rfid2Strip.Color(r, g, b));
   rfid2Strip.show();
+#if USE_WIEGAND_HARDWARE
+  v4SetAllStrips(stripFront.Color(r, g, b));
+#endif
 }
 
 void setAlarmLEDs(bool reversePattern) {
@@ -1949,24 +1999,30 @@ void setRFID2AlarmLEDs(bool reversePattern) {
 }
 
 void safeTone(unsigned int freq, unsigned long duration = 0) {
-  #if defined(BUZZER_PIN) && BUZZER_PIN >= 0
+#if USE_WIEGAND_HARDWARE
+  v4PlayTone((float)freq, duration > 0 ? (int)duration : 150);
+#elif defined(BUZZER_PIN) && BUZZER_PIN >= 0
   if (duration > 0) tone(BUZZER_PIN, freq, duration);
   else tone(BUZZER_PIN, freq);
-  #endif
+#endif
 }
 
 void safeNoTone() {
-  #if defined(BUZZER_PIN) && BUZZER_PIN >= 0
+#if USE_WIEGAND_HARDWARE
+  v4StopAudio();
+#elif defined(BUZZER_PIN) && BUZZER_PIN >= 0
   noTone(BUZZER_PIN);
-  #endif
+#endif
 }
 
 bool isDoorReedHigh() {
-  #if defined(REED_PIN) && REED_PIN >= 0
+#if USE_WIEGAND_HARDWARE
+  return reedSwitchEnabled ? v4IsDoorOpen() : false;
+#elif defined(REED_PIN) && REED_PIN >= 0
   return reedSwitchEnabled ? (digitalRead(REED_PIN) == HIGH) : false;
-  #else
+#else
   return false;
-  #endif
+#endif
 }
 
 void sendDFPlayerCommand(uint8_t cmd, uint16_t param) {
@@ -1999,7 +2055,6 @@ void initVoiceSpeaker() {
 void sendVoiceCommand(uint8_t trackNumber) {
   // Clear any garbage bytes in Serial1 RX buffer
   while (Serial1.available()) Serial1.read();
-  
   // 1. Ensure TF Card is selected (0x09, 0x0002)
   sendDFPlayerCommand(0x09, 0x0002);
   delay(30);
@@ -2019,18 +2074,35 @@ void sendVoiceCommand(uint8_t trackNumber) {
 void triggerVoiceWelcome() { sendVoiceCommand(1); }
 void triggerVoiceGoodbye() { sendVoiceCommand(2); }
 
-void playWelcomeChime() { safeTone(1500, 150); delay(150); safeNoTone(); triggerVoiceWelcome(); }
-void playGoodbyeChime() { safeTone(1500, 150); delay(150); safeNoTone(); triggerVoiceGoodbye(); }
-void playDeniedChime() { safeTone(300, 500); delay(500); safeNoTone(); }
+void playWelcomeChime() {
+#if USE_WIEGAND_HARDWARE
+  v4PlayEntryChime();
+#else
+  safeTone(1500, 150); delay(150); safeNoTone(); triggerVoiceWelcome();
+#endif
+}
+void playGoodbyeChime() {
+#if USE_WIEGAND_HARDWARE
+  v4PlayExitChime();
+#else
+  safeTone(1500, 150); delay(150); safeNoTone(); triggerVoiceGoodbye();
+#endif
+}
+void playDeniedChime() {
+#if USE_WIEGAND_HARDWARE
+  v4PlayTone(300.0f, 400);
+#else
+  safeTone(300, 500); delay(500); safeNoTone();
+#endif
+}
 
 void updateIdleDisplay(bool force = false) {
+  FocusXLock snapshotLock(snapshotMutex);
   if (isGateOpen) return;
-  
   bool curOnline = (WiFi.status() == WL_CONNECTED && isSystemOnline);
   bool timeSynced = (clockState == CLOCK_SYNCED);
   bool snapOk = (snapshotIsValid && !authSnapshot.empty());
   bool rfidOk = (nfc1Available || nfc2Available);
-  
   String line0, line1;
   if (!rfidOk) {
     line0 = "RFID HW ERROR!  ";
@@ -2048,7 +2120,6 @@ void updateIdleDisplay(bool force = false) {
     line0 = "SYSTEM ARMED    ";
     line1 = "TAP YOUR CARD   ";
   }
-  
   static String lastLine0 = "";
   static String lastLine1 = "";
   if (force || line0 != lastLine0 || line1 != lastLine1) {
@@ -2065,8 +2136,8 @@ void resetToIdle() {
   isGateOpen = false;
   hasDoorOpenedDuringGrace = false;
   openedByRFID2 = false;
-  setLEDsColor(0, 0, 255);
-  setRFID2StripColor(0, 0, 255);
+  setLEDsColor(255, 0, 0);       // Solid Red when ARMED
+  setRFID2StripColor(255, 0, 0); // Solid Red when ARMED
   lcd.clear();
   updateIdleDisplay(true);
 }
@@ -2081,7 +2152,6 @@ void greenCountdown() {
     else if (elapsed < 4200) ledsOn = 3;
     else if (elapsed < 5600) ledsOn = 2;
     else if (elapsed < 7000) ledsOn = 1;
-    
     for (int i = 0; i < NUM_LEDS; i++) {
       if (i < ledsOn) strip.setPixelColor(i, strip.Color(0, 255, 0));
       else strip.setPixelColor(i, 0);
@@ -2129,7 +2199,6 @@ bool readRFID(Adafruit_PN532 &nfc, int ss_enable, int ss_disable, char* outHex, 
          sprintf(outHex + (i * 2), "%02X", uid[i]);
       }
       outHex[uidLength * 2] = '\0';
-      
       int readerNum = (ss_enable == PN532_SS_1) ? 1 : 2;
       Serial.printf("[RFID] Reader %d detected card: Raw bytes (%d):", readerNum, uidLength);
       for (int i = 0; i < uidLength; i++) {
@@ -2151,27 +2220,16 @@ String readRFID(Adafruit_PN532 &nfc, int ss_enable, int ss_disable) {
   return "";
 }
 
-void executeDirectUnlock(bool isExit) {
-  isGateOpen = true;
-  gateOpenStartTime = millis();
-  hasDoorOpenedDuringGrace = false;
-  openedByRFID2 = isExit;
-  
-  if (isExit) {
-    setLEDsColor(255, 80, 0);
-    setRFID2StripColor(0, 255, 0);
-    userIsInside = false;
-    lcd.clear(); lcd.setCursor(0,0); lcd.print("BLE: GOODBYE!");
-    lcd.setCursor(0,1); lcd.print("GATE OPEN");
-    playGoodbyeChime();
-  } else {
-    setLEDsColor(0, 255, 0);
-    userIsInside = true;
-    lcd.clear(); lcd.setCursor(0,0); lcd.print("BLE: WELCOME!");
-    lcd.setCursor(0,1); lcd.print("GATE OPEN");
-    playWelcomeChime();
+bool executeDirectUnlock(bool isExit, const char* commandId) {
+  if (xTaskGetCurrentTaskHandle() != accessTaskHandle) {
+    BleAuthItem item = {};
+    strncpy(item.uid, "DIRECT_UNLOCK", sizeof(item.uid) - 1);
+    item.isExit = isExit;
+    if (commandId) strlcpy(item.commandId, commandId, sizeof(item.commandId));
+    return bleAuthQueue && xQueueSend(bleAuthQueue, &item, 0) == pdTRUE;
   }
-  
+  if (isGateOpen) return false;
+  FocusXLock snapshotLock(snapshotMutex);
   ScanEvent e;
   currentSeqNo++;
   e.seqNo = currentSeqNo;
@@ -2183,26 +2241,50 @@ void executeDirectUnlock(bool isExit) {
   e.isExit = isExit;
   e.authRevision = currentAuthRevision;
   e.offlineDecision = true;
-  
-  if (appendToJournal(e)) {
-    portENTER_CRITICAL(&queueMutex);
-    if (pendingEvents.size() < 500 && !hasMoreOnFlash) {
+
+  if (!appendToJournal(e)) {
+    DiagSubsystem.capture(DIAG_CODE_JOURNAL_WRITE_FAIL, DIAG_SEV_ERROR, 0, 0, "DIRECT_UNLOCK_NOT_COMMITTED");
+    return false;
+  }
+  {
+    takeFocusXMutex(journalMutex);
+    if (pendingEvents.size() < MAX_PENDING_EVENTS && !hasMoreOnFlash) {
       pendingEvents.push_back(e);
     } else {
       hasMoreOnFlash = true;
     }
-    portEXIT_CRITICAL(&queueMutex);
+    xSemaphoreGiveRecursive(journalMutex);
   }
+  isGateOpen = true;
+  gateOpenStartTime = millis();
+  hasDoorOpenedDuringGrace = false;
+  openedByRFID2 = isExit;
+  if (isExit) {
+    setLEDsColor(255, 80, 0);
+    setRFID2StripColor(255, 80, 0);
+    userIsInside = false;
+    lcd.clear(); lcd.setCursor(0,0); lcd.print("BLE: GOODBYE!");
+    lcd.setCursor(0,1); lcd.print("GATE OPEN");
+    playGoodbyeChime();
+  } else {
+    setLEDsColor(0, 255, 0);
+    setRFID2StripColor(0, 255, 0);
+    userIsInside = true;
+    lcd.clear(); lcd.setCursor(0,0); lcd.print("BLE: WELCOME!");
+    lcd.setCursor(0,1); lcd.print("GATE OPEN");
+    playWelcomeChime();
+  }
+  return true;
 }
 
 void doAuth(String uid, String scanType, bool isExit) {
+  FocusXLock snapshotLock(snapshotMutex);
   updateClockState();
   bool isAllowed = false;
   bool cardFoundInSnapshot = false;
   String denialReason = "UNKNOWN";
   uint32_t nowUnix = (uint32_t)time(NULL);
   char matchedUserKey[40] = {0};
-  
   if (READER_ID.length() == 0 || READER_ID == "UNPROVISIONED") {
     denialReason = "NOT_PROVISIONED";
   } else if (!snapshotIsValid) {
@@ -2246,7 +2328,6 @@ void doAuth(String uid, String scanType, bool isExit) {
       denialReason = "NOT_IN_SNAPSHOT";
     }
   }
-  
   Serial.printf("[AUTH] Decision: %s | Reason: %s | ScanType: %s | Reader: %s | UID: %s | UserKey: %s | Slot: %s | Rev: %u | ClockState: %d | Time: %lu\n",
     isAllowed ? "ALLOWED" : "DENIED",
     denialReason.c_str(),
@@ -2298,13 +2379,13 @@ void doAuth(String uid, String scanType, bool isExit) {
       return;
     }
 
-    portENTER_CRITICAL(&queueMutex);
-    if (pendingEvents.size() < 500 && !hasMoreOnFlash) {
+    takeFocusXMutex(journalMutex);
+    if (pendingEvents.size() < MAX_PENDING_EVENTS && !hasMoreOnFlash) {
       pendingEvents.push_back(e);
     } else {
       hasMoreOnFlash = true;
     }
-    portEXIT_CRITICAL(&queueMutex);
+    xSemaphoreGiveRecursive(journalMutex);
 
     // 2. Physical Actuation & Feedback (only after journal persistence is confirmed)
     isGateOpen = true;
@@ -2313,7 +2394,7 @@ void doAuth(String uid, String scanType, bool isExit) {
     openedByRFID2 = isExit;
     if (isExit) {
       setLEDsColor(255, 80, 0);
-      setRFID2StripColor(0, 255, 0);
+      setRFID2StripColor(255, 80, 0);
       userIsInside = false;
       lcd.clear(); lcd.setCursor(0,0);
       if (scanType == "BLE") lcd.print("BLE: GOODBYE!");
@@ -2323,6 +2404,7 @@ void doAuth(String uid, String scanType, bool isExit) {
       triggerVoiceGoodbye();
     } else {
       setLEDsColor(0, 255, 0);
+      setRFID2StripColor(0, 255, 0);
       userIsInside = true;
       lcd.clear(); lcd.setCursor(0,0);
       if (scanType == "BLE") lcd.print("BLE: WELCOME!");
@@ -2344,6 +2426,27 @@ void doAuth(String uid, String scanType, bool isExit) {
        preferences.putUInt("highTime", highestTrustedTime);
     }
   } else {
+    // Record denied/unknown event so dashboard receives real-time alert to assign student!
+    ScanEvent deniedEv;
+    currentSeqNo++;
+    deniedEv.seqNo = currentSeqNo;
+    deniedEv.eventId = String(READER_ID) + "-" + String(bootCount) + "-" + String(currentSeqNo);
+    deniedEv.scanType = scanType;
+    deniedEv.payload = uid;
+    deniedEv.timestampMs = millis();
+    deniedEv.timestampUnix = nowUnix;
+    deniedEv.isExit = isExit;
+    deniedEv.authRevision = currentAuthRevision;
+    deniedEv.offlineDecision = false;
+
+    takeFocusXMutex(journalMutex);
+    if (pendingEvents.size() < MAX_PENDING_EVENTS && !hasMoreOnFlash) {
+      pendingEvents.push_back(deniedEv);
+    } else {
+      hasMoreOnFlash = true;
+    }
+    xSemaphoreGiveRecursive(journalMutex);
+
     setLEDsColor(255, 0, 0);
     if (isExit) setRFID2StripColor(255, 0, 0);
     lcd.clear(); lcd.setCursor(0,0);
@@ -2355,11 +2458,9 @@ void doAuth(String uid, String scanType, bool isExit) {
     else if (denialReason == "ALREADY_INSIDE") lcd.print("ALREADY IN");
     else if (denialReason == "ALREADY_OUTSIDE") lcd.print("ALREADY OUT");
     else lcd.print("ACCESS DENIED");
-    
     lcd.setCursor(0,1);
     if (scanType == "BLE") lcd.print("BLE DENIED");
     else lcd.print(isExit ? "EXIT DENIED" : "ENTRY DENIED");
-    
     playDeniedChime();
     delay(1500);
     resetToIdle();
@@ -2423,21 +2524,146 @@ void triggerDoorLeftOpenAlarm() {
 
 // ================= SETUP =================
 
+
+void runFullHardwareDiagnostic() {
+  Serial.println("\n==================================================");
+  Serial.println("       FOCUSX V5 COMPREHENSIVE HARDWARE DIAGNOSTICS");
+  Serial.println("==================================================");
+
+  // 1. I2C Bus Scan (SDA=4, SCL=5)
+  Serial.println("[TEST 1/7] Scanning I2C Bus (SDA: GPIO 4, SCL: GPIO 5)...");
+  uint8_t foundAddr = 0;
+  for (uint8_t addr = 1; addr < 127; addr++) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      Serial.printf("  --> Found I2C device at 0x%02X\n", addr);
+      if (addr == 0x27 || addr == 0x3F || (addr >= 0x20 && addr <= 0x26)) {
+        foundAddr = addr;
+      }
+    }
+  }
+  if (foundAddr != 0) {
+    Serial.printf("  [PASS] LCD I2C Backpack detected at 0x%02X!\n", foundAddr);
+    lcd.clear();
+    lcd.setCursor(0,0); lcd.print("LCD TEST: PASS  ");
+    lcd.setCursor(0,1); lcd.print("ADDR: 0x" + String(foundAddr, HEX) + "    ");
+  } else {
+    Serial.println("  [FAIL] No I2C LCD detected on GPIO 4 & 5!");
+    Serial.println("  --> Check: Is +5V and GND connected to LCD backpack?");
+    Serial.println("  --> Check: Are SDA (GPIO 4) and SCL (GPIO 5) reversed?");
+  }
+
+  // 2. Door Reed Switch (GPIO 9)
+  Serial.println("\n[TEST 2/7] Checking MC-38 Reed Switch (GPIO 9)...");
+  pinMode(PIN_REED, INPUT_PULLUP);
+  int reedVal = digitalRead(PIN_REED);
+  if (reedVal == LOW) {
+    Serial.println("  [PASS] Reed Switch: CLOSED (LOW - Magnet aligned / Door Closed)");
+  } else {
+    Serial.println("  [PASS] Reed Switch: OPEN (HIGH - Pullup active / Door Open)");
+  }
+
+  // 3. Wiegand 1 Entry Reader (D0: GPIO 14, D1: GPIO 15)
+  Serial.println("\n[TEST 3/7] Checking Wiegand 1 Entry Lines (GPIO 14 & 15)...");
+  pinMode(PIN_W1_D0, INPUT_PULLUP);
+  pinMode(PIN_W1_D1, INPUT_PULLUP);
+  int w1_d0 = digitalRead(PIN_W1_D0);
+  int w1_d1 = digitalRead(PIN_W1_D1);
+  Serial.printf("  W1 D0 (GPIO 14): %s (%d)\n", w1_d0 ? "HIGH (3.3V Idle)" : "LOW (0V)", w1_d0);
+  Serial.printf("  W1 D1 (GPIO 15): %s (%d)\n", w1_d1 ? "HIGH (3.3V Idle)" : "LOW (0V)", w1_d1);
+  if (w1_d0 == HIGH && w1_d1 == HIGH) {
+    Serial.println("  [PASS] Wiegand 1 lines idle at normal HIGH logic level.");
+  } else {
+    Serial.println("  [FAULT DETECTED] Wiegand 1 line(s) pulled LOW or disconnected!");
+    if (w1_d0 == LOW) Serial.println("  --> GPIO 14 (D0) is LOW! Check TXS0108E HV1/LV1 and Fevikwik glue insulation!");
+    if (w1_d1 == LOW) Serial.println("  --> GPIO 15 (D1) is LOW! Check TXS0108E HV2/LV2 and Fevikwik glue insulation!");
+    Serial.println("  --> Check: Is TXS0108E 'OE' pin tied to +3.3V?");
+  }
+
+  // 4. Wiegand 2 Exit Reader (D0: GPIO 16, D1: GPIO 17)
+  Serial.println("\n[TEST 4/7] Checking Wiegand 2 Exit Lines (GPIO 16 & 17)...");
+  pinMode(PIN_W2_D0, INPUT_PULLUP);
+  pinMode(PIN_W2_D1, INPUT_PULLUP);
+  int w2_d0 = digitalRead(PIN_W2_D0);
+  int w2_d1 = digitalRead(PIN_W2_D1);
+  Serial.printf("  W2 D0 (GPIO 16): %s (%d)\n", w2_d0 ? "HIGH (3.3V Idle)" : "LOW (0V)", w2_d0);
+  Serial.printf("  W2 D1 (GPIO 17): %s (%d)\n", w2_d1 ? "HIGH (3.3V Idle)" : "LOW (0V)", w2_d1);
+  if (w2_d0 == HIGH && w2_d1 == HIGH) {
+    Serial.println("  [PASS] Wiegand 2 lines idle at normal HIGH logic level.");
+  } else {
+    Serial.println("  [FAULT DETECTED] Wiegand 2 line(s) pulled LOW or disconnected!");
+  }
+
+  // 5. RDM6300 125kHz Desk Reader (RX: GPIO 18)
+  Serial.println("\n[TEST 5/7] Checking RDM6300 RX Line (GPIO 18)...");
+  pinMode(PIN_RDM6300_RX, INPUT_PULLUP);
+  int rdm_rx = digitalRead(PIN_RDM6300_RX);
+  Serial.printf("  RDM6300 RX (GPIO 18): %s (%d)\n", rdm_rx ? "HIGH (Idle)" : "LOW", rdm_rx);
+  if (rdm_rx == HIGH) {
+    Serial.println("  [PASS] RDM6300 RX line idle at normal HIGH logic level.");
+  } else {
+    Serial.println("  [WARN] RDM6300 RX line is LOW. Verify 1k resistor and module +5V power.");
+  }
+
+  // 6. NeoPixel Strips Test (GPIO 6, 11, 12)
+  Serial.println("\n[TEST 6/7] Testing 3x NeoPixel Strips (Front: 6, Left: 11, Right: 12)...");
+#if USE_WIEGAND_HARDWARE
+  v4SetAllStrips(stripFront.Color(0, 255, 0)); // Green
+#endif
+  Serial.println("  [PASS] All NeoPixel strips driven GREEN.");
+
+  // 7. MAX98357A I2S Audio Test (GPIO 7, 8, 10)
+  Serial.println("\n[TEST 7/7] Testing MAX98357A I2S Audio Chime...");
+#if USE_WIEGAND_HARDWARE
+  v4PlayEntryChime();
+#endif
+  Serial.println("  [PASS] I2S Chime played.");
+
+  Serial.println("\n==================================================");
+  Serial.println("             DIAGNOSTICS COMPLETE");
+  Serial.println("==================================================\n");
+
+  DiagSubsystem.capture((DiagEventCode)2001, DIAG_SEV_INFO, foundAddr, reedVal, "SELF_TEST_LCD_REED");
+  DiagSubsystem.capture((DiagEventCode)2002, (w1_d0 && w1_d1) ? DIAG_SEV_INFO : DIAG_SEV_ERROR, w1_d0, w1_d1, "SELF_TEST_W1");
+  DiagSubsystem.capture((DiagEventCode)2003, (w2_d0 && w2_d1) ? DIAG_SEV_INFO : DIAG_SEV_ERROR, w2_d0, w2_d1, "SELF_TEST_W2");
+  DiagSubsystem.capture((DiagEventCode)2004, (rdm_rx == HIGH) ? DIAG_SEV_INFO : DIAG_SEV_WARN, rdm_rx, 0, "SELF_TEST_RDM");
+}
+
 void setup() {
+  snapshotMutex = xSemaphoreCreateRecursiveMutex();
+  snapshotInstallMutex = xSemaphoreCreateRecursiveMutex();
+  journalMutex = xSemaphoreCreateRecursiveMutex();
+  configASSERT(snapshotMutex && snapshotInstallMutex && journalMutex);
+  accessTaskHandle = xTaskGetCurrentTaskHandle();
+  pendingEvents.reserve(MAX_PENDING_EVENTS);
   Serial.begin(115200);
   delay(1000);
 
   WiFi.mode(WIFI_STA);
-  // Default to POC readerId, or override with preferences if set
-  READER_ID = "87b99b2c-90fd-11e9-bc42-526af7764f64:1:1";
+  READER_ID = WiFi.macAddress();
+  if (READER_ID.length() == 0 || READER_ID == "00:00:00:00:00:00") {
+    READER_ID = "28:84:85:87:39:64";
+  }
+  Serial.println("[BOOT] Initialized hardware READER_ID: " + READER_ID);
 
   preferences.begin("focusx", false);
+  if (preferences.getString("lastAckStat", "") == "QUEUED") {
+    preferences.putString("lastAckStat", "FAILED");
+    preferences.putString("lastAckErr", "ERR_REBOOT_BEFORE_COMPLETION");
+  }
   DiagSubsystem.init(READER_ID.c_str());
+  if (previousWorkerCheckpoint.magic == 0x46584350 && esp_reset_reason() != ESP_RST_POWERON) {
+    DiagSubsystem.capture((DiagEventCode)1004, DIAG_SEV_WARN,
+      previousWorkerCheckpoint.operation, previousWorkerCheckpoint.uptimeMs, "PREVIOUS_WORKER_CHECKPOINT");
+    DiagSubsystem.capture((DiagEventCode)1005, DIAG_SEV_INFO,
+      previousWorkerCheckpoint.freeHeap, previousWorkerCheckpoint.largestBlock, "PREVIOUS_INTERNAL_HEAP");
+  }
+  workerCheckpoint(0);
   String savedReader = preferences.getString("readerid", "");
   if (savedReader != "") READER_ID = savedReader;
   String savedKey = preferences.getString("apikey", "");
   if (savedKey != "") strncpy(HARDWARE_API_KEY, savedKey.c_str(), sizeof(HARDWARE_API_KEY));
-  reedSwitchEnabled = preferences.getBool("reed_en", false);
+  reedSwitchEnabled = preferences.getBool("reed_en", true);
 
   bootCount = preferences.getUInt("bootCount", 0);
   loadNoncesFromPreferences();
@@ -2445,13 +2671,13 @@ void setup() {
   bootCount++;
   preferences.putUInt("bootCount", bootCount);
   initJournal();
+  DiagSubsystem.restoreCritical();
+  crashUpload.begin();
 
 
 
 
-  
     highestTrustedTime = preferences.getUInt("highTime", 0);
-  
   // Set SNTP callback to track last sync
   sntp_set_time_sync_notification_cb([](struct timeval *t) {
      lastNtpSyncMs = millis();
@@ -2481,8 +2707,18 @@ void setup() {
   reconnectMqtt();
 
   Serial.println("[BOOT] Stage 2: Configuring GPIOs");
+#if USE_WIEGAND_HARDWARE
+  Serial.println("[BOOT] Initializing V4 Wiegand, I2S & NeoPixel hardware subsystems");
+  v4InitNeoPixels();
+  v4InitI2S();
+  v4InitWiegand();
+  v4InitRDM6300();
+  v4InitReedSwitch();
+#endif
+#if !USE_WIEGAND_HARDWARE
   Serial1.begin(VOICE_BAUD, SERIAL_8N1, -1, 43);
   initVoiceSpeaker();
+#endif
   Serial.println("[HARDWARE] Voice Speaker Serial1 initialized on TX=" + String(VOICE_TX_PIN) + ", RX=" + String(VOICE_RX_PIN));
   if (BUZZER_PIN >= 0) pinMode(BUZZER_PIN, OUTPUT);
   if (REED_PIN >= 0) pinMode(REED_PIN, INPUT_PULLUP);
@@ -2533,17 +2769,33 @@ void setup() {
     nfc2Available = true;
   }
 
-  Serial.println("[BOOT] Stage 7: Starting WiFiManager autoConnect");
+  Serial.println("[BOOT] Stage 7: Connecting to Wi-Fi 'FTTH' (pass: 12345678)...");
+  lcd.clear();
+  lcd.setCursor(0,0); lcd.print("WIFI CONNECTING");
+  lcd.setCursor(0,1); lcd.print("SSID: FTTH");
+
+  WiFi.disconnect();
+  WiFi.begin("FTTH", "12345678");
+  unsigned long wifiStartMs = millis();
+  while (WiFi.status() != WL_CONNECTED && (millis() - wifiStartMs < 8000)) {
+    delay(250);
+    Serial.print(".");
+  }
 
   WiFiManager wm;
   wm.setConfigPortalTimeout(30); // 30s timeout so offline scanner boots promptly
   wm.setConnectTimeout(10);       // 10s timeout to connect to existing Wi-Fi
 
-  lcd.clear();
-  lcd.setCursor(0,0); lcd.print("WIFI CONNECTING");
-  lcd.setCursor(0,1); lcd.print("AP:FocusX Scanner");
-  Serial.println("[WiFi] Attempting autoConnect (SSID 'FocusX Scanner', portal timeout 180s)...");
-  if (!wm.autoConnect("FocusX Scanner")) {
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\n[WiFi] Connected to FTTH! IP: " + WiFi.localIP().toString());
+    lcd.clear();
+    lcd.setCursor(0,0); lcd.print("WIFI CONNECTED");
+    lcd.setCursor(0,1); lcd.print(WiFi.localIP().toString());
+    delay(1000);
+#if USE_WIEGAND_HARDWARE
+    runFullHardwareDiagnostic();
+#endif
+  } else if (!wm.autoConnect("FocusX Scanner")) {
     Serial.println("[WiFi] Timed out or not configured. Proceeding in OFFLINE mode.");
     lcd.clear();
     lcd.setCursor(0,0); lcd.print("OFFLINE MODE");
@@ -2558,37 +2810,39 @@ void setup() {
   }
 
   // Dynamic Identity: preserved from preferences or default (no hardcoded overwrite)
-  
   // PIN-based setup logic (executed only when online and device is unprovisioned)
   bool isClaimed = (READER_ID.length() > 0 && READER_ID != "UNPROVISIONED");
   if (WiFi.status() == WL_CONNECTED && !isClaimed) {
     lcd.clear(); lcd.setCursor(0,0); lcd.print("CHECKING CLAIM");
-    
     // 1. Check if already claimed
-    WiFiClientSecure *client = new WiFiClientSecure;
+    WiFiClientSecure clientStorage;
+  WiFiClientSecure *client = &clientStorage;
     if (client) {
       client->setCACert(rootCACertificate); 
+    client->setHandshakeTimeout(5);
+    client->setTimeout(5);
       HTTPClient http;
+      http.setConnectTimeout(3000);
       http.setTimeout(4000);
       if (http.begin(*client, "https://www.focusx.in/api/hardware/check-pin")) {
         http.addHeader("Content-Type", "application/json");
         int code = http.POST("{\"mac\":\"" + String(READER_ID) + "\"}");
         if (code == 200) {
-          String response = http.getString();
+          String response = boundedHttpResponse(http, 4096);
           if (response.indexOf("\"claimed\":true") != -1 || response.indexOf("\"claimed\": true") != -1) {
             isClaimed = true;
           }
         }
         http.end();
       }
-      delete client;
     }
-    
     if (!isClaimed) {
       String pin = String(random(100000, 999999));
       {
         WiFiClientSecure client; 
         client.setCACert(rootCACertificate); 
+  client.setHandshakeTimeout(5);
+  client.setTimeout(5);
         HTTPClient http;
         if (http.begin(client, "https://www.focusx.in/api/hardware/register-pin")) {
           http.addHeader("Content-Type", "application/json");
@@ -2596,20 +2850,20 @@ void setup() {
           http.end();
         }
       }
-      
       lcd.clear(); lcd.setCursor(0,0); lcd.print("CLAIM DEVICE PIN");
       lcd.setCursor(0,1); lcd.print(pin);
-      
       while (!isClaimed) {
         delay(3000);
         {
           WiFiClientSecure client; 
           client.setCACert(rootCACertificate); 
+  client.setHandshakeTimeout(5);
+  client.setTimeout(5);
           HTTPClient http;
           if (http.begin(client, "https://www.focusx.in/api/hardware/check-pin?pin=" + pin)) {
             int code = http.GET();
             if (code == 200) {
-              String response = http.getString();
+              String response = boundedHttpResponse(http, 4096);
               if (response.indexOf("\"isClaimed\":true") != -1 || response.indexOf("\"isClaimed\": true") != -1) {
                 isClaimed = true;
               }
@@ -2618,7 +2872,6 @@ void setup() {
           }
         }
       }
-      
       lcd.clear(); lcd.setCursor(0,0); lcd.print("DEVICE CLAIMED!");
       delay(3000);
       ESP.restart();
@@ -2634,7 +2887,6 @@ void setup() {
     configTime(0, 0, "pool.ntp.org", "time.google.com", "time.cloudflare.com");
     lcd.clear(); lcd.setCursor(0,0); lcd.print("SYNCING CLOUD");
   }
-  
   // Start BLE
   initBLE();
 
@@ -2647,7 +2899,11 @@ void setup() {
   esp_task_wdt_add(NULL); // Register Core 1 loopTask
   Serial.println("[WDT] Task Watchdog Timer initialized (30s timeout) and registered to Core 1 loopTask");
 
-  xTaskCreatePinnedToCore(httpWorkerTask, "HTTP", 32768, NULL, 1, NULL, 0);
+  if (xTaskCreatePinnedToCore(httpWorkerTask, "HTTP", 32768, NULL, 1, NULL, 0) != pdPASS) {
+    isSystemOnline = false;
+    DiagSubsystem.capture(DIAG_CODE_HEAP_LOW, DIAG_SEV_CRITICAL, ESP.getFreeHeap(), 32768, "HTTP_TASK_CREATE_FAILED");
+    Serial.println("[CRITICAL] HTTP worker creation failed; local access remains active.");
+  }
 
   // (PN532 SPI readers were initialized at Stage 6b before Wi-Fi provisioning)
 
@@ -2680,7 +2936,6 @@ void setup() {
       if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
         Serial.println("[OTA] First boot on new partition detected (PENDING_VERIFY).");
         Serial.println("[OTA] Evaluating health preconditions before committing image...");
-        
         bool fsHealthy = (LittleFS.totalBytes() > 0);
         bool snapHealthy = (snapshotIsValid && currentAuthRevision > 0);
         bool readersHealthy = (nfc1Available && nfc2Available);
@@ -2720,45 +2975,36 @@ void setup() {
 
 // ================= SYSTEM HEALTH & DIAGNOSTICS =================
 void printSystemStatus() {
+  FocusXLock snapshotLock(snapshotMutex);
   Serial.println("==================================================");
   Serial.println("              FOCUSX SYSTEM HEALTH CHECK          ");
   Serial.println("==================================================");
   Serial.println(" Device ID:       " + String(READER_ID));
   Serial.println(" Library ID:      " + String(currentLibraryId));
-  
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println(" [1] Wi-Fi:       CONNECTED | IP: " + WiFi.localIP().toString() + " | RSSI: " + String(WiFi.RSSI()) + " dBm");
   } else {
     Serial.println(" [1] Wi-Fi:       DISCONNECTED (OFFLINE MODE)");
   }
-  
   Serial.println(" [2] Cloud Link:  " + String(isSystemOnline ? "ONLINE (Heartbeat OK)" : "OFFLINE / UNREACHABLE"));
-  
   String clkStr = "UNKNOWN (0)";
   if (clockState == CLOCK_SYNCED) clkStr = "SYNCED (1)";
   else if (clockState == CLOCK_STALE) clkStr = "DEGRADED (2)";
   Serial.println(" [3] Clock/NTP:   " + clkStr + " | Unix Time: " + String(time(NULL)));
-  
   Serial.println(" [4] RFID 1 (In): " + String(nfc1Available ? "ONLINE (PN532 SPI)" : "FAULT / NOT DETECTED"));
   Serial.println(" [5] RFID 2 (Out):" + String(nfc2Available ? "ONLINE (PN532 SPI)" : "FAULT / NOT DETECTED"));
-  
   Serial.println(" [6] Snapshot:    REV " + String(currentAuthRevision) + " | Slot: " + String(activeSlot) + 
                  " | Valid: " + String(snapshotIsValid ? "YES" : "NO") + 
                  " | Total Entries: " + String(authSnapshot.size()));
-  
   Serial.println(" [7] BLE Service: ACTIVE & ADVERTISING");
-  
   size_t totalBytes = LittleFS.totalBytes();
   size_t usedBytes = LittleFS.usedBytes();
   Serial.println(" [8] Storage:     " + String(totalBytes - usedBytes) + " bytes free / " + String(totalBytes) + " total");
-  
-  portENTER_CRITICAL(&queueMutex);
+  takeFocusXMutex(journalMutex);
   size_t pendingCount = pendingEvents.size();
-  portEXIT_CRITICAL(&queueMutex);
+  xSemaphoreGiveRecursive(journalMutex);
   Serial.println(" [9] Event Queue: " + String(pendingCount) + " pending events to sync");
-  
   Serial.println(" [10] Free Heap:  " + String(ESP.getFreeHeap()) + " bytes");
-  
   bool allOk = (snapshotIsValid && (nfc1Available || nfc2Available) && clockState == CLOCK_SYNCED);
   Serial.println("--------------------------------------------------");
   Serial.println(" OVERALL HEALTH:  " + String(allOk ? ">> 100% OPERATIONAL <<" : ">> ATTENTION REQUIRED <<"));
@@ -2838,7 +3084,6 @@ void handleSerialCommands() {
         String scanType = rest.substring(0, sp1);
         String uid = rest.substring(sp1 + 1, sp2);
         bool isExit = (rest.substring(sp2 + 1).toInt() == 1);
-        
         ScanEvent e;
         currentSeqNo++;
         e.seqNo = currentSeqNo;
@@ -2953,7 +3198,37 @@ void handleSerialCommands() {
       int v = line.substring(14).toInt();
       sendDFPlayerCommand(0x06, constrain(v, 0, 30));
       Serial.println("OK:VOICE_VOL=" + String(v));
-    } else if (line == "CMD:STATUS" || line == "CMD:CHECK" || line == "CMD:DIAG") {
+    } else if (line.startsWith("CMD:WIFI ")) {
+      int sp = line.indexOf(' ', 9);
+      if (sp > 9) {
+        String ssid = line.substring(9, sp);
+        String pass = line.substring(sp + 1);
+        ssid.trim(); pass.trim();
+        WiFi.disconnect();
+        WiFi.begin(ssid.c_str(), pass.c_str());
+        Serial.println("OK:WIFI_CONNECTING ssid=" + ssid);
+      } else {
+        Serial.println("ERR:BAD_WIFI_ARGS");
+      }
+    } else if (line.startsWith("CMD:TAP_IN ")) {
+      String cardUid = line.substring(11);
+      cardUid.trim();
+      doAuth(cardUid, "RFID", false);
+      Serial.println("OK:TAP_IN uid=" + cardUid);
+    } else if (line.startsWith("CMD:TAP_OUT ")) {
+      String cardUid = line.substring(12);
+      cardUid.trim();
+      doAuth(cardUid, "RFID", true);
+      Serial.println("OK:TAP_OUT uid=" + cardUid);
+    } else if (line.startsWith("CMD:TAP_DESK ")) {
+      String cardUid = line.substring(13);
+      cardUid.trim();
+      doAuth(cardUid, "RFID", false);
+      Serial.println("OK:TAP_DESK uid=" + cardUid);
+    } else if (line == "CMD:STATUS" || line == "CMD:CHECK" || line == "CMD:DIAG" || line == "CMD:TEST") {
+#if USE_WIEGAND_HARDWARE
+      runFullHardwareDiagnostic();
+#endif
       printSystemStatus();
     } else if (line == "CMD:RESET_IDLE") {
       resetToIdle();
@@ -3007,12 +3282,16 @@ void loop() {
     else if (timePassed < 4200) ledsOn = 3;
     else if (timePassed < 5600) ledsOn = 2;
     else if (timePassed < 7000) ledsOn = 1;
-    
     for (int i = 0; i < NUM_LEDS; i++) {
       if (i < ledsOn) strip.setPixelColor(i, countdownColor);
       else strip.setPixelColor(i, 0);
     }
     strip.show();
+    for (int i = 0; i < RFID2_NUM_LEDS; i++) {
+      if (i < ledsOn) rfid2Strip.setPixelColor(i, countdownColor);
+      else rfid2Strip.setPixelColor(i, 0);
+    }
+    rfid2Strip.show();
   }
 
   static unsigned long lastIdleDisplayCheck = 0;
@@ -3025,12 +3304,16 @@ void loop() {
       shouldStartBLE = false;
       NimBLEDevice::getAdvertising()->start();
     }
-  
     if (!isGateOpen && bleAuthQueue != NULL) {
-      BleAuthItem item;
+      BleAuthItem item = {};
       if (xQueueReceive(bleAuthQueue, &item, 0) == pdTRUE) {
         if (strcmp(item.uid, "DIRECT_UNLOCK") == 0) {
-          executeDirectUnlock(item.isExit);
+          bool ok = executeDirectUnlock(item.isExit);
+          if (item.commandId[0]) {
+            preferences.putString("lastAckCmd", item.commandId);
+            preferences.putString("lastAckStat", ok ? "SUCCESS" : "FAILED");
+            preferences.putString("lastAckErr", ok ? "NONE" : "ERR_UNLOCK_NOT_COMMITTED");
+          }
         } else {
           doAuth(String(item.uid), "BLE", item.isExit);
         }
@@ -3040,12 +3323,29 @@ void loop() {
   if (!isGateOpen && doorState == LOW) {
     char rfidBuf[33];
     if (nfc1Available && readRFID(nfc1, PN532_SS_1, PN532_SS_2, rfidBuf, sizeof(rfidBuf))) {
-      doAuth(String(rfidBuf), "rfid", false);
+      doAuth(String(rfidBuf), "RFID", false);
     }
 
     if (!isGateOpen && nfc2Available && readRFID(nfc2, PN532_SS_2, PN532_SS_1, rfidBuf, sizeof(rfidBuf))) {
-      doAuth(String(rfidBuf), "rfid", true);
+      doAuth(String(rfidBuf), "RFID", true);
     }
+
+#if USE_WIEGAND_HARDWARE
+    char wiegandBuf[33];
+    uint32_t wiegandDec = 0;
+    if (!isGateOpen && v4CheckWiegand(1, wiegandBuf, sizeof(wiegandBuf), wiegandDec)) {
+      Serial.printf("[WIEGAND-1] Entry Card Scanned: Hex=%s Dec=%u\n", wiegandBuf, wiegandDec);
+      doAuth(String(wiegandBuf), "RFID", false);
+    }
+    if (!isGateOpen && v4CheckWiegand(2, wiegandBuf, sizeof(wiegandBuf), wiegandDec)) {
+      Serial.printf("[WIEGAND-2] Exit Card Scanned: Hex=%s Dec=%u\n", wiegandBuf, wiegandDec);
+      doAuth(String(wiegandBuf), "RFID", true);
+    }
+    if (!isGateOpen && v4CheckRDM6300(wiegandBuf, sizeof(wiegandBuf))) {
+      Serial.printf("[RDM6300] Desk Card Scanned: %s\n", wiegandBuf);
+      doAuth(String(wiegandBuf), "RFID", false);
+    }
+#endif
   }
 
   esp_task_wdt_reset(); // Forward progress checkpoint for Core 1 loopTask

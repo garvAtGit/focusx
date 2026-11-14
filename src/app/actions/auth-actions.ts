@@ -413,13 +413,13 @@ export async function logout() {
   const cookieStore = await cookies();
   const sessionCookie = cookieStore.get('session')?.value;
   
-  // Revoke server-side: Firebase refresh tokens (defence in depth) + our own
-  // Redis revocation set (which getSession actually checks per-request).
+  // Revoke the web session via our Redis revocation set, which getSession
+  // checks per-request. Do NOT call adminAuth.revokeRefreshTokens here: it is
+  // account-wide, so a web logout would also sign the same user out of the
+  // mobile app (every /api/mobile route verifies with checkRevoked=true).
   if (sessionCookie && adminAuth) {
     try {
       const decoded = await adminAuth.verifySessionCookie(sessionCookie);
-      // Revoke Firebase refresh tokens (defence in depth)
-      await adminAuth.revokeRefreshTokens(decoded.uid);
 
       // Redis revocation — retry once on failure since this is the primary
       // mechanism that blocks stolen cookies.

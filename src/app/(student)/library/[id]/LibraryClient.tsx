@@ -1,4 +1,5 @@
-'use client'
+'use client';
+import { lockerChargePaise } from '@/lib/locker-pricing';
 
 import { useState, useEffect, useRef, useCallback } from "react"
 import { createClient } from "@supabase/supabase-js"
@@ -544,7 +545,7 @@ export function LibraryClient({
       );
       if (locker) {
         // Prorate standalone lockers based on 28-day month (matches server pricing-policy.ts)
-        lockerCost = Math.round((locker.price / 28) * selectedPlan.validityDays);
+        lockerCost = lockerChargePaise(locker.price, selectedPlan.validityDays) / 100;
       }
     }
     
@@ -569,7 +570,7 @@ export function LibraryClient({
       (item) => item.id === selectedStandaloneLockerId,
     );
     if (locker) {
-      lockerOnlyCost = Math.round(locker.price * activeRemainingDays);
+      lockerOnlyCost = lockerChargePaise(locker.price, activeRemainingDays) / 100;
     }
   }
 

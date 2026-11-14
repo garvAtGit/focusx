@@ -447,7 +447,11 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
     if (!seatChangeBookingId) return;
     setLoadingId(seatChangeBookingId);
     try {
-      await updateBookingSeat(seatChangeBookingId, selectedNewSeatId === "NONE" ? null : selectedNewSeatId);
+      const res = await updateBookingSeat(seatChangeBookingId, selectedNewSeatId === "NONE" ? null : selectedNewSeatId);
+      if (res?.error) {
+        toast.error(res.error);
+        return;
+      }
       toast.success("Seat updated successfully");
       setSeatChangeBookingId(null);
       refreshData();
@@ -1935,7 +1939,11 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
             <Label>Select New Seat</Label>
             <Select value={selectedNewSeatId && selectedNewSeatId !== "NONE" ? selectedNewSeatId : undefined} onValueChange={setSelectedNewSeatId}>
               <SelectTrigger>
-                <SelectValue placeholder="Choose a seat" />
+                <SelectValue placeholder="Choose a seat">
+                  {selectedNewSeatId && selectedNewSeatId !== "NONE"
+                    ? seats.find(s => s.id === selectedNewSeatId)?.name || "Choose a seat"
+                    : "Choose a seat"}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {seats.map(s => {

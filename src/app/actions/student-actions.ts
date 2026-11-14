@@ -752,9 +752,61 @@ export async function createOfflineStudentWithRFID(libraryId: string, name: stri
       return { error: qrResult.error };
     }
 
+    // Update any pending EntryLog records for this RFID
+    try {
+      await prisma.entryLog.updateMany({
+        where: {
+          libraryId: effectiveLibId,
+          reason: `Unregistered RFID: ${rfidTag}`,
+        },
+        data: {
+          userId: newStudent.id,
+          reason: `Assigned RFID: ${rfidTag}`,
+        }
+      });
+    } catch (e) {
+      console.warn("[createOfflineStudentWithRFID] Failed to update EntryLogs:", e);
+    }
+
+    // Queue SYNC_SNAPSHOT on active relays
+    try {
+      const activeRelays = await prisma.relay.findMany({
+        where: { libraryId: effectiveLibId, status: "ONLINE" },
+        select: { id: true }
+      });
+      for (const r of activeRelays) {
+        const cmdObj = {
+          cmdId: `sync-${Date.now()}`,
+          action: "SYNC_SNAPSHOT",
+          status: "QUEUED",
+          createdAt: Date.now()
+        };
+        await prisma.relay.update({
+          where: { id: r.id },
+          data: { pendingCommand: JSON.stringify(cmdObj) }
+        });
+      }
+    } catch (e) {
+      console.warn("[createOfflineStudentWithRFID] Failed to queue SYNC_SNAPSHOT:", e);
+    }
+
     await invalidateStudentsCache(effectiveLibId);
     await invalidateLibraryRuntimeCache(effectiveLibId);
-    revalidatePath("/dashboard/students");
+    try {
+      revalidatePath("/dashboard");
+      revalidatePath("/dashboard/students");
+    } catch {
+      // Safe when called outside Next.js request context
+    }
+
+    // Realtime broadcast to update dashboard live logs
+    const { broadcastScannerUpdate } = await import("@/lib/realtime-publisher");
+    await broadcastScannerUpdate(effectiveLibId, {
+      type: "RFID_ASSIGNED",
+      studentId: newStudent.id,
+      studentName: newStudent.name,
+      rfidTag,
+    }).catch(() => {});
 
     return { success: true, student: newStudent, qrPayload: qrResult.qrPayload };
   } catch (error: unknown) {

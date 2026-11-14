@@ -5,9 +5,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { searchActiveStudents, createOfflineStudentWithRFID } from "@/app/actions/student-actions"
-import { generateRFIDCommandQR } from "@/app/actions/hardware-actions"
+import { assignRFIDDirectly, generateRFIDCommandQR } from "@/app/actions/hardware-actions"
 import toast from "react-hot-toast"
-import { Search, Loader2 } from "lucide-react"
+import { Search, Loader2, CheckCircle2 } from "lucide-react"
 import QRCode from "react-qr-code"
 
 interface AssignRFIDModalProps {
@@ -33,6 +33,7 @@ export function AssignRFIDModal({ rfidTag, open, onOpenChange, onSuccess }: Assi
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [assigning, setAssigning] = useState(false);
+  const [assignedStudentName, setAssignedStudentName] = useState<string | null>(null);
   const [qrPayload, setQrPayload] = useState<string | null>(null);
   const [tab, setTab] = useState<'SEARCH' | 'CREATE'>('SEARCH');
   const [newName, setNewName] = useState("");
@@ -51,6 +52,7 @@ export function AssignRFIDModal({ rfidTag, open, onOpenChange, onSuccess }: Assi
 
   useEffect(() => {
     if (!open) return;
+    setAssignedStudentName(null);
     setQrPayload(null);
     setSearch("");
     void loadStudents();
@@ -73,24 +75,32 @@ export function AssignRFIDModal({ rfidTag, open, onOpenChange, onSuccess }: Assi
 
   async function handleAssign(
     studentId: string,
+    studentName: string,
     bookings?: ActiveStudent["bookings"],
   ) {
     if (assigning) return;
     setAssigning(true);
     try {
+      // 1. Direct assignment: links RFID to student in DB and triggers hardware sync
+      const res = await assignRFIDDirectly(studentId, rfidTag);
+      if (res.error) {
+        toast.error(res.error);
+        setAssigning(false);
+        return;
+      }
+
+      // Also generate QR in background for optional offline fallback
       let exp = 0;
       if (bookings && bookings.length > 0 && bookings[0].endTime) {
         exp = Math.floor(new Date(bookings[0].endTime).getTime() / 1000);
       }
-      
-      const res = await generateRFIDCommandQR(studentId, "ADD_RFID", rfidTag, exp);
-      if (res.error) {
-        toast.error(res.error);
-      } else if (res.qrPayload) {
-        toast.success("RFID assigned in database!");
-        setQrPayload(res.qrPayload);
-        if (onSuccess) onSuccess();
-      }
+      generateRFIDCommandQR(studentId, "ADD_RFID", rfidTag, exp).then((qrRes) => {
+        if (qrRes.qrPayload) setQrPayload(qrRes.qrPayload);
+      }).catch(() => {});
+
+      toast.success(`RFID assigned to ${studentName}!`);
+      setAssignedStudentName(studentName);
+      if (onSuccess) onSuccess();
     } catch {
       toast.error("Failed to assign RFID");
     } finally {
@@ -106,9 +116,11 @@ export function AssignRFIDModal({ rfidTag, open, onOpenChange, onSuccess }: Assi
       const res = await createOfflineStudentWithRFID("", newName.trim(), rfidTag, newGender || undefined);
       if (res.error) {
         toast.error(res.error);
-      } else if (res.qrPayload) {
-        toast.success(`Created ${res.student?.name} and assigned RFID!`);
-        setQrPayload(res.qrPayload);
+      } else {
+        const studentName = res.student?.name || newName.trim();
+        toast.success(`Created ${studentName} and assigned RFID!`);
+        setAssignedStudentName(studentName);
+        if (res.qrPayload) setQrPayload(res.qrPayload);
         if (onSuccess) onSuccess();
       }
     } catch {
@@ -125,16 +137,32 @@ export function AssignRFIDModal({ rfidTag, open, onOpenChange, onSuccess }: Assi
           <DialogTitle>Assign RFID Tag</DialogTitle>
         </DialogHeader>
         
-        {qrPayload ? (
-          <div className="flex flex-col items-center justify-center p-6 space-y-4">
-            <h3 className="font-bold text-foreground">Scan at the Door</h3>
-            <p className="text-sm text-muted-foreground text-center">
-              The tag <strong className="text-foreground">{rfidTag}</strong> has been assigned in the database. Scan this QR code at the library door scanner to sync the hardware.
-            </p>
-            <div className="bg-white p-4 rounded-xl shadow-sm border border-border">
-              <QRCode value={qrPayload} size={200} />
+        {assignedStudentName ? (
+          <div className="flex flex-col items-center justify-center p-6 space-y-4 text-center">
+            <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center">
+              <CheckCircle2 className="w-10 h-10" />
             </div>
-            <Button onClick={() => onOpenChange(false)} className="w-full mt-4">Done</Button>
+            <div>
+              <h3 className="text-lg font-bold text-foreground">RFID Assigned Successfully!</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                Tag <strong className="font-mono text-foreground">{rfidTag}</strong> is now linked to <strong className="text-foreground">{assignedStudentName}</strong>.
+              </p>
+            </div>
+            <div className="w-full bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300 p-3 rounded-xl border border-emerald-200 dark:border-emerald-800 text-xs">
+              ✓ Gate hardware revision updated. Access credentials have been synced to the door machine.
+            </div>
+            <Button onClick={() => onOpenChange(false)} className="w-full mt-2">
+              Done
+            </Button>
+            {qrPayload && (
+              <details className="w-full text-xs text-muted-foreground text-left cursor-pointer pt-2">
+                <summary className="font-medium hover:text-foreground">Show QR Code (Optional manual sync)</summary>
+                <div className="flex flex-col items-center p-4 mt-2 bg-white rounded-xl border border-border">
+                  <QRCode value={qrPayload} size={150} />
+                  <span className="text-[10px] text-muted-foreground mt-2">Scan at door reader camera if gate is offline</span>
+                </div>
+              </details>
+            )}
           </div>
         ) : (
           <div className="space-y-4 py-4">
@@ -162,7 +190,7 @@ export function AssignRFIDModal({ rfidTag, open, onOpenChange, onSuccess }: Assi
               <>
                 <div className="relative">
                   <Input 
-                    placeholder="Search student by name or phone..." 
+                    placeholder="Search student by name, phone, or ID..." 
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     className="pl-9"
@@ -189,9 +217,9 @@ export function AssignRFIDModal({ rfidTag, open, onOpenChange, onSuccess }: Assi
                           size="sm" 
                           variant="outline" 
                           disabled={assigning}
-                          onClick={() => handleAssign(s.id, s.bookings)}
+                          onClick={() => handleAssign(s.id, s.name, s.bookings)}
                         >
-                          Assign
+                          {assigning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Assign"}
                         </Button>
                       </div>
                     ))
@@ -231,7 +259,7 @@ export function AssignRFIDModal({ rfidTag, open, onOpenChange, onSuccess }: Assi
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground text-center">
-                  This will create a new student profile without a phone number and instantly assign the RFID tag to it.
+                  This will create a new student profile and instantly sync the RFID tag to the door machine.
                 </p>
               </div>
             )}

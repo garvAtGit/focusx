@@ -19,9 +19,34 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
 
+    // Allow-list: only what the student app displays. Never return the whole
+    // record: it holds owner-only data (KYC documents, admin notes, payment
+    // account, Wi-Fi password). Add a field here when the app needs it.
     const library = await prisma.library.findUnique({
       where: { id },
-      include: {
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        address: true,
+        locality: true,
+        city: true,
+        district: true,
+        state: true,
+        pinCode: true,
+        metroStation: true,
+        metroDistance: true,
+        googleMapsUrl: true,
+        managerPhone: true,
+        whatsapp: true,
+        openingTime: true,
+        closingTime: true,
+        photos: true,
+        facilities: true,
+        seatsAvailable: true,
+        compactSeatMap: true,
+        seatNaming: true,
+        kycStatus: true,
         plans: { where: { isActive: true } },
         seats: true,
         standaloneLockers: true
@@ -32,7 +57,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       return NextResponse.json({ error: 'Library not found' }, { status: 404 });
     }
 
-    return NextResponse.json(library);
+    // `verified` drives the app's verified badge: the library has passed KYC review.
+    const { kycStatus, ...publicLibrary } = library;
+    return NextResponse.json({ ...publicLibrary, verified: kycStatus === 'APPROVED' });
   } catch (error) {
     console.error("Error fetching library:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

@@ -45,6 +45,8 @@ export async function GET(req: Request) {
       lng: null,
       plans: lib.plans,
       facilities: lib.facilities || [],
+      // Every listed library has passed KYC review; the app shows this as its verified badge.
+      verified: lib.kycStatus === 'APPROVED',
     }));
 
     return NextResponse.json({ libraries: formattedLibraries });

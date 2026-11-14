@@ -258,9 +258,9 @@ export function LockerOccupancyChart({
                 </div>
                 {popupLocker.price !== null && (
                   <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground">Daily Price</span>
+                    <span className="text-muted-foreground">Monthly Price (30 days)</span>
                     <span className="font-medium text-emerald-600 dark:text-emerald-400">
-                      ₹{popupLocker.price}/day
+                      ₹{popupLocker.price}/month
                     </span>
                   </div>
                 )}

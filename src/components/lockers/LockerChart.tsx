@@ -1,5 +1,6 @@
 "use client";
 
+import { lockerChargePaise } from '@/lib/locker-pricing';
 import { useMemo } from "react";
 import { Lock, Check, X, ShieldAlert } from "lucide-react";
 import { toast } from "react-hot-toast";
@@ -98,7 +99,7 @@ export default function LockerChart({
         {selectedLocker ? (
           <div className="flex items-center gap-2">
             <span className="text-xs font-black text-primary bg-primary/10 px-2.5 py-1 rounded-lg border border-primary/20">
-              Locker {selectedLocker.name} (+₹{Math.round((selectedLocker.price / 28) * validityDays)})
+              Locker {selectedLocker.name} (+₹{(lockerChargePaise(selectedLocker.price, validityDays) / 100)})
             </span>
             <button
               type="button"
@@ -165,7 +166,7 @@ export default function LockerChart({
           {sortedLockers.map((locker) => {
             const isOccupied = occupiedLockerIds.includes(locker.id);
             const isSelected = selectedLockerId === locker.id;
-            const proratedCost = Math.round((locker.price / 28) * validityDays);
+            const proratedCost = (lockerChargePaise(locker.price, validityDays) / 100);
 
             if (isOccupied) {
               return (
@@ -235,7 +236,7 @@ export default function LockerChart({
           <span>Click any available locker to add it to your plan.</span>
           {selectedLocker && (
             <span className="font-bold text-foreground">
-              +₹{Math.round((selectedLocker.price / 28) * validityDays)} added to total
+              +₹{(lockerChargePaise(selectedLocker.price, validityDays) / 100)} added to total
             </span>
           )}
         </div>

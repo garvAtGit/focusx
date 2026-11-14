@@ -60,3 +60,9 @@ FocusX_Scanner_Firmware_V5_DualRFID/
 ble_only_logic/
 rfid_only_logic/
 
+
+FocusX_Scanner_Firmware_V5_DualRFID_backup_20261103_v4handover/
+firmware_releases/
+firmware_test_build/
+*.csv
+*.xlsx

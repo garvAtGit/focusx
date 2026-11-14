@@ -21,8 +21,8 @@ export async function POST(req: Request) {
     }
     const canonicalPhone = `+${digits}`;
 
-    // Verify OTP
-    const verification = verifyWhatsAppOtp(canonicalPhone, String(otp));
+    // Verify OTP (async with Redis & memory support)
+    const verification = await verifyWhatsAppOtp(canonicalPhone, String(otp));
     if (!verification.valid) {
       return NextResponse.json({ error: verification.error || 'Invalid OTP' }, { status: 400 });
     }
@@ -60,4 +60,3 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Failed to verify WhatsApp OTP' }, { status: 500 });
   }
 }
-

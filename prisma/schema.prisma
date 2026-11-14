@@ -224,6 +224,7 @@ model Booking {
   student               User              @relation(fields: [studentId], references: [id])
   bookingIntent         BookingIntent?
   refundTasks           RefundTask[]
+  pauseEvents           BookingPauseEvent[]
 
   @@index([libraryId, status])
   @@index([libraryId, status, endTime])
@@ -238,7 +239,20 @@ model Booking {
   @@index([endTime])
 }
 
+model BookingPauseEvent {
+  id String @id @default(uuid())
+  bookingId String
+  action String
+  timestamp DateTime @default(now())
+  creditedDays Int @default(0)
+  endTime DateTime
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  @@index([bookingId, timestamp])
+}
+
 model BookingIntent {
+  operation String @default("ADD_STUDENT")
+  sourceBookingId String?
   providerOrderId     String?             @unique
   id                  String              @id @default(uuid())
   referenceId         String              @unique

@@ -22,6 +22,7 @@ import TodayTimeTimeline from "@/components/dashboard/TodayTimeTimeline";
 import { checkDurationAndNotify } from "@/lib/notification-utils";
 import { startOfDay, startOfWeek, startOfMonth, subDays, differenceInMinutes } from "date-fns";
 import CozyWinterDashboard from "@/components/winter-arc/CozyWinterDashboard";
+import { calculateSafeSessionMinutes } from "@/lib/attendance-summary";
 
 const formatDate = (date: Date) => formatStandardDate(date);
 const formatDateTime = (date: Date) => formatStandardDateTime(date);
@@ -48,6 +49,7 @@ const todayStart = startOfDayIST(new Date());
       const weekStart = subDays(todayStart, 6); // 7-day rolling window
       const arcStart = new Date('2026-10-06T00:00:00+05:30');
       const arcEnd = new Date('2026-11-06T23:59:59+05:30');
+      const effectiveWeekStart = weekStart < arcStart ? arcStart : weekStart;
       
       const allMonthLogs = await prisma.checkinLog.findMany({
         where: { timestamp: { gte: arcStart, lte: arcEnd } },
@@ -71,14 +73,14 @@ const todayStart = startOfDayIST(new Date());
             if (log.status === 'CHECK_IN') {
               lastInTime = new Date(log.timestamp);
             } else if ((log.status === 'CHECK_OUT' || log.status === 'AUTO_CHECKOUT') && lastInTime) {
-              const diff = Math.floor((new Date(log.timestamp).getTime() - lastInTime.getTime()) / 60000);
+              const diff = calculateSafeSessionMinutes(lastInTime, log.timestamp);
               if (!isNaN(diff) && diff > 0) totalMinutes += diff;
               lastInTime = null;
             }
           }
           
           if (lastInTime && new Date(lastInTime).toDateString() === new Date().toDateString()) {
-            const diff = Math.floor((new Date().getTime() - lastInTime.getTime()) / 60000);
+            const diff = calculateSafeSessionMinutes(lastInTime, new Date());
             if (!isNaN(diff) && diff > 0) totalMinutes += diff;
           }
 
@@ -105,7 +107,7 @@ const todayStart = startOfDayIST(new Date());
       }));
       topScholars.week = getTop(allMonthLogs.filter(l => {
         const t = new Date(l.timestamp);
-        return t >= weekStart && t <= arcEnd;
+        return t >= effectiveWeekStart && t <= arcEnd;
       }));
       topScholars.today = getTop(allMonthLogs.filter(l => {
         const t = new Date(l.timestamp);
@@ -138,7 +140,7 @@ const todayStart = startOfDayIST(new Date());
     prisma.checkinLog.findMany({
       where: { 
         studentId: session.userId,
-        timestamp: { gte: new Date('2026-10-01T00:00:00+05:30') }
+        timestamp: { gte: new Date('2026-10-06T00:00:00+05:30') }
       },
       orderBy: { timestamp: 'asc' }
     })
@@ -299,11 +301,11 @@ const todayStart = startOfDayIST(new Date());
         for (const log of studentLogs) {
           if (log.status === 'CHECK_IN') lastCheckin = log.timestamp;
           else if (log.status === 'CHECK_OUT' && lastCheckin) {
-            totalMinutes += differenceInMinutes(log.timestamp, lastCheckin);
+            totalMinutes += calculateSafeSessionMinutes(lastCheckin, log.timestamp);
             lastCheckin = null;
           }
         }
-        if (lastCheckin) totalMinutes += differenceInMinutes(now, lastCheckin);
+        if (lastCheckin) totalMinutes += calculateSafeSessionMinutes(lastCheckin, now);
 
         if (totalMinutes > 0) {
           durations.push({

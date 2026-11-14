@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import { verifyRelayKey } from "@/lib/relay-auth";
 import { resolveRelay } from "@/lib/hardware-resolver";
 import { verifyAdminAuth } from "@/lib/admin-auth-guard";
 import { supabaseServer } from "@/lib/supabase-server";
+
+import { diagnosticSeverity, diagnosticStorageId, diagnosticWireId, diagnosticInteger, readDiagnosticBody } from "@/lib/diagnostic-policy";
 
 export const dynamic = "force-dynamic";
 
@@ -20,16 +23,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    let body: any;
+    let body: unknown;
     try {
-      body = await request.json();
-    } catch {
-      return NextResponse.json({ error: "Malformed JSON" }, { status: 400 });
+      body = await readDiagnosticBody(request);
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof RangeError ? "Payload exceeds 64 KB" : "Malformed JSON" }, { status: error instanceof RangeError ? 413 : 400 });
     }
 
-    const { deviceId, events, diagStats } = body;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: "Expected an object" }, { status: 400 });
+    }
+    const { deviceId, events, diagStats } = body as Record<string, unknown>;
 
-    if (!deviceId) {
+    if (typeof deviceId !== "string" || !deviceId.trim() || deviceId.length > 128) {
       return NextResponse.json({ error: "Missing deviceId" }, { status: 400 });
     }
 
@@ -50,86 +56,65 @@ export async function POST(request: NextRequest) {
     }
 
     const ackEventIds: string[] = [];
-    const validEntries = [];
+    const validEntries: Prisma.DeviceDiagnosticLogCreateManyInput[] = [];
     const now = new Date();
 
+    const rejectedEventIds: string[] = [];
     for (const raw of events) {
-      if (!raw || typeof raw !== "object") continue;
-
-      const eventId = String(raw.eventId || "").trim();
-      if (!eventId || eventId.length < 4 || eventId.length > 64) continue;
-
-      const eventCode = Number(raw.eventCode);
-      if (isNaN(eventCode)) continue;
-
-      let severity = String(raw.severity || "INFO").toUpperCase();
-      if (!VALID_SEVERITIES.has(severity)) {
-        severity = "INFO";
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        return NextResponse.json({ error: "Invalid event object" }, { status: 400 });
       }
-
-      let timestamp = raw.timestamp ? new Date(Number(raw.timestamp) * (raw.timestamp < 10000000000 ? 1000 : 1)) : now;
-      if (isNaN(timestamp.getTime())) {
-        timestamp = now;
+      const eventId = typeof raw.eventId === "string" ? raw.eventId.trim() : "";
+      const eventCode = diagnosticInteger(raw.eventCode, 0, 65535);
+      const uptime = diagnosticInteger(raw.uptimeMs);
+      const p1 = raw.param1 == null ? null : diagnosticInteger(raw.param1, -2147483648, 2147483647);
+      const p2 = raw.param2 == null ? null : diagnosticInteger(raw.param2);
+      const epoch = raw.timestamp == null ? 0 : diagnosticInteger(raw.timestamp);
+      const timestamp = epoch ? new Date(epoch < 10000000000 ? epoch * 1000 : epoch) : now;
+      if (eventId.length < 4 || eventId.length > 96 || eventCode === null || uptime === null || epoch === null
+          || (raw.param1 != null && p1 === null) || (raw.param2 != null && p2 === null)
+          || !Number.isFinite(timestamp.getTime()) || timestamp.getTime() > now.getTime() + 300000
+          || (raw.detail != null && typeof raw.detail !== "string")
+          || !VALID_SEVERITIES.has(String(raw.severity).toUpperCase())) {
+        rejectedEventIds.push(eventId);
+        continue;
       }
-
-      const uptimeMs = BigInt(Math.max(0, Math.floor(Number(raw.uptimeMs) || 0)));
-      const param1 = raw.param1 !== undefined && raw.param1 !== null ? Number(raw.param1) : null;
-      const param2 = raw.param2 !== undefined && raw.param2 !== null ? BigInt(Math.floor(Number(raw.param2))) : null;
-
-      let detail: string | null = null;
-      if (raw.detail !== undefined && raw.detail !== null) {
-        detail = String(raw.detail).slice(0, MAX_DETAIL_LEN);
-      }
-
       validEntries.push({
-        id: crypto.randomUUID(),
-        relayId: relay.id,
-        eventId,
-        eventCode,
-        severity,
-        timestamp,
-        uptimeMs,
-        param1: isNaN(param1 as number) ? null : param1,
-        param2,
-        detail,
-        serverReceivedAt: now,
+        id: crypto.randomUUID(), relayId: relay.id,
+        eventId: diagnosticStorageId(relay.id, eventId), eventCode,
+        severity: diagnosticSeverity(eventCode, p1, raw.severity), timestamp,
+        uptimeMs: BigInt(uptime), param1: p1, param2: p2 === null ? null : BigInt(p2),
+        detail: raw.detail == null ? null : raw.detail.slice(0, MAX_DETAIL_LEN), serverReceivedAt: now,
       });
-
       ackEventIds.push(eventId);
     }
 
-    if (validEntries.length > 0) {
-      // Idempotent insertion: ignore duplicate eventIds
-      await prisma.deviceDiagnosticLog.createMany({
-        data: validEntries,
-        skipDuplicates: true,
-      });
-    }
-
     // Update relay diagnostic heartbeat / stats
-    const updateData: any = {
+    const updateData: Prisma.RelayUpdateInput = {
       lastDiagAckAt: now,
     };
 
     if (diagStats && typeof diagStats === "object") {
-      if (typeof diagStats.queueDepth === "number") {
-        updateData.diagQueueDepth = Math.max(0, diagStats.queueDepth);
-      }
-      if (typeof diagStats.droppedCount === "number") {
-        updateData.diagDroppedCount = Math.max(0, diagStats.droppedCount);
-      }
-      if (typeof diagStats.resetReason === "string" && diagStats.resetReason.trim()) {
-        updateData.resetReason = diagStats.resetReason.trim().slice(0, 100);
+      const stats = diagStats as Record<string, unknown>;
+      const depth = diagnosticInteger(stats.queueDepth, 0, 2147483647);
+      const dropped = diagnosticInteger(stats.droppedCount, 0, 2147483647);
+      if (depth !== null) updateData.diagQueueDepth = depth;
+      if (dropped !== null) updateData.diagDroppedCount = dropped;
+      if (typeof stats.resetReason === "string" && stats.resetReason.trim()) {
+        updateData.resetReason = stats.resetReason.trim().slice(0, 100);
       }
     }
 
-    await prisma.relay.update({
-      where: { id: relay.id },
-      data: updateData,
+    const insertedEntries = await prisma.$transaction(async (tx) => {
+      const inserted = validEntries.length ? await tx.deviceDiagnosticLog.createManyAndReturn({
+        data: validEntries, skipDuplicates: true,
+      }) : [];
+      await tx.relay.update({ where: { id: relay.id }, data: updateData });
+      return inserted;
     });
 
     // Optional realtime broadcast for critical/fatal faults
-    const hasCritical = validEntries.some((e) => e.severity === "CRITICAL" || e.severity === "FATAL");
+    const hasCritical = insertedEntries.some((e) => e.severity === "CRITICAL" || e.severity === "FATAL");
     if (hasCritical && supabaseServer) {
       try {
         await supabaseServer.channel("admin-hardware-diagnostics").send({
@@ -138,10 +123,10 @@ export async function POST(request: NextRequest) {
           payload: {
             relayId: relay.id,
             deviceId,
-            alerts: validEntries
+            alerts: insertedEntries
               .filter((e) => e.severity === "CRITICAL" || e.severity === "FATAL")
               .map((e) => ({
-                eventId: e.eventId,
+                eventId: diagnosticWireId(relay.id, e.eventId),
                 eventCode: e.eventCode,
                 severity: e.severity,
                 detail: e.detail,
@@ -158,6 +143,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       acceptedCount: validEntries.length,
+      rejectedEventIds,
       ackEventIds,
     });
   } catch (error) {
@@ -188,7 +174,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const relayId = searchParams.get("relayId");
     const deviceId = searchParams.get("deviceId");
-    const limit = Math.min(200, Math.max(1, Number(searchParams.get("limit")) || 50));
+    const limit = Math.min(200, Math.max(1, Math.floor(Number(searchParams.get("limit")) || 50)));
     const severity = searchParams.get("severity");
 
     let targetRelayId = relayId;
@@ -203,9 +189,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "relayId or deviceId is required" }, { status: 400 });
     }
 
-    const where: any = { relayId: targetRelayId };
-    if (severity && VALID_SEVERITIES.has(severity.toUpperCase())) {
-      where.severity = severity.toUpperCase();
+    const where: Prisma.DeviceDiagnosticLogWhereInput = { relayId: targetRelayId, eventCode: { notIn: [1010, 1011] } };
+    if (severity && !VALID_SEVERITIES.has(severity.toUpperCase())) {
+      return NextResponse.json({ error: "Invalid severity" }, { status: 400 });
     }
 
     const [logs, relay] = await Promise.all([
@@ -235,6 +221,9 @@ export async function GET(request: NextRequest) {
     // Serialize BigInt values
     const serializedLogs = logs.map((log) => ({
       ...log,
+      eventId: diagnosticWireId(log.relayId, log.eventId),
+      reportedSeverity: log.severity,
+      severity: diagnosticSeverity(log.eventCode, log.param1, log.severity),
       uptimeMs: log.uptimeMs.toString(),
       param2: log.param2 !== null ? log.param2.toString() : null,
     }));
@@ -242,7 +231,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       relay,
-      logs: serializedLogs,
+      logs: serializedLogs.filter((log) => !severity || log.severity === severity.toUpperCase()),
     });
   } catch (error) {
     console.error("[Hardware Diagnostics Query Error]:", error);

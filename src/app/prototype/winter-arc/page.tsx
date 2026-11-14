@@ -1,11 +1,10 @@
 "use client";
 
+import { playfair, inter } from "@/lib/fonts";
+
 import { motion } from "framer-motion";
-import { Playfair_Display, Inter } from "next/font/google";
 import { useState, useEffect } from "react";
 
-const playfair = Playfair_Display({ subsets: ["latin"], weight: ["400", "700"] });
-const inter = Inter({ subsets: ["latin"], weight: ["300", "400", "600"] });
 
 const leagues = [
   { hours: 6, target: 150, discount: 15 },

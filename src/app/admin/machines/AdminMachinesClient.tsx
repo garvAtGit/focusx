@@ -277,6 +277,26 @@ export function AdminMachinesClient({
     };
   }, [livePeekRelayId, livePeekRemainingSec]);
 
+  const [isDownloadingCrash, setIsDownloadingCrash] = useState(false);
+  const downloadCrashDump = async (relayId: string) => {
+    setIsDownloadingCrash(true);
+    try {
+      const response = await fetch(`/api/hardware/diagnostics/crash?relayId=${encodeURIComponent(relayId)}`);
+      if (!response.ok) {
+        toast.error(response.status === 404 ? "No crash report has been uploaded yet."
+          : response.status === 409 ? "The crash report is still uploading or failed its integrity check."
+          : "Unable to download the crash report.");
+        return;
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url; link.download = `crash-${relayId}.bin`;
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch { toast.error("Network error downloading the crash report."); }
+    finally { setIsDownloadingCrash(false); }
+  };
+
   const openDiagModal = async (relay: RelayData) => {
     setActiveDiagRelay(relay);
     setIsLoadingDiag(true);
@@ -1389,6 +1409,11 @@ export function AdminMachinesClient({
               </div>
 
               <div className="flex items-center gap-2">
+                <button type="button" disabled={isDownloadingCrash}
+                  onClick={() => downloadCrashDump(activeDiagRelay.id)}
+                  className="px-3 py-2 rounded-xl text-xs font-bold text-slate-600 border border-slate-200 hover:bg-slate-100 disabled:opacity-50">
+                  {isDownloadingCrash ? "Downloading..." : "Download crash report"}
+                </button>
                 <button
                   type="button"
                   onClick={() => openDiagModal(activeDiagRelay)}
@@ -1411,7 +1436,7 @@ export function AdminMachinesClient({
             {/* Filter Tabs */}
             <div className="px-6 py-3 border-b border-slate-100 bg-white flex items-center gap-2">
               <span className="text-xs font-bold text-slate-400 mr-2 uppercase tracking-wider">Severity:</span>
-              {["ALL", "CRITICAL", "ERROR", "WARN", "INFO"].map((tab) => (
+              {["ALL", "FATAL", "CRITICAL", "ERROR", "WARN", "INFO"].map((tab) => (
                 <button
                   key={tab}
                   type="button"

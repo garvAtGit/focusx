@@ -244,6 +244,8 @@ export async function generateRFIDCommandQR(studentId: string, cmd: "ADD_RFID" |
     });
     if (studentBooking?.libraryId) {
       await invalidateStudentsCache(studentBooking.libraryId);
+      const { incrementLibraryRevision } = await import("@/lib/hardware-sync");
+      await incrementLibraryRevision(studentBooking.libraryId);
     }
   } catch (error) {
     console.error("Failed to update RFID in DB:", error);
@@ -287,6 +289,127 @@ export async function generateRFIDCommandQR(studentId: string, cmd: "ADD_RFID" |
     console.error("Failed to sign RFID Command QR payload:", error);
     return { error: "Signature generation failed" };
   }
+}
+
+export async function assignRFIDDirectly(studentId: string, rfidTag: string, libraryId?: string, sessionOverride?: any) {
+  const session = sessionOverride || await getSession();
+  if (!session || (session.role !== "LIBRARIAN" && session.role !== "ADMIN" && session.role !== "RECEPTIONIST")) {
+    return { error: "Unauthorized" };
+  }
+
+  const cleanRfid = rfidTag.trim();
+  if (!cleanRfid) {
+    return { error: "RFID tag cannot be empty" };
+  }
+
+  // 1. Check if this RFID is assigned to someone else
+  const existing = await prisma.user.findFirst({
+    where: { rfidTag: cleanRfid },
+    select: { id: true, name: true }
+  });
+  if (existing && existing.id !== studentId) {
+    return { error: `RFID Tag ${cleanRfid} is already assigned to ${existing.name || 'another student'}.` };
+  }
+
+  // 2. Resolve target library
+  let effectiveLibId = libraryId;
+  if (!effectiveLibId) {
+    const studentBooking = await prisma.booking.findFirst({
+      where: { studentId },
+      select: { libraryId: true },
+      orderBy: { createdAt: "desc" },
+    });
+    if (studentBooking?.libraryId) {
+      effectiveLibId = studentBooking.libraryId;
+    }
+  }
+
+  if (!effectiveLibId) {
+    const { getActiveLibrary } = await import("@/lib/dashboard-utils");
+    const activeLib = await getActiveLibrary(session);
+    if (activeLib) {
+      effectiveLibId = activeLib.id;
+    }
+  }
+
+  // 3. Update student in database
+  const updatedStudent = await prisma.user.update({
+    where: { id: studentId },
+    data: { rfidTag: cleanRfid },
+    select: { id: true, name: true, uniqueId: true, rfidTag: true }
+  });
+
+  // 4. Update any pending EntryLog records for this RFID
+  if (effectiveLibId) {
+    try {
+      await prisma.entryLog.updateMany({
+        where: {
+          libraryId: effectiveLibId,
+          reason: `Unregistered RFID: ${cleanRfid}`,
+        },
+        data: {
+          userId: studentId,
+          reason: `Assigned RFID: ${cleanRfid}`,
+        }
+      });
+    } catch (e) {
+      console.warn("[assignRFIDDirectly] Failed to update EntryLogs:", e);
+    }
+
+    // 5. Increment library auth revision for hardware synchronization
+    const { incrementLibraryRevision } = await import("@/lib/hardware-sync");
+    const newRev = await incrementLibraryRevision(effectiveLibId);
+
+    // 6. Queue SYNC_SNAPSHOT on active relays to trigger instant pull
+    try {
+      const activeRelays = await prisma.relay.findMany({
+        where: { libraryId: effectiveLibId, status: "ONLINE" },
+        select: { id: true }
+      });
+      for (const r of activeRelays) {
+        const cmdObj = {
+          cmdId: `sync-${Date.now()}`,
+          action: "SYNC_SNAPSHOT",
+          status: "QUEUED",
+          createdAt: Date.now()
+        };
+        await prisma.relay.update({
+          where: { id: r.id },
+          data: { pendingCommand: JSON.stringify(cmdObj) }
+        });
+      }
+    } catch (e) {
+      console.warn("[assignRFIDDirectly] Failed to queue SYNC_SNAPSHOT:", e);
+    }
+
+    // 7. Caching and page revalidation
+    await invalidateStudentsCache(effectiveLibId);
+    await invalidateLibraryRuntimeCache(effectiveLibId);
+    try {
+      const { revalidatePath } = await import("next/cache");
+      revalidatePath("/dashboard");
+      revalidatePath("/dashboard/students");
+    } catch {
+      // Safe when called outside Next.js request context
+    }
+
+    // 8. Realtime broadcast to update dashboard live logs
+    const { broadcastScannerUpdate } = await import("@/lib/realtime-publisher");
+    await broadcastScannerUpdate(effectiveLibId, {
+      type: "RFID_ASSIGNED",
+      studentId,
+      studentName: updatedStudent.name,
+      rfidTag: cleanRfid,
+      revision: newRev
+    }).catch(() => {});
+  }
+
+  return { 
+    success: true, 
+    student: updatedStudent, 
+    rfidTag: cleanRfid,
+    libraryId: effectiveLibId 
+  };
 }
 
 export async function addOfflineStudentWithRFID(formData: FormData) {

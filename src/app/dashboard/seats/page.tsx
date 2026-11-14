@@ -1111,7 +1111,7 @@ export default function SeatsManagerPage() {
                 </span>
                 {bulkPrice && parseFloat(bulkPrice) >= 0 && (
                   <span className="text-xs bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold px-2 py-0.5 rounded">
-                    ₹{bulkPrice}/day (≈ ₹{Math.round(parseFloat(bulkPrice) * 30)}/mo)
+₹{bulkPrice}/day (≈ ₹{Math.round(parseFloat(bulkPrice) * 30)}/mo)
                   </span>
                 )}
               </div>

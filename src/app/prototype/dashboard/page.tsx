@@ -1,12 +1,11 @@
 "use client";
 
+import { playfair, inter } from "@/lib/fonts";
+
 import { motion } from "framer-motion";
-import { Playfair_Display, Inter } from "next/font/google";
 import { useState, useEffect } from "react";
 import { Bell, ScanLine, User, Bluetooth, QrCode, ChevronLeft, ChevronRight, ChevronDown, Clock, BookOpen, Snowflake, ScrollText } from "lucide-react";
 
-const playfair = Playfair_Display({ subsets: ["latin"], weight: ["400", "500", "700", "800"] });
-const inter = Inter({ subsets: ["latin"], weight: ["300", "400", "600"] });
 
 const scholars = [
   { rank: 1, name: "Rupak K.", time: "7h 16m", progress: "90%" },

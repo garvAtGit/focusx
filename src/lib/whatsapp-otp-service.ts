@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { redis } from '@/lib/redis';
 
 interface StoredOtp {
   phone: string;
@@ -8,38 +9,50 @@ interface StoredOtp {
   lastSentAt: number;
 }
 
-// Global in-memory storage for OTPs (persists across Next.js hot-reloads)
+// Global in-memory storage for OTPs fallback (persists across Next.js hot-reloads)
 const globalForOtp = globalThis as unknown as {
   whatsappOtpStore: Map<string, StoredOtp> | undefined;
 };
 
-const otpStore: Map<string, StoredOtp> =
+const memoryStore: Map<string, StoredOtp> =
   globalForOtp.whatsappOtpStore || (globalForOtp.whatsappOtpStore = new Map());
 
 // Clean up expired OTPs periodically (unreferenced so it does not hold the process alive)
 if (typeof setInterval !== 'undefined') {
   const cleanupTimer = setInterval(() => {
     const now = Date.now();
-    for (const [phone, record] of otpStore.entries()) {
+    for (const [phone, record] of memoryStore.entries()) {
       if (record.expiresAt < now) {
-        otpStore.delete(phone);
+        memoryStore.delete(phone);
       }
     }
   }, 60_000);
   if (cleanupTimer.unref) cleanupTimer.unref();
 }
 
+
 /**
  * Generates a cryptographically secure 6-digit numeric OTP.
  */
 export function generateNumericOtp(): string {
-  const num = crypto.randomInt(100000, 999999);
-  return num.toString();
+  try {
+    const num = crypto.randomInt(100000, 999999);
+    return num.toString();
+  } catch {
+    const bytes = crypto.randomBytes(4);
+    const num = 100000 + (bytes.readUInt32BE(0) % 900000);
+    return num.toString();
+  }
+}
+
+function cleanEnv(val: string | undefined): string {
+  if (!val) return '';
+  return val.trim().replace(/^["']|["']$/g, '');
 }
 
 /**
  * Creates and stores an OTP for a given phone number.
- * Rate-limited: max 1 OTP request every 25 seconds per number.
+ * Uses Redis with fallback to memory; rate-limits 25s per phone.
  */
 export async function createAndStoreWhatsAppOtp(phone: string): Promise<{
   otp: string;
@@ -48,38 +61,76 @@ export async function createAndStoreWhatsAppOtp(phone: string): Promise<{
   error?: string;
 }> {
   const now = Date.now();
-  const existing = otpStore.get(phone);
+  const digitsOnly = phone.replace(/\D/g, '');
+  const redisRateLimitKey = `whatsapp:rate:${digitsOnly}`;
+  const redisOtpKey = `whatsapp:otp:${digitsOnly}`;
 
-  if (existing && now - existing.lastSentAt < 25_000) {
-    const waitTime = Math.ceil((25_000 - (now - existing.lastSentAt)) / 1000);
+  // Check rate limit via Redis or memory
+  let isRateLimited = false;
+  let remainingWait = 25;
+
+  try {
+    if (redis) {
+      const ttl = await redis.ttl(redisRateLimitKey);
+      if (ttl > 0) {
+        isRateLimited = true;
+        remainingWait = ttl;
+      }
+    }
+  } catch (err) {
+    console.warn('[WhatsApp OTP] Redis check warning:', err);
+  }
+
+  if (!isRateLimited) {
+    const memRecord = memoryStore.get(digitsOnly);
+    if (memRecord && now - memRecord.lastSentAt < 25_000) {
+      isRateLimited = true;
+      remainingWait = Math.ceil((25_000 - (now - memRecord.lastSentAt)) / 1000);
+    }
+  }
+
+  if (isRateLimited) {
     return {
       otp: '',
       expiresInSeconds: 0,
       simulated: false,
-      error: `Please wait ${waitTime} seconds before requesting a new code.`,
+      error: `Please wait ${remainingWait}s before requesting a new code.`,
     };
   }
 
   const otp = generateNumericOtp();
-  const validityMs = 5 * 60 * 1000; // 5 minutes
+  const validitySeconds = 300; // 5 minutes
 
-  otpStore.set(phone, {
+  // Persist to Redis
+  try {
+    if (redis) {
+      await redis.set(
+        redisOtpKey,
+        JSON.stringify({ phone, otp, attempts: 0 }),
+        { ex: validitySeconds }
+      );
+      await redis.set(redisRateLimitKey, '1', { ex: 25 });
+    }
+  } catch (err) {
+    console.warn('[WhatsApp OTP] Redis set warning:', err);
+  }
+
+  // Also keep in memory as backup
+  memoryStore.set(digitsOnly, {
     phone,
     otp,
-    expiresAt: now + validityMs,
+    expiresAt: now + validitySeconds * 1000,
     attempts: 0,
     lastSentAt: now,
   });
 
-  // Check if Meta WhatsApp Cloud API credentials are configured in .env.local
-  const whatsappToken = process.env.WHATSAPP_ACCESS_TOKEN;
-  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  // Check Meta WhatsApp Cloud API credentials
+  const whatsappToken = cleanEnv(process.env.WHATSAPP_ACCESS_TOKEN);
+  const phoneNumberId = cleanEnv(process.env.WHATSAPP_PHONE_NUMBER_ID);
+  const templateName = cleanEnv(process.env.WHATSAPP_OTP_TEMPLATE_NAME) || 'focusx_auth';
 
   if (whatsappToken && phoneNumberId) {
     try {
-      const digitsOnly = phone.replace(/\D/g, '');
-      const templateName = process.env.WHATSAPP_OTP_TEMPLATE_NAME || 'focusx_auth_otp';
-
       let response = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
         method: 'POST',
         headers: {
@@ -143,7 +194,7 @@ export async function createAndStoreWhatsAppOtp(phone: string): Promise<{
       }
 
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({}));
         console.error('[WhatsApp Cloud API Error]:', errorData);
         return {
           otp: '',
@@ -151,13 +202,13 @@ export async function createAndStoreWhatsAppOtp(phone: string): Promise<{
           simulated: false,
           error: 'Failed to dispatch WhatsApp OTP. Please use "Send code via SMS" below.',
         };
-      } else {
-        return {
-          otp,
-          expiresInSeconds: 300,
-          simulated: false,
-        };
       }
+
+      return {
+        otp,
+        expiresInSeconds: validitySeconds,
+        simulated: false,
+      };
     } catch (apiErr) {
       console.error('[WhatsApp Cloud API Exception]:', apiErr);
       return {
@@ -169,63 +220,112 @@ export async function createAndStoreWhatsAppOtp(phone: string): Promise<{
     }
   }
 
-  // If deployed to production without Meta WhatsApp credentials configured:
-  if (process.env.NODE_ENV === 'production') {
+  // Simulation mode (Local / Sandbox development without credentials)
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`\n==================================================`);
+    console.log(`🟢 [WHATSAPP OTP SIMULATOR - LOCAL MODE]`);
+    console.log(`📱 Recipient: ${phone}`);
+    console.log(`🔑 Verification OTP: ${otp}`);
+    console.log(`⏳ Valid For: 5 minutes`);
+    console.log(`==================================================\n`);
+
     return {
-      otp: '',
-      expiresInSeconds: 0,
-      simulated: false,
-      error: 'WhatsApp login is not yet configured on this server. Please use "Send code via SMS" below.',
+      otp,
+      expiresInSeconds: validitySeconds,
+      simulated: true,
     };
   }
 
-  // Simulation / Local Sandbox Mode (Development only):
-  console.log(`\n==================================================`);
-  console.log(`🟢 [WHATSAPP OTP SIMULATOR - LOCAL MODE]`);
-  console.log(`📱 Recipient: ${phone}`);
-  console.log(`🔑 Verification OTP: ${otp}`);
-  console.log(`⏳ Valid For: 5 minutes`);
-  console.log(`==================================================\n`);
-
   return {
-    otp,
-    expiresInSeconds: 300,
-    simulated: true,
+    otp: '',
+    expiresInSeconds: 0,
+    simulated: false,
+    error: 'WhatsApp service is temporarily unavailable. Please use SMS verification below.',
   };
 }
 
 /**
- * Verifies a student's OTP.
- * Returns true if valid, deletes the OTP (one-time use), and protects against brute-force (max 5 attempts).
+ * Verifies a student's OTP. Checks Redis first, then in-memory fallback.
  */
-export function verifyWhatsAppOtp(phone: string, inputOtp: string): {
+export async function verifyWhatsAppOtp(
+  phone: string,
+  inputOtp: string
+): Promise<{
   valid: boolean;
   error?: string;
-} {
-  const record = otpStore.get(phone);
+}> {
+  const digitsOnly = phone.replace(/\D/g, '');
+  const redisOtpKey = `whatsapp:otp:${digitsOnly}`;
+  const now = Date.now();
 
-  if (!record) {
+  let storedOtp: string | null = null;
+  let attempts = 0;
+
+  // Check Redis
+  try {
+    if (redis) {
+      const data = await redis.get<string | { otp: string; attempts: number }>(redisOtpKey);
+      if (data) {
+        const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+        storedOtp = parsed.otp;
+        attempts = parsed.attempts || 0;
+      }
+    }
+  } catch (err) {
+    console.warn('[WhatsApp OTP] Redis get warning:', err);
+  }
+
+  // Fallback to memory
+  if (!storedOtp) {
+    const memRecord = memoryStore.get(digitsOnly);
+    if (memRecord) {
+      if (memRecord.expiresAt < now) {
+        memoryStore.delete(digitsOnly);
+        return { valid: false, error: 'OTP has expired. Please request a new code.' };
+      }
+      storedOtp = memRecord.otp;
+      attempts = memRecord.attempts;
+    }
+  }
+
+  if (!storedOtp) {
     return { valid: false, error: 'OTP expired or not found. Please request a new code.' };
   }
 
-  if (Date.now() > record.expiresAt) {
-    otpStore.delete(phone);
-    return { valid: false, error: 'OTP has expired. Please request a new code.' };
-  }
-
-  if (record.attempts >= 5) {
-    otpStore.delete(phone);
+  if (attempts >= 5) {
+    try {
+      if (redis) await redis.del(redisOtpKey);
+    } catch {}
+    memoryStore.delete(digitsOnly);
     return { valid: false, error: 'Too many incorrect attempts. Please request a new code.' };
   }
 
-  record.attempts += 1;
+  if (storedOtp !== inputOtp.trim()) {
+    // Increment attempts
+    try {
+      if (redis) {
+        const ttl = await redis.ttl(redisOtpKey);
+        if (ttl > 0) {
+          await redis.set(
+            redisOtpKey,
+            JSON.stringify({ phone, otp: storedOtp, attempts: attempts + 1 }),
+            { ex: ttl }
+          );
+        }
+      }
+    } catch {}
 
-  if (record.otp !== inputOtp.trim()) {
+    const memRecord = memoryStore.get(digitsOnly);
+    if (memRecord) memRecord.attempts += 1;
+
     return { valid: false, error: 'Incorrect OTP code. Please check and try again.' };
   }
 
-  // OTP is valid! Consume it (one-time use)
-  otpStore.delete(phone);
+  // OTP is valid! Invalidate immediately
+  try {
+    if (redis) await redis.del(redisOtpKey);
+  } catch {}
+  memoryStore.delete(digitsOnly);
+
   return { valid: true };
 }
-

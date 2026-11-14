@@ -25,7 +25,7 @@ export function resolvePlanRequirements(
 
   // If upgrading, ensure the new plan doesn't have fewer hours than the old plan
   if (draft.operation === 'UPGRADE_PLAN' && facts.sourceBooking) {
-    const oldPlan = facts.activePlans.find(p => p.id === facts.sourceBooking!.planId);
+    const oldPlan = facts.sourcePlan ?? facts.activePlans.find(p => p.id === facts.sourceBooking!.planId);
     if (oldPlan && oldPlan.durationHours && selectedPlan.durationHours && selectedPlan.durationHours < oldPlan.durationHours) {
       return {
         nextDraft: draft,

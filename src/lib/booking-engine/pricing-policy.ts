@@ -1,4 +1,5 @@
 import type { BookingDraft, BookingFacts } from './types';
+import { lockerChargePaise } from '../locker-pricing';
 
 export function calculatePricing(
   draft: BookingDraft,
@@ -39,13 +40,13 @@ export function calculatePricing(
     const locker = facts.standaloneLockers.find(l => l.id === draft.standaloneLockerId);
     if (!locker) return null;
     
-    // Standalone lockers prorated by 28-day month since they weren't migrated
-    expectedAmountPaise += Math.round((locker.pricePaise / 28) * plan.validityDays);
+    // Keep historical bookings/intents untouched; new quotes use a 30-day month.
+    expectedAmountPaise += lockerChargePaise(locker.pricePaise / 100, plan.validityDays);
   }
 
   // Handle Prorated Credit for Upgrades
   if (draft.operation === 'UPGRADE_PLAN' && facts.sourceBooking) {
-    const oldPlan = facts.activePlans.find(p => p.id === facts.sourceBooking!.planId);
+    const oldPlan = facts.sourcePlan ?? facts.activePlans.find(p => p.id === facts.sourceBooking!.planId);
     if (oldPlan) {
       const unusedMs = facts.sourceBooking.endTime.getTime() - facts.authoritativeCurrentTime.getTime();
       const unusedDays = Math.max(0, unusedMs / (1000 * 60 * 60 * 24));

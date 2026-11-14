@@ -80,6 +80,7 @@ export interface BookingFacts {
     isActive: boolean;
   } | null;
   sourceBooking: BookingFact | null;
+  sourcePlan?: PlanFact | null;
   activePlans: PlanFact[];
   selectedPlan: PlanFact | null;
   eligibleSeats: SeatFact[];

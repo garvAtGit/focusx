@@ -29,14 +29,13 @@ export async function POST(req: Request) {
     const result = await createAndStoreWhatsAppOtp(canonicalPhone);
 
     if (result.error) {
-      return NextResponse.json({ error: result.error }, { status: 429 });
+      return NextResponse.json({ error: result.error }, { status: 400 });
     }
 
     return NextResponse.json({
       success: true,
       message: 'OTP dispatched via WhatsApp',
       simulated: result.simulated,
-      // Provide preview OTP in development / simulation mode so testing is instant
       previewOtp: result.simulated ? result.otp : undefined,
     });
   } catch (error: unknown) {
@@ -44,4 +43,3 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Failed to dispatch WhatsApp OTP' }, { status: 500 });
   }
 }
-

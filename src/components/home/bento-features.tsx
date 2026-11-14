@@ -47,7 +47,7 @@ export function BentoFeatures() {
             className="text-[32px] md:text-[40px] font-bold tracking-tight text-[#000000]"
             style={{ fontFamily: 'var(--font-inter), sans-serif' }}
           >
-            Why Choose Focusx
+            Why Choose FocusX
           </motion.h2>
           <motion.p 
             initial={{ opacity: 0, y: 20 }}

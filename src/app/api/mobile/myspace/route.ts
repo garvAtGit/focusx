@@ -1,5 +1,6 @@
 export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
+import { attendanceSummary, calculateSafeSessionMinutes } from '@/lib/attendance-summary';
 import { adminAuth } from '@/lib/firebase/firebaseAdmin';
 import prisma from "@/lib/prisma";
 import { startOfDay, startOfWeek, startOfMonth, differenceInMinutes } from 'date-fns';
@@ -30,14 +31,14 @@ export async function GET(req: Request) {
     const now = new Date();
 
     const allBookings = await prisma.booking.findMany({
-      where: { studentId: user.id },
+      where: { studentId: user.id, OR: [{ status: "CONFIRMED", endTime: { gt: now } }, { status: "PENDING_PAYMENT" }] },
       include: {
-        library: true,
+        // Only public fields: the full record holds owner-only data (KYC, admin notes, Wi-Fi password).
+        library: { select: { id: true, name: true, locality: true, city: true } },
         plan: true,
         seat: true,
         standaloneLocker: true
       },
-      take: 50,
       orderBy: { createdAt: 'desc' }
     });
 
@@ -78,11 +79,11 @@ export async function GET(req: Request) {
           for (const log of studentLogs) {
             if (log.status === 'CHECK_IN') lastCheckin = log.timestamp;
             else if (log.status === 'CHECK_OUT' && lastCheckin) {
-              totalMinutes += differenceInMinutes(log.timestamp, lastCheckin);
+              totalMinutes += calculateSafeSessionMinutes(lastCheckin, log.timestamp);
               lastCheckin = null;
             }
           }
-          if (lastCheckin) totalMinutes += differenceInMinutes(now, lastCheckin);
+          if (lastCheckin) totalMinutes += calculateSafeSessionMinutes(lastCheckin, now);
 
           if (totalMinutes > 0) {
             durations.push({ id: sId, name: studentLogs[0].student.name || 'Scholar', avatar: studentLogs[0].student.profilePhotoUrl, minutes: totalMinutes });
@@ -107,51 +108,9 @@ export async function GET(req: Request) {
       leaderboards.month = await getLeaderboardForRange(startOfMonth(now));
     }
 
-    // Heatmap Calculation
-    const heatmap: Record<string, number> = {};
-    const logsByDay = new Map<string, typeof recentLogs>();
-    
-    recentLogs.forEach(log => {
-      // Convert to IST for grouping
-      const d = new Date(log.timestamp);
-      d.setMinutes(d.getMinutes() + 330);
-      const dateStr = d.toISOString().split('T')[0]; // "yyyy-MM-dd"
-      
-      if (!logsByDay.has(dateStr)) logsByDay.set(dateStr, []);
-      logsByDay.get(dateStr)!.push(log);
-    });
-
-    logsByDay.forEach((dayLogs, dateStr) => {
-      let totalMs = 0;
-      let lastCheckin: Date | null = null;
-      
-      dayLogs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-
-      dayLogs.forEach(log => {
-        if (log.status === 'CHECK_IN') {
-          lastCheckin = new Date(log.timestamp);
-        } else if (log.status === 'CHECK_OUT' && lastCheckin) {
-          totalMs += new Date(log.timestamp).getTime() - (lastCheckin as Date).getTime();
-          lastCheckin = null;
-        }
-      });
-      
-      if (lastCheckin) {
-        const checkinDay = new Date(lastCheckin);
-        checkinDay.setMinutes(checkinDay.getMinutes() + 330);
-        
-        const nowIST = new Date();
-        nowIST.setMinutes(nowIST.getMinutes() + 330);
-
-        if (checkinDay.toISOString().split('T')[0] === nowIST.toISOString().split('T')[0]) {
-          totalMs += new Date().getTime() - (lastCheckin as Date).getTime();
-        } else {
-          totalMs += 2 * 60 * 60 * 1000;
-        }
-      }
-
-      heatmap[dateStr] = totalMs / (1000 * 60 * 60); // convert to hours
-    });
+    const summaryBooking = activeBookings.find(b => b.startTime <= now);
+    const summary = attendanceSummary(summaryBooking ? recentLogs.filter(log => log.libraryId === summaryBooking.libraryId && log.timestamp >= summaryBooking.startTime) : recentLogs, now);
+    const heatmap = summary.days;
 
     const lastLog = recentLogs.length > 0 ? recentLogs[recentLogs.length - 1] : null;
     const isCheckedIn = lastLog ? lastLog.status === 'CHECK_IN' : false;
@@ -161,6 +120,7 @@ export async function GET(req: Request) {
       pendingBooking: pendingBooking || null,
       leaderboards, 
       heatmap,
+      attendanceSummary: summary,
       recentLogs,
       isCheckedIn
     });

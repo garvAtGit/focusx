@@ -114,6 +114,8 @@ test(
       })
       assert.equal(retriedIntent.id, firstIntent.id)
 
+      await authority.claimPaymentLinkCreation(firstIntent.id)
+
       await authority.attachPaymentLink(firstIntent.id, {
         providerLinkId: `plink_${suffix}`,
         providerShortUrl: `https://example.test/${suffix}`,
@@ -254,11 +256,12 @@ test(
       await prisma.refundTask.deleteMany({
         where: { intent: { libraryId: library.id } },
       })
-      await prisma.booking.deleteMany({ where: { libraryId: library.id } })
       await prisma.bookingIntent.deleteMany({ where: { libraryId: library.id } })
+      await prisma.booking.deleteMany({ where: { libraryId: library.id } })
       await prisma.seat.deleteMany({ where: { libraryId: library.id } })
       await prisma.plan.deleteMany({ where: { libraryId: library.id } })
       await prisma.library.delete({ where: { id: library.id } })
+      await prisma.notification.deleteMany({ where: { studentId: { in: [studentA.id, studentB.id, librarian.id] } } })
       await prisma.user.deleteMany({
         where: { id: { in: [studentA.id, studentB.id, librarian.id] } },
       })

@@ -9,6 +9,7 @@
 #include <esp_task_wdt.h>
 #include <rom/crc.h>
 #include <esp_system.h>
+#include "FocusX_Reliability.h"
 
 enum DiagSeverity : uint8_t {
   DIAG_SEV_INFO = 0,
@@ -54,8 +55,8 @@ enum DiagEventCode : uint16_t {
   DIAG_CODE_DOOR_HELD_OPEN         = 6000
 };
 
-#define DIAG_DETAIL_MAX_LEN 28
-#define DIAG_EVENT_ID_LEN 32
+#define DIAG_DETAIL_MAX_LEN 193
+#define DIAG_EVENT_ID_LEN 64
 #define DIAG_RING_CAPACITY 64
 #define DIAG_FLASH_JOURNAL_PATH "/diag_critical.bin"
 #define DIAG_FLASH_MAX_BYTES 16384
@@ -86,6 +87,9 @@ private:
   unsigned long lastFlushAttemptMs;
   unsigned long flushBackoffMs;
   char devicePrefix[16];
+  uint32_t bootNonce[2];
+  uint32_t journalGeneration = 0, persistedCrc = 0, persistedCount = 0, lastPersistMs = 0;
+  bool persistedOnce = false;
 
 public:
   FocusXDiagnostics() : head(0), tail(0), count(0), droppedCount(0), sequenceId(0),
@@ -97,6 +101,7 @@ public:
   }
 
   void init(const char* devId) {
+    bootNonce[0] = esp_random(); bootNonce[1] = esp_random();
     if (devId && strlen(devId) > 0) {
       strncpy(devicePrefix, devId, 15);
       devicePrefix[15] = '\0';
@@ -119,80 +124,107 @@ public:
     }
 
     // Capture initial boot diagnostic event
-    capture(DIAG_CODE_RESET_REASON, DIAG_SEV_INFO, (int32_t)reason, ESP.getFreeHeap(), resetReasonStr);
+    DiagSeverity severity = (reason == ESP_RST_PANIC || reason == ESP_RST_INT_WDT || reason == ESP_RST_TASK_WDT || reason == ESP_RST_WDT)
+      ? DIAG_SEV_CRITICAL : reason == ESP_RST_BROWNOUT ? DIAG_SEV_ERROR : DIAG_SEV_INFO;
+    capture(DIAG_CODE_RESET_REASON, severity, (int32_t)reason, ESP.getFreeHeap(), resetReasonStr);
   }
 
   const char* getResetReason() const { return resetReasonStr; }
-  uint16_t getQueueDepth() const { return count; }
-  uint32_t getDroppedCount() const { return droppedCount; }
+  uint16_t getQueueDepth() { taskENTER_CRITICAL(&mux); uint16_t n = count; taskEXIT_CRITICAL(&mux); return n; }
+  uint32_t getDroppedCount() { taskENTER_CRITICAL(&mux); uint32_t n = droppedCount; taskEXIT_CRITICAL(&mux); return n; }
 
-  // Non-blocking capture path (< 2 microseconds, zero heap allocation)
+  // Fixed-size slot pool; capture never touches flash or allocates heap memory.
   bool capture(DiagEventCode code, DiagSeverity sev, int32_t p1 = 0, uint32_t p2 = 0, const char* detail = nullptr) {
-    taskENTER_CRITICAL(&mux);
-
-    // Eviction policy if ring is full
-    if (count >= DIAG_RING_CAPACITY) {
-      if (sev < DIAG_SEV_ERROR) {
-        // Discard INFO / WARN if full to preserve room for ERROR / CRITICAL / FATAL
-        droppedCount++;
-        taskEXIT_CRITICAL(&mux);
-        return false;
-      }
-
-      // If new event is ERROR or higher, find oldest entry with lower severity to replace
-      int replaceIdx = -1;
-      for (uint16_t i = 0; i < count; i++) {
-        uint16_t idx = (tail + i) % DIAG_RING_CAPACITY;
-        if (ring[idx].inUse && ring[idx].severity < sev) {
-          replaceIdx = idx;
-          break;
-        }
-      }
-
-      if (replaceIdx >= 0) {
-        head = replaceIdx; // overwrite lower-severity slot
-      } else {
-        // All items have same or higher severity, drop oldest entry
-        ring[tail].inUse = false;
-        tail = (tail + 1) % DIAG_RING_CAPACITY;
-        count--;
-        droppedCount++;
-      }
-    }
-
-    DiagEventRecord& rec = ring[head];
-    sequenceId++;
+    DiagEventRecord rec = {};
     uint32_t nowEpoch = (uint32_t)time(nullptr);
-    rec.timestamp = (nowEpoch > 1700000000) ? nowEpoch : 0;
-    rec.uptimeMs = millis();
-    rec.eventCode = (uint16_t)code;
-    rec.severity = (uint8_t)sev;
-    rec.param1 = p1;
-    rec.param2 = p2;
-    rec.inUse = true;
-
-    snprintf(rec.eventId, sizeof(rec.eventId), "d_%lx_%x", (unsigned long)rec.uptimeMs, (unsigned int)(sequenceId & 0xFFFF));
-
-    if (detail && detail[0] != '\0') {
-      strncpy(rec.detail, detail, sizeof(rec.detail) - 1);
-      rec.detail[sizeof(rec.detail) - 1] = '\0';
-    } else {
-      rec.detail[0] = '\0';
-    }
-
-    head = (head + 1) % DIAG_RING_CAPACITY;
-    if (count < DIAG_RING_CAPACITY) {
-      count++;
-    }
-
+    rec.timestamp = nowEpoch > 1700000000 ? nowEpoch : 0;
+    rec.uptimeMs = millis(); rec.eventCode = code; rec.severity = sev;
+    rec.param1 = p1; rec.param2 = p2; rec.inUse = true;
+    if (detail) strlcpy(rec.detail, detail, sizeof(rec.detail));
+    taskENTER_CRITICAL(&mux);
+    uint32_t seq = ++sequenceId;
     taskEXIT_CRITICAL(&mux);
-
-    // If critical or fatal, persist to isolated flash journal (non-blocking, guarded against low flash)
-    if (sev >= DIAG_SEV_CRITICAL) {
-      persistCriticalToFlash(rec);
+    snprintf(rec.eventId, sizeof(rec.eventId), "%012llx_%08lx%08lx_%08lx",
+      ESP.getEfuseMac(), (unsigned long)bootNonce[0], (unsigned long)bootNonce[1], (unsigned long)seq);
+    taskENTER_CRITICAL(&mux);
+    int slot = -1;
+    for (uint16_t i = 0; i < DIAG_RING_CAPACITY; ++i) {
+      if (!ring[i].inUse) { slot = i; break; }
     }
+    if (slot < 0) {
+      for (uint16_t i = 0; i < DIAG_RING_CAPACITY; ++i) {
+        if (ring[i].severity < sev && ring[i].eventCode != 1010 && ring[i].eventCode != 1011) { slot = i; break; }
+      }
+      ++droppedCount;
+    } else { ++count; }
+    if (slot >= 0) ring[slot] = rec;
+    taskEXIT_CRITICAL(&mux);
+    return slot >= 0;
+  }
 
-    return true;
+  // Worker-only insertion of deterministic core-dump chunk IDs for retry deduplication.
+  bool enqueueExternal(DiagEventRecord rec) {
+    rec.inUse = true; rec.uptimeMs = millis(); rec.timestamp = 0;
+    taskENTER_CRITICAL(&mux);
+    bool inserted = false;
+    for (uint16_t i = 0; i < DIAG_RING_CAPACITY; ++i) if (!ring[i].inUse) {
+      ring[i] = rec; ++count; inserted = true; break;
+    }
+    taskEXIT_CRITICAL(&mux);
+    return inserted;
+  }
+
+  // Worker-only A/B journal. Flash operations never run in capture or under its spinlock.
+  // Call under the shared journal task mutex. The older complete slot survives torn writes.
+  void restoreCritical() {
+    uint32_t bestGeneration = 0;
+    const char* bestPath = nullptr;
+    for (const char* path : {"/diag_A.bin", "/diag_B.bin"}) {
+      File f = LittleFS.open(path, "r");
+      uint32_t header[4];
+      if (!f || f.read((uint8_t*)header, sizeof(header)) != sizeof(header)
+          || header[0] != 0x46584432 || header[2] > 32) { if (f) f.close(); continue; }
+      uint32_t crc = 0; DiagEventRecord rec;
+      bool valid = true;
+      for (uint32_t i = 0; i < header[2]; ++i) {
+        if (f.read((uint8_t*)&rec, sizeof(rec)) != sizeof(rec)) { valid = false; break; }
+        crc = crc32_le(crc, (uint8_t*)&rec, sizeof(rec));
+        if (rec.eventId[DIAG_EVENT_ID_LEN-1] || rec.detail[DIAG_DETAIL_MAX_LEN-1]) valid = false;
+      }
+      if (valid && crc == header[3] && header[1] >= bestGeneration) { bestGeneration = header[1]; bestPath = path; }
+      f.close();
+    }
+    journalGeneration = bestGeneration;
+    if (!bestPath) return;
+    File f = LittleFS.open(bestPath, "r"); uint32_t header[4];
+    f.read((uint8_t*)header, sizeof(header));
+    for (uint32_t i = 0; i < header[2]; ++i) {
+      DiagEventRecord rec; if (f.read((uint8_t*)&rec, sizeof(rec)) != sizeof(rec)) break;
+      for (uint16_t j = 0; j < DIAG_RING_CAPACITY; ++j) if (!ring[j].inUse) { ring[j] = rec; ++count; break; }
+    }
+    f.close();
+  }
+
+  void persistCritical() {
+    if (millis() - lastPersistMs < 5000) return;
+    lastPersistMs = millis();
+    DiagEventRecord records[32]; uint32_t n = 0;
+    for (uint16_t i = 0; i < DIAG_RING_CAPACITY && n < 32; ++i) {
+      taskENTER_CRITICAL(&mux);
+      if (ring[i].inUse && ring[i].severity >= DIAG_SEV_ERROR) records[n++] = ring[i];
+      taskEXIT_CRITICAL(&mux);
+    }
+    uint32_t crc = crc32_le(0, (uint8_t*)records, n * sizeof(DiagEventRecord));
+    if (persistedOnce && crc == persistedCrc && n == persistedCount) return;
+    size_t total = LittleFS.totalBytes(), used = LittleFS.usedBytes();
+    if (total <= used || total-used < DIAG_MIN_LITTLEFS_FREE + n*sizeof(DiagEventRecord)) return;
+    uint32_t header[4] = {0x46584432, journalGeneration + 1, n, crc};
+    File f = LittleFS.open((header[1] & 1) ? "/diag_A.bin" : "/diag_B.bin", "w");
+    if (!f) return;
+    bool ok = f.write((uint8_t*)header, sizeof(header)) == sizeof(header);
+    ok = f.write((uint8_t*)records, n*sizeof(DiagEventRecord)) == n*sizeof(DiagEventRecord) && ok;
+    f.flush(); ok = ok && !f.getWriteError(); f.close();
+    if (ok) { journalGeneration = header[1]; persistedCrc = crc; persistedCount = n; persistedOnce = true; }
   }
 
   // Background upload logic (executed on Core 0 httpWorkerTask)
@@ -212,8 +244,7 @@ public:
     uint8_t batchCount = 0;
 
     taskENTER_CRITICAL(&mux);
-    for (uint16_t i = 0; i < count && batchCount < BATCH_LIMIT; i++) {
-      uint16_t idx = (tail + i) % DIAG_RING_CAPACITY;
+    for (uint16_t idx = 0; idx < DIAG_RING_CAPACITY && batchCount < BATCH_LIMIT; idx++) {
       if (ring[idx].inUse) {
         memcpy(&batch[batchCount], &ring[idx], sizeof(DiagEventRecord));
         batchCount++;
@@ -226,7 +257,7 @@ public:
     }
 
     // Serialize JSON batch payload
-    DynamicJsonDocument doc(2048);
+    DynamicJsonDocument doc(8192);
     doc["deviceId"] = deviceId;
     JsonArray eventsArr = doc.createNestedArray("events");
 
@@ -244,7 +275,7 @@ public:
         default:                sevStr = "INFO"; break;
       }
       item["severity"] = sevStr;
-      item["timestamp"] = batch[i].timestamp > 0 ? batch[i].timestamp : (uint32_t)(time(nullptr));
+      item["timestamp"] = batch[i].timestamp;
       item["uptimeMs"] = batch[i].uptimeMs;
       item["param1"] = batch[i].param1;
       item["param2"] = batch[i].param2;
@@ -254,18 +285,22 @@ public:
     }
 
     JsonObject stats = doc.createNestedObject("diagStats");
-    stats["queueDepth"] = count;
-    stats["droppedCount"] = droppedCount;
+    stats["queueDepth"] = getQueueDepth();
+    stats["droppedCount"] = getDroppedCount();
     stats["resetReason"] = resetReasonStr;
 
     String jsonPayload;
+    if (doc.overflowed()) return false;
     serializeJson(doc, jsonPayload);
 
     client->setCACert(rootCA);
+    client->setHandshakeTimeout(5);
+    client->setTimeout(5);
     HTTPClient http;
     http.begin(*client, baseUrl + "/api/hardware/diagnostics");
     http.addHeader("Content-Type", "application/json");
     http.addHeader("Authorization", String("Bearer ") + apiKey);
+    http.setConnectTimeout(3000);
     http.setTimeout(7000);
 
     esp_task_wdt_reset();
@@ -273,35 +308,27 @@ public:
     esp_task_wdt_reset();
 
     if (httpCode == 200) {
-      String response = http.getString();
+      String response = boundedHttpResponse(http, 4096);
       http.end();
 
-      DynamicJsonDocument resDoc(1024);
+      DynamicJsonDocument resDoc(4096);
       DeserializationError err = deserializeJson(resDoc, response);
       if (!err && resDoc["success"] == true) {
         JsonArray ackList = resDoc["ackEventIds"].as<JsonArray>();
 
-        // Reclaim acknowledged events from ring buffer
-        taskENTER_CRITICAL(&mux);
+        // Only acknowledge IDs actually sent in this batch. Each slot copy/change is bounded.
         for (JsonVariant ackIdVar : ackList) {
           const char* ackId = ackIdVar.as<const char*>();
           if (!ackId) continue;
-
-          for (uint16_t i = 0; i < count; i++) {
-            uint16_t idx = (tail + i) % DIAG_RING_CAPACITY;
-            if (ring[idx].inUse && strcmp(ring[idx].eventId, ackId) == 0) {
-              ring[idx].inUse = false;
-              break;
-            }
+          bool sent = false;
+          for (uint8_t i = 0; i < batchCount; ++i) if (!strcmp(batch[i].eventId, ackId)) sent = true;
+          if (!sent) continue;
+          taskENTER_CRITICAL(&mux);
+          for (uint16_t i = 0; i < DIAG_RING_CAPACITY; ++i) {
+            if (ring[i].inUse && !strcmp(ring[i].eventId, ackId)) { ring[i].inUse = false; --count; break; }
           }
+          taskEXIT_CRITICAL(&mux);
         }
-
-        // Advance tail past contiguous cleared entries
-        while (count > 0 && !ring[tail].inUse) {
-          tail = (tail + 1) % DIAG_RING_CAPACITY;
-          count--;
-        }
-        taskEXIT_CRITICAL(&mux);
 
         // Reset backoff on success
         flushBackoffMs = 30000;
@@ -317,40 +344,8 @@ public:
     return false;
   }
 
-private:
-  void persistCriticalToFlash(const DiagEventRecord& rec) {
-    // Strictly protect attendance fail-closed margin: never write if free LittleFS < 30,000 bytes
-    size_t total = LittleFS.totalBytes();
-    size_t used = LittleFS.usedBytes();
-    if (total <= used || (total - used) < DIAG_MIN_LITTLEFS_FREE) {
-      return; // Do not risk filling attendance journal space
-    }
-
-    // Check size cap of /diag_critical.bin
-    if (LittleFS.exists(DIAG_FLASH_JOURNAL_PATH)) {
-      File checkF = LittleFS.open(DIAG_FLASH_JOURNAL_PATH, "r");
-      if (checkF) {
-        size_t sz = checkF.size();
-        checkF.close();
-        if (sz >= DIAG_FLASH_MAX_BYTES) {
-          // Truncate/reset critical journal if capped to avoid unbounded growth
-          LittleFS.remove(DIAG_FLASH_JOURNAL_PATH);
-        }
-      }
-    }
-
-    File f = LittleFS.open(DIAG_FLASH_JOURNAL_PATH, "a");
-    if (!f) return;
-
-    // Write binary record with CRC32
-    uint32_t crc = crc32_le(0, (const uint8_t*)&rec, sizeof(DiagEventRecord));
-    f.write((const uint8_t*)&crc, sizeof(uint32_t));
-    f.write((const uint8_t*)&rec, sizeof(DiagEventRecord));
-    f.flush();
-    f.close();
-  }
 };
 
 extern FocusXDiagnostics DiagSubsystem;
 
-#endif // FOCUSX_DIAGNOSTICS_H
+#endif

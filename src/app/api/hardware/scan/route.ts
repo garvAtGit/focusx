@@ -122,7 +122,7 @@ export async function POST(request: NextRequest) {
       } catch (e) {
         return NextResponse.json({ status: "DENY", message: "INVALID QR" }, { status: 200 });
       }
-    } else if (scanType.toUpperCase() === "RFID") {
+    } else if (scanType.toUpperCase() === "RFID" || scanType.toUpperCase().startsWith("WIEGAND") || scanType.toUpperCase() === "RDM6300") {
       let user = await prisma.user.findUnique({
         where: { rfidTag: payload }
       });
@@ -149,9 +149,14 @@ export async function POST(request: NextRequest) {
         }
       }
       if (!user) {
+        // Discard all-zero electrical noise pulses
+        if (/^0+$/.test(payload.trim())) {
+          return NextResponse.json({ status: "DENY", message: "INVALID NOISE CARD" }, { status: 200 });
+        }
         // Log unknown card so it appears in dashboard!
+        let newLogId: string | null = null;
         try {
-          await prisma.entryLog.create({
+          const logEntry = await prisma.entryLog.create({
             data: {
               libraryId,
               doorId: readerId,
@@ -161,10 +166,32 @@ export async function POST(request: NextRequest) {
               eventId
             }
           });
+          newLogId = logEntry.id;
         } catch (e: any) {
           if (e.code !== 'P2002') throw e;
         }
-        return NextResponse.json({ status: "DENY", message: "UNKNOWN CARD" }, { status: 200 });
+
+        // Broadcast to library dashboard in real time
+        const { broadcastScannerUpdate } = await import("@/lib/realtime-publisher");
+        broadcastScannerUpdate(libraryId, {
+          id: newLogId,
+          scanType: "RFID",
+          payload,
+          status: "DENIED",
+          reason: `Unregistered RFID: ${payload}`,
+          timestamp: new Date().toISOString()
+        }).catch(() => {});
+
+        const currentLib = await prisma.library.findUnique({
+          where: { id: libraryId },
+          select: { authRevision: true }
+        });
+
+        return NextResponse.json({ 
+          status: "DENY", 
+          message: "UNKNOWN CARD",
+          serverAuthRevision: currentLib?.authRevision ?? 0
+        }, { status: 200 });
       }
       studentId = user.id;
       } else if (scanType.toUpperCase() === "BLE") {

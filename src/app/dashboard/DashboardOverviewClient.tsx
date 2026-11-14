@@ -295,6 +295,11 @@ export function DashboardOverviewClient({
     document.body.removeChild(link);
   };
 
+  const unassignedRfidLogs = logs.filter((l: any) => 
+    l.reason?.startsWith("Unregistered RFID") && 
+    !/^Unregistered RFID:\s*0+$/i.test(l.reason)
+  );
+
   return (
     <div className="w-full space-y-8 font-sans pb-10">
       {/* Page Title & Actions */}
@@ -309,6 +314,33 @@ export function DashboardOverviewClient({
           </Link>
         </div>
       </div>
+
+      {/* Unassigned RFID Quick Assignment Banner */}
+      {unassignedRfidLogs.length > 0 && (
+        <div className="bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-purple-500/10 border-2 border-primary/40 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-3.5">
+            <div className="w-11 h-11 rounded-xl bg-primary/20 flex items-center justify-center text-primary shrink-0">
+              <CreditCard className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-black px-2 py-0.5 rounded bg-primary text-white tracking-wide uppercase">New Card Scanned</span>
+                <span className="text-xs font-mono text-muted-foreground">{new Date(unassignedRfidLogs[0].timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+              </div>
+              <p className="font-bold text-slate-900 mt-1">
+                RFID Tag: <code className="bg-muted px-2 py-0.5 rounded font-mono text-primary font-black text-sm">{unassignedRfidLogs[0].reason.replace("Unregistered RFID:", "").trim()}</code>
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">An unregistered RFID card was scanned at the machine. Tap below to assign it immediately.</p>
+            </div>
+          </div>
+          <button
+            onClick={() => setRfidTagToAssign(unassignedRfidLogs[0].reason.replace("Unregistered RFID:", "").trim())}
+            className="w-full sm:w-auto px-5 py-2.5 bg-primary text-white font-bold text-sm rounded-xl shadow-md hover:opacity-90 active:scale-95 transition-all whitespace-nowrap"
+          >
+            Assign to Student
+          </button>
+        </div>
+      )}
 
       {/* Top Metric Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-5 relative">
@@ -1042,7 +1074,7 @@ export function DashboardOverviewClient({
                             {log.reason}
                           </span>
                         )}
-                        {log.reason?.startsWith("Unregistered RFID") && (
+                        {log.reason?.startsWith("Unregistered RFID") && !/^Unregistered RFID:\s*0+$/i.test(log.reason) && (
                           <button 
                             onClick={() => setRfidTagToAssign(log.reason?.replace("Unregistered RFID:", "").trim() ?? null)}
                             className="mt-1 block text-xs bg-primary text-primary-foreground font-bold px-2 py-1 rounded-md hover:opacity-90"
@@ -1071,6 +1103,9 @@ export function DashboardOverviewClient({
         open={!!rfidTagToAssign}
         onOpenChange={(open) => {
           if (!open) setRfidTagToAssign(null);
+        }}
+        onSuccess={() => {
+          router.refresh();
         }}
       />
     </div>

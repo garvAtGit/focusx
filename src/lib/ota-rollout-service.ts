@@ -322,7 +322,7 @@ async function dispatchBatchInternal(rolloutId: string, batchIndex: number, base
     include: { relay: true },
   });
 
-  const downloadUrl = `${baseUrl}/api/hardware/ota?download=1`;
+  const downloadUrl = `${baseUrl}/firmware/FocusX_Scanner_Firmware_V5_DualRFID.ino.bin`;
 
   for (const dr of deviceRollouts) {
     const relay = dr.relay;
@@ -476,7 +476,7 @@ export async function retryDeviceRollout(deviceRolloutId: string, baseUrl: strin
   const now = Date.now();
   const cmdId = `cmd_ota_${now}_${crypto.randomBytes(3).toString("hex")}`;
   const expiresAt = now + 24 * 60 * 60 * 1000;
-  const downloadUrl = `${baseUrl}/api/hardware/ota?download=1`;
+  const downloadUrl = `${baseUrl}/firmware/FocusX_Scanner_Firmware_V5_DualRFID.ino.bin`;
 
   const structuredCommand = JSON.stringify({
     cmdId,

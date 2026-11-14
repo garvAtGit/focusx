@@ -4,6 +4,7 @@ import { authenticateMobileRequest } from "@/lib/mobile-auth"
 import { prisma } from "@/lib/prisma"
 import { confirmOnlinePayment, BookingAuthorityError } from "@/lib/booking-authority"
 import { invalidateLibraryRuntimeCache } from "@/lib/library-cache"
+import { getRazorpayClient } from '@/lib/razorpay'
 
 export async function POST(req: NextRequest) {
   try {
@@ -77,26 +78,27 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // 4. Confirm the payment
-    // The signature check already guarantees amount/currency/status because
-    // the signature is signed by Razorpay for this exact order ID and payment ID.
-    // We pass the expected amount so `confirmOnlinePayment` can double check.
+    // A valid checkout signature does not prove that funds were captured.
+    const payment = await getRazorpayClient().payments.fetch(razorpay_payment_id)
+    if (payment.order_id !== intent.providerOrderId || Number(payment.amount) !== intent.expectedAmountPaise || payment.currency !== intent.currency) {
+      return NextResponse.json({ error: 'Payment details do not match this checkout' }, { status: 400 })
+    }
+    if (payment.status !== 'captured' || !payment.captured) {
+      return NextResponse.json({ status: 'pending' }, { status: 202 })
+    }
     let result: Awaited<ReturnType<typeof confirmOnlinePayment>>
     try {
       result = await confirmOnlinePayment({
         referenceId: reference_id,
         providerOrderId: razorpay_order_id,
         paymentId: razorpay_payment_id,
-        paidAmountPaise: intent.expectedAmountPaise,
-        paidAt: new Date(),
-        currency: intent.currency,
+        paidAmountPaise: Number(payment.amount),
+        paidAt: new Date(payment.created_at * 1000),
+        currency: payment.currency,
       })
     } catch (error) {
       if (error instanceof BookingAuthorityError) {
-        if (error.code === "PAYMENT_ALREADY_USED") {
-           // Idempotent success (webhook or previous verification already succeeded)
-           return NextResponse.json({ status: "confirmed" })
-        }
+        // A payment belonging to another intent must never become a success response.
         return NextResponse.json({ error: error.message }, { status: 400 })
       }
       throw error

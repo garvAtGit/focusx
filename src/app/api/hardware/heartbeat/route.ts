@@ -194,7 +194,7 @@ export async function POST(request: NextRequest) {
         parsed = null;
       } 
       // 2. Matching device acknowledgement received
-      else if (ackCommandId && (parsed.cmdId === ackCommandId || ackCommandId === "legacy")) {
+      else if (ackCommandId && (parsed.cmdId === ackCommandId || (parsed.cmdId === "legacy" && ackCommandId === "legacy"))) {
         const normalizedAck = String(ackStatus || "SUCCESS").toUpperCase();
         const isFwTargetMatched = parsed.action === "OTA" && parsed.args?.targetVersion && (fwVersion === parsed.args.targetVersion);
 

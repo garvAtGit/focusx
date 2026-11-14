@@ -347,3 +347,15 @@ export async function publishNotificationToRealtime(
     return false;
   }
 }
+
+
+/**
+ * Broadcasts a scanner/attendance update to all dashboard clients watching a specific library.
+ */
+export async function broadcastScannerUpdate(
+  libraryId: string,
+  payload: any
+): Promise<boolean> {
+  const topic = `library_scans:${libraryId}`;
+  return publishNotificationToRealtime(topic, "scanner_update", payload);
+}

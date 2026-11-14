@@ -131,6 +131,8 @@ export async function POST(req: NextRequest) {
     }
 
     // 6. Create booking intent via booking-authority (SERIALIZABLE)
+    const { reconcileStudentCheckouts } = await import("@/lib/mobile-checkout-preflight");
+    await reconcileStudentCheckouts(auth.userId, plan.libraryId);
     const intent = await createOnlineBookingIntent({
       studentId: user.id,
       libraryId: plan.libraryId,
@@ -139,9 +141,17 @@ export async function POST(req: NextRequest) {
       standaloneLockerId,
       hasLocker,
       idempotencyKey,
-      requestedStart,
+      requestedStart: body.operation && body.operation !== "ADD_STUDENT" ? undefined : requestedStart,
+      operation: body.operation === "RENEW" || body.operation === "CHANGE_PLAN" || body.operation === "UPGRADE_PLAN" ? body.operation : "ADD_STUDENT",
+      sourceBookingId: typeof body.sourceBookingId === "string" ? body.sourceBookingId : null,
     })
     createdIntentId = intent.id
+    if (intent.status === "CONFIRMED" && intent.bookingId) return NextResponse.json({ confirmed: true, reference_id: intent.referenceId, booking: { id: intent.bookingId } });
+    if (intent.expectedAmountPaise === 0 && intent.operation === "UPGRADE_PLAN") {
+      const { confirmZeroCostBooking } = await import("@/lib/zero-cost-booking");
+      const result = await confirmZeroCostBooking(intent.referenceId);
+      return NextResponse.json({ ...result, reference_id: intent.referenceId, confirmed: result.status === "CONFIRMED" });
+    }
 
     // 7. If payment order already exists and is still valid (idempotent retry)
     // NOTE: providerOrderId must be added to the select query in BookingIntent
@@ -272,7 +282,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           error:
-            "Booking is temporarily unavailable. The database migration has not been deployed.",
+            "Booking is temporarily unavailable. Please try again shortly.",
           requestId,
         },
         { status: 503 },
@@ -291,9 +301,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? `An error occurred creating payment: ${error.message}`
-            : "An error occurred creating payment",
+          "Online payment is temporarily unavailable. Please try again or choose reception payment.",
         requestId,
       },
       { status: 500 },

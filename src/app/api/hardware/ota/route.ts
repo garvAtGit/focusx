@@ -79,7 +79,8 @@ export async function GET(request: NextRequest) {
   const protocol = request.headers.get("x-forwarded-proto") || "http";
   const host = request.headers.get("host") || "localhost:3000";
   const baseUrl = `${protocol}://${host}`;
-  const downloadUrl = `${baseUrl}/api/hardware/ota?download=1`;
+  const filename = manifest.binary?.filename || "FocusX_Scanner_Firmware_V5_DualRFID.ino.bin";
+  const downloadUrl = `${baseUrl}/firmware/${filename}`;
 
   return NextResponse.json({
     available: true,
@@ -134,7 +135,8 @@ export async function POST(request: NextRequest) {
     const protocol = request.headers.get("x-forwarded-proto") || "http";
     const host = request.headers.get("host") || "localhost:3000";
     const baseUrl = `${protocol}://${host}`;
-    const downloadUrl = `${baseUrl}/api/hardware/ota?download=1`;
+    const filename = manifest.binary?.filename || "FocusX_Scanner_Firmware_V5_DualRFID.ino.bin";
+    const downloadUrl = `${baseUrl}/firmware/${filename}`;
 
     const now = Date.now();
     const cmdId = `cmd_ota_${now}_${crypto.randomBytes(3).toString('hex')}`;

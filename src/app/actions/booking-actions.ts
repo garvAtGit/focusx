@@ -80,22 +80,35 @@ export async function updateBookingSeat(
   bookingId: string,
   seatId: string | null,
 ) {
-  const booking = await authorizeBookingMutation(bookingId, { staffOnly: true })
   try {
-    await changeBookingSeat(bookingId, seatId)
-  } catch (error) {
-    if (
-      error instanceof BookingAuthorityError
-      && error.code === "RESOURCE_TAKEN"
-    ) {
-      throw new Error("That seat is already booked or held for this period.")
+    const booking = await authorizeBookingMutation(bookingId, { staffOnly: true })
+    try {
+      await changeBookingSeat(bookingId, seatId)
+    } catch (error) {
+      if (
+        error instanceof BookingAuthorityError
+        && error.code === "RESOURCE_TAKEN"
+      ) {
+        return { error: "That seat is already booked or held for this period." }
+      }
+      if (error instanceof BookingAuthorityError) {
+        return { error: error.message }
+      }
+      if (error instanceof Error) {
+        return { error: error.message }
+      }
+      return { error: "Failed to update seat" }
     }
-    throw error
-  }
 
-  await invalidateLibraryRuntimeCache(booking.libraryId)
-  revalidatePath("/dashboard/students")
-  return { success: true }
+    await invalidateLibraryRuntimeCache(booking.libraryId)
+    revalidatePath("/dashboard/students")
+    return { success: true }
+  } catch (error) {
+    if (error instanceof Error) {
+      return { error: error.message }
+    }
+    return { error: "Failed to update seat" }
+  }
 }
 
 export async function previewBookingDraft(draft: Partial<BookingDraft>): Promise<BookingResult> {
@@ -264,9 +277,8 @@ export async function addLockerToExistingBookingAction(input: {
       return { success: false, error: `Locker ${locker.name} is already booked or occupied.` };
     }
 
-    // Standalone locker price is daily price set by librarian
-    const dailyPrice = locker.price;
-    proratedAmount = Math.round(dailyPrice * remainingDays);
+    const { lockerChargePaise } = await import("@/lib/locker-pricing");
+    proratedAmount = lockerChargePaise(locker.price, remainingDays) / 100;
     lockerName = locker.name;
     targetStandaloneLockerId = locker.id;
   } else if (attachedLocker && booking.seat?.hasLocker) {
@@ -278,7 +290,7 @@ export async function addLockerToExistingBookingAction(input: {
     return { success: false, error: "Please select an available locker." };
   }
 
-  const amountPaise = proratedAmount * 100;
+  const amountPaise = Math.round(proratedAmount * 100);
 
   if (paymentMode === "RECEPTION") {
     await prisma.$transaction(async (tx) => {

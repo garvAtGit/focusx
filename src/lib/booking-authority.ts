@@ -86,6 +86,7 @@ type PreparedSelection = Required<
   expectedAmountPaise: number
   resources: Resource[]
   sourceBookingId: string | null
+  operation: string
 }
 
 export type CreateOnlineIntentInput = BookingSelection & {
@@ -194,9 +195,13 @@ function assertIdempotentIntentMatches(
   if (
     intent.studentId !== input.studentId
     || intent.libraryId !== input.libraryId
+    || intent.operation !== (input.operation ?? "ADD_STUDENT")
+    || intent.sourceBookingId !== (input.sourceBookingId ?? null)
     || intent.planId !== input.planId
     || intent.seatId !== requestedSeatId
     || intent.standaloneLockerId !== (input.standaloneLockerId ?? null)
+    || intent.hasLocker !== (input.hasLocker ?? false)
+    || (input.requestedStart !== undefined && +intent.startsAt !== +input.requestedStart)
   ) {
     throw new BookingAuthorityError(
       "IDEMPOTENCY_CONFLICT",
@@ -311,14 +316,16 @@ async function assertNoPendingStudentConflict(
         startTime: { lt: selection.endsAt },
         endTime: { gt: selection.startsAt },
       },
-      select: { id: true },
+      select: { id: true, status: true },
     }),
   ])
 
   if (intentClash || bookingClash) {
     throw new BookingAuthorityError(
       "BOOKING_IN_PROGRESS",
-      "This student already has a booking or checkout for the same period",
+      bookingClash?.status === BookingStatus.CONFIRMED
+        ? "This student already has a confirmed booking for the same period"
+        : "An unfinished checkout is holding this period. Resume or cancel that checkout before trying again.",
     )
   }
 }
@@ -342,9 +349,22 @@ async function prepareSelection(
     paymentMethod: input.paymentMethod ?? null,
   }
 
+  if (input.operation === "UPGRADE_PLAN") {
+    const source = input.sourceBookingId ? await tx.booking.findUnique({ where: { id: input.sourceBookingId } }) : null
+    if (!source || source.isPaused) throw new BookingAuthorityError("INVALID_BOOKING_STATE", "Resume your plan before upgrading.")
+    if ((source.amountDuePaise ?? 0) > 0) throw new BookingAuthorityError("INVALID_BOOKING_STATE", "Settle outstanding dues before upgrading.")
+  }
+
   // Load facts transactionally
   const actor = { role: 'ADMIN' as const, isLibraryOwner: true } // Authorized beforehand
   const facts = await loadBookingFacts(draft, actor, tx)
+
+  if (input.sourceBookingId && (!facts.sourceBooking || facts.sourceBooking.studentId !== input.studentId || facts.sourceBooking.libraryId !== input.libraryId || facts.sourceBooking.status !== "CONFIRMED")) {
+    throw new BookingAuthorityError("INVALID_BOOKING_STATE", "The source booking is not available for this account.")
+  }
+  if (draft.operation === "UPGRADE_PLAN" && (!facts.sourceBooking || facts.sourceBooking.endTime <= facts.authoritativeCurrentTime || facts.sourceBooking.startTime > facts.authoritativeCurrentTime)) {
+    throw new BookingAuthorityError("INVALID_BOOKING_STATE", "Only a current booking can be upgraded.")
+  }
 
   // Pure evaluation
   const result = evaluateBookingSelection(draft, facts)
@@ -378,6 +398,7 @@ async function prepareSelection(
       standaloneLockerId: result.normalizedDraft.standaloneLockerId ?? null 
     }),
     sourceBookingId: input.sourceBookingId ?? null,
+    operation: draft.operation,
   }
 
   if (draft.operation !== 'RENEW') {
@@ -661,6 +682,8 @@ async function createIntentRecord(
   return tx.bookingIntent.create({
     data: {
       referenceId: referenceId(),
+      operation: input.operation,
+      sourceBookingId: input.sourceBookingId,
       idempotencyKey: input.idempotencyKey ?? null,
       source: input.source,
       status: input.status,
@@ -684,6 +707,13 @@ async function releaseStudentPendingHolds(
   libraryId: string,
   excludeIntentId?: string,
 ): Promise<void> {
+  const unfinished = await tx.bookingIntent.findFirst({ where: {
+    studentId, libraryId,
+    id: excludeIntentId ? { not: excludeIntentId } : undefined,
+    status: { in: [BookingIntentStatus.HOLDING, BookingIntentStatus.AWAITING_PAYMENT, BookingIntentStatus.AWAITING_MANUAL_PAYMENT] },
+    OR: [{ holdExpiresAt: { gt: new Date() } }, { holdExpiresAt: null }],
+  }, select: { id: true } })
+  if (unfinished) throw new BookingAuthorityError('BOOKING_IN_PROGRESS', 'An unfinished checkout exists. Resume or cancel it before starting another.')
   const staleIntents = await tx.bookingIntent.findMany({
     where: {
       studentId,
@@ -965,34 +995,26 @@ async function createConfirmedBookingForIntent(
     return existingByPayment
   }
 
-  const overlappingBooking = await tx.booking.findFirst({
-    where: {
-      studentId: intent.studentId,
-      libraryId: intent.libraryId,
-      status: BookingStatus.CONFIRMED,
-      startTime: { lt: intent.endsAt },
-      endTime: { gt: intent.startsAt },
-    },
-    select: { id: true },
-  })
-
-  if (overlappingBooking) {
-    await tx.booking.update({
-      where: { id: overlappingBooking.id },
-      data: { endTime: intent.startsAt },
-    })
+  await lockStudentTimeline(tx, intent.studentId, intent.libraryId)
+  const source = intent.sourceBookingId
+    ? await tx.booking.findUnique({ where: { id: intent.sourceBookingId } }) : null
+  if (intent.operation === 'UPGRADE_PLAN' && (!source || source.status !== 'CONFIRMED' || source.studentId !== intent.studentId || source.libraryId !== intent.libraryId || source.isPaused || (source.amountDuePaise ?? 0) > 0 || source.endTime <= intent.startsAt)) {
+    throw new BookingAuthorityError('RESOURCE_TAKEN', 'The original plan changed before payment was confirmed')
   }
-
-  await assertNoBookingConflict(
-    tx,
-    {
-      seatId: intent.seatId,
-      standaloneLockerId: intent.standaloneLockerId,
-      startsAt: intent.startsAt,
-      endsAt: intent.endsAt,
-    },
-    overlappingBooking?.id,
-  )
+  const overlapping = await tx.booking.findFirst({ where: {
+    studentId: intent.studentId, libraryId: intent.libraryId, status: 'CONFIRMED',
+    id: intent.operation === 'UPGRADE_PLAN' ? { not: source!.id } : undefined,
+    startTime: { lt: intent.endsAt }, endTime: { gt: intent.startsAt },
+  }, select: { id: true } })
+  if (overlapping) throw new BookingAuthorityError('RESOURCE_TAKEN', 'Another confirmed plan overlaps this booking')
+  await assertNoBookingConflict(tx, {
+    seatId: intent.seatId, standaloneLockerId: intent.standaloneLockerId,
+    startsAt: intent.startsAt, endsAt: intent.endsAt,
+  }, intent.operation === 'UPGRADE_PLAN' ? source!.id : undefined)
+  // Replacement and original-plan truncation commit together, only after payment.
+  if (intent.operation === 'UPGRADE_PLAN') {
+    await tx.booking.update({ where: { id: source!.id }, data: { endTime: intent.startsAt, status: 'COMPLETED' } })
+  }
 
   return tx.booking.create({
     data: {
@@ -1139,7 +1161,7 @@ export async function confirmOnlinePayment(
     }
 
     try {
-      const booking = await createConfirmedBookingForIntent(tx, intent, input.paymentId)
+      const booking = await createConfirmedBookingForIntent(tx, intent, input.paymentId, { amountPaidOnlinePaise: input.paidAmountPaise, amountDuePaise: 0 })
       await tx.bookingIntent.update({
         where: { id: intent.id },
         data: {
@@ -1451,6 +1473,12 @@ export async function confirmPendingReceptionBooking(
       throw new BookingAuthorityError("BOOKING_NOT_PENDING", "Booking is not pending")
     }
 
+    await lockStudentTimeline(tx, booking.studentId, booking.libraryId)
+    if (booking.bookingIntent?.operation === 'UPGRADE_PLAN') {
+      const source = await tx.booking.findUnique({ where: { id: booking.bookingIntent.sourceBookingId! } })
+      if (!source || source.studentId !== booking.studentId || source.libraryId !== booking.libraryId || source.status !== 'CONFIRMED' || source.isPaused || (source.amountDuePaise ?? 0) > 0 || source.endTime <= booking.startTime) throw new BookingAuthorityError('INVALID_BOOKING_STATE', 'Original plan changed; review this upgrade before collecting payment')
+      await tx.booking.update({ where: { id: source.id }, data: { status: 'COMPLETED', endTime: booking.startTime } })
+    }
     const window = await bookingWindow(
       tx,
       {
@@ -1599,6 +1627,10 @@ export async function cancelStudentPendingBooking(input: {
       if (intent?.booking && intent.booking.status === BookingStatus.PENDING_PAYMENT) {
         booking = { ...intent.booking, bookingIntent: intent }
       } else if (intent) {
+        if (intent.status === BookingIntentStatus.CONFIRMED || intent.booking?.status === BookingStatus.CONFIRMED) {
+          throw new BookingAuthorityError('BOOKING_NOT_PENDING', 'This booking is already confirmed and cannot be cancelled as an unfinished checkout')
+        }
+        if (intent.status === BookingIntentStatus.REFUND_PENDING || intent.status === BookingIntentStatus.REFUNDED) return { success: false }
         await tx.bookingIntent.update({
           where: { id: intent.id },
           data: {
@@ -1624,6 +1656,8 @@ export async function cancelStudentPendingBooking(input: {
     }
 
     if (!booking) {
+      // An explicit reference must never fall through and cancel a different checkout.
+      if (input.bookingId || input.referenceId) return { success: false }
       const intent = await tx.bookingIntent.findFirst({
         where: {
           studentId: input.studentId,
@@ -1934,6 +1968,16 @@ export async function changeBookingSeat(
       )
     }
 
+    const now = new Date()
+    if (booking.endTime <= now) {
+      throw new BookingAuthorityError(
+        "INVALID_BOOKING_STATE",
+        "Cannot change seat for an expired booking",
+      )
+    }
+
+    const effectiveStartsAt = booking.startTime < now ? now : booking.startTime
+
     const resources = resourcesFor({
       seatId: normalizedSeatId,
       standaloneLockerId: booking.standaloneLockerId,
@@ -1955,7 +1999,7 @@ export async function changeBookingSeat(
     await assertNoLeaseConflict(
       tx,
       resources.filter(({ type }) => type === LeaseResourceType.SEAT),
-      booking.startTime,
+      effectiveStartsAt,
       booking.endTime,
       pendingIntent?.id,
     )
@@ -1964,7 +2008,7 @@ export async function changeBookingSeat(
       {
         seatId: normalizedSeatId,
         standaloneLockerId: booking.standaloneLockerId,
-        startsAt: booking.startTime,
+        startsAt: effectiveStartsAt,
         endsAt: booking.endTime,
       },
       booking.id,
@@ -2039,7 +2083,7 @@ export async function pauseConfirmedBooking(bookingId: string): Promise<Booking>
     }
     if (booking.isPaused) throw new Error("Booking is already paused")
 
-    return tx.booking.update({
+    const updated = await tx.booking.update({
       where: { id: booking.id },
       data: {
         isPaused: true,
@@ -2047,6 +2091,8 @@ export async function pauseConfirmedBooking(bookingId: string): Promise<Booking>
         resumedAt: null,
       },
     })
+    await tx.bookingPauseEvent.create({ data: { bookingId: booking.id, action: "PAUSE", timestamp: updated.pausedAt!, endTime: updated.endTime } })
+    return updated
   })
 }
 
@@ -2082,7 +2128,7 @@ export async function resumePausedBooking(
         {
           seatId: booking.seatId,
           standaloneLockerId: booking.standaloneLockerId,
-          startsAt: booking.startTime,
+          startsAt: booking.endTime,
           endsAt: newEndTime,
         },
         booking.id,
@@ -2098,6 +2144,7 @@ export async function resumePausedBooking(
         endTime: newEndTime,
       },
     })
+    await tx.bookingPauseEvent.create({ data: { bookingId: booking.id, action: "RESUME", timestamp: now, creditedDays: extendedDays, endTime: newEndTime } })
     return { booking: updated, extendedDays }
   })
 }

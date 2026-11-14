@@ -1,14 +1,13 @@
 "use client";
 
+import { playfair, inter } from "@/lib/fonts";
+
 import { motion } from "framer-motion";
-import { Playfair_Display, Inter } from "next/font/google";
 import { useState, useEffect } from "react";
 import { Bell, ScanLine, User, Bluetooth, QrCode, ChevronLeft, ChevronRight, ChevronDown, Clock, BookOpen, Snowflake, ScrollText } from "lucide-react";
 import { AccessQRModal } from "@/components/AccessQRModal";
 import { BluetoothUnlockButton } from "@/components/dashboard/BluetoothUnlockButton";
 
-const playfair = Playfair_Display({ subsets: ["latin"], weight: ["400", "500", "700", "800"] });
-const inter = Inter({ subsets: ["latin"], weight: ["300", "400", "600"] });
 
 
 
@@ -108,7 +107,10 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
 
   // Pair raw CheckinLog events into continuous sessions (handling cross-midnight, auto-checkout, and debouncing)
   const sortedAll = (recentLogs || [])
-    .filter((l: any) => l.timestamp)
+    .filter((l: any) => {
+      if (!l.timestamp) return false;
+      return toISTDateStr(l.timestamp) >= '2026-10-06';
+    })
     .sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
   interface SessionItem {
@@ -320,7 +322,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
   }
 
   // Challenge streak reflects student's active days in Winter Arc (or consecutive streak / DB streak if higher)
-  const streak = Math.max(totalActiveDays, consecutiveStreak, student?.currentStreak || 0);
+  const streak = Math.max(totalActiveDays, consecutiveStreak);
   const allLedgerLogs = sortedDateKeys.map((dateKey) => {
     const daySessions = groupedByDate[dateKey];
     const totalMs = daySessions.reduce((sum, s) => sum + s.durationMs, 0);

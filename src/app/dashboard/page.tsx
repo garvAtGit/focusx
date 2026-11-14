@@ -1,3 +1,4 @@
+import { attendanceSummary } from '@/lib/attendance-summary';
 import { startOfDayIST } from "@/lib/date-utils";
 import { getSession } from "@/app/actions/auth-actions";
 import prisma from "@/lib/prisma";
@@ -271,33 +272,7 @@ export default async function LibrarianDashboardPage() {
        ].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
        
        const activeLogs = stuLogs.filter(l => new Date(l.timestamp).getTime() >= bookingStart);
-       const daysMap = new Map<string, { in: Date | null, durationMs: number }>();
-       
-       for (const log of activeLogs) {
-         const date = new Date(log.timestamp);
-         const dayKey = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
-         let dayData = daysMap.get(dayKey);
-         if (!dayData) { dayData = { in: null, durationMs: 0 }; daysMap.set(dayKey, dayData); }
-         if (log.status === 'CHECK_IN') {
-           if (!dayData.in) dayData.in = date;
-         } else if (log.status === 'CHECK_OUT') {
-           if (dayData.in) {
-             dayData.durationMs += (date.getTime() - dayData.in.getTime());
-             dayData.in = null;
-           }
-         }
-       }
-       
-       let totalDurationMs = 0;
-       let daysCount = 0;
-       Array.from(daysMap.values()).forEach(data => {
-         if (data.durationMs > 0) {
-           totalDurationMs += data.durationMs;
-           daysCount++;
-         }
-       });
-       
-       const avgMs = daysCount > 0 ? totalDurationMs / daysCount : 0;
+       const avgMs = attendanceSummary(activeLogs.map(l => ({ ...l, libraryId: library.id })), now).averageMinutes * 60_000;
        const avgHrs = avgMs / (1000 * 60 * 60);
        const optedHrs = currentBooking.plan?.durationHours || 24;
        const overstayHrs = Math.max(0, avgHrs - optedHrs);
