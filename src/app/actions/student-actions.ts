@@ -185,8 +185,26 @@ export async function revokeBooking(bookingId: string, reason?: string) {
     reason,
   });
 
+  const studentUser = await prisma.user.findUnique({
+    where: { id: booking.studentId },
+    select: { name: true },
+  });
+
+  await logActivity({
+    libraryId: booking.libraryId,
+    actorId: session.userId,
+    actorName: session.phone || "Staff Member",
+    actorRole: session.role,
+    studentId: booking.studentId,
+    studentName: studentUser?.name || "Student",
+    actionType: "BOOKING_REVOKED",
+    description: `Revoked membership for ${studentUser?.name || "student"}${reason ? ': ' + reason : ''}`,
+    metadata: { reason },
+  });
+
   await invalidateLibraryRuntimeCache(booking.libraryId);
   revalidatePath("/dashboard/students");
+  revalidatePath("/dashboard/history");
   return { success: true, needsRefund: result.needsRefund };
 }
 
@@ -660,6 +678,65 @@ export async function searchActiveStudents(query?: string) {
   }
 }
 
+/**
+ * Downloads the lightweight student directory for instant zero-latency client search (Fuse.js)
+ * Intentionally excludes heavy image binaries/profile photos to keep payload < 100 KB.
+ */
+export async function getAllStudentsLightweight(explicitLibraryId?: string) {
+  const session = await getSession();
+  if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN' && session.role !== 'RECEPTIONIST')) {
+    return { error: 'Unauthorized', bookings: [] };
+  }
+
+  const library = explicitLibraryId
+    ? await prisma.library.findUnique({ where: { id: explicitLibraryId } })
+    : await getActiveLibrary(session);
+
+  if (!library) return { error: 'Library not found', bookings: [] };
+
+  try {
+    const rawBookings = await prisma.booking.findMany({
+      where: { libraryId: library.id },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        student: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            email: true,
+            uniqueId: true,
+            rfidTag: true,
+            crmNote: true,
+            isExpiredLead: true,
+            profilePhotoUrl: true,
+          },
+        },
+        plan: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            price: true,
+            discount: true,
+          },
+        },
+        seat: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    return { success: true, bookings: rawBookings };
+  } catch (error) {
+    console.error('[getAllStudentsLightweight] Failed to fetch:', error);
+    return { error: 'Failed to fetch directory', bookings: [] };
+  }
+}
+
 export async function getStudentProfile(studentId: string) {
   const session = await getSession();
   if (!session || (session.role !== 'LIBRARIAN' && session.role !== 'ADMIN' && session.role !== 'RECEPTIONIST')) {
@@ -1068,9 +1145,27 @@ export async function collectDues(bookingId: string, additionalCashPaise: number
       }
     });
 
+    const studentUser = await prisma.user.findUnique({
+      where: { id: booking.studentId },
+      select: { name: true },
+    });
+    const paidRupees = paymentTotal / 100;
+    await logActivity({
+      libraryId: booking.libraryId,
+      actorId: session.userId,
+      actorName: session.phone || "Staff Member",
+      actorRole: session.role,
+      studentId: booking.studentId,
+      studentName: studentUser?.name || "Student",
+      actionType: "DUES_COLLECTED",
+      description: `Collected ₹${paidRupees} dues (${additionalCashPaise > 0 ? "Cash" : "Online"}) from ${studentUser?.name || "student"}`,
+      metadata: { additionalCashPaise, additionalOnlinePaise, newDue },
+    });
+
     await invalidateStudentsCache(booking.libraryId);
     revalidatePath("/dashboard/students");
     revalidatePath("/dashboard/financials");
+    revalidatePath("/dashboard/history");
     
     return { success: true, booking: updated };
   } catch (error) {

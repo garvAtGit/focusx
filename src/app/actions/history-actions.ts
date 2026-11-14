@@ -2,6 +2,7 @@
 
 import prisma from "@/lib/prisma";
 import { getSession } from "./auth-actions";
+import { getActiveLibrary } from "@/lib/dashboard-utils";
 
 export interface ActivityHistoryItem {
   id: string;
@@ -35,14 +36,11 @@ export async function getLibraryActivityHistory(params: {
     return { activities: [], totalCount: 0, page: 1, totalPages: 0, error: "Unauthorized" };
   }
 
-  // Resolve target library
-  let targetLibraryId = params.libraryId || session.employerLibraryId;
-  if (!targetLibraryId && (session.role === "ADMIN" || session.role === "LIBRARIAN")) {
-    const lib = await prisma.library.findFirst({
-      where: { librarianId: session.userId },
-      select: { id: true },
-    });
-    targetLibraryId = lib?.id || null;
+  // Resolve target library reliably using session context and active library cookies
+  let targetLibraryId: string | null | undefined = params.libraryId;
+  if (!targetLibraryId) {
+    const activeLib = await getActiveLibrary(session);
+    targetLibraryId = activeLib?.id || null;
   }
 
   if (!targetLibraryId) {
