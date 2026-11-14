@@ -254,3 +254,22 @@ body.scroll-down .search-bar-sticky {
 .grecaptcha-badge {
   visibility: hidden !important;
 }
+
+/* Compact sleek scrollbar for dashboard sidebar on small laptops */
+.focusx-sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.25) transparent;
+}
+.focusx-sidebar-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.focusx-sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.focusx-sidebar-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.22);
+  border-radius: 9999px;
+}
+.focusx-sidebar-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.45);
+}

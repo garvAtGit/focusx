@@ -40,10 +40,10 @@ export function AdminLibrarySwitcher({ libraries, activeLibraryId }: AdminLibrar
   }
 
   return (
-    <div className="w-full relative mt-4">
+    <div className="w-full relative mt-1.5">
       <Select value={activeLibraryId} onValueChange={handleSelect} disabled={isPending}>
-        <SelectTrigger className="w-full bg-background border-border flex items-center gap-2">
-          {isPending ? <Loader2 className="w-4 h-4 animate-spin shrink-0 text-muted-foreground" /> : <Building2 className="w-4 h-4 shrink-0 text-muted-foreground" />}
+        <SelectTrigger className="w-full h-8 bg-background/80 hover:bg-background border-border text-xs flex items-center gap-2 py-1 px-2.5">
+          {isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 text-muted-foreground" /> : <Building2 className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />}
           <div className="flex-1 text-left truncate">
             <SelectValue placeholder="Select Library" />
           </div>

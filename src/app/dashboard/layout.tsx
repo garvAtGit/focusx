@@ -130,63 +130,66 @@ async function DashboardAuthWrapper({ children }: { children: ReactNode }) {
     <NotificationProvider userId={session.userId} initialNotifications={librarianNotifications}>
       <div className="flex min-h-screen bg-background">
         {/* Sidebar */}
-        <aside className="w-64 bg-sidebar text-sidebar-foreground flex-col shadow-lg border-r border-sidebar-border hidden md:flex">
-          <div className="p-6">
+        <aside className="w-64 bg-sidebar text-sidebar-foreground flex flex-col shadow-lg border-r border-sidebar-border hidden md:flex h-screen sticky top-0 shrink-0 select-none">
+          <div className="px-4 pt-3.5 pb-2 shrink-0">
             <Link href="/dashboard" className="flex items-center gap-2 group">
-              <Image src="/final-logo.svg" alt="FocusX Logo" width={48} height={48} className="object-contain" />
-              <span className="text-xl font-heading font-bold text-sidebar-primary">FocusX</span>
+              <Image src="/final-logo.svg" alt="FocusX Logo" width={34} height={34} className="object-contain shrink-0" />
+              <span className="text-lg font-heading font-bold text-sidebar-primary tracking-tight">FocusX</span>
             </Link>
-            <div className="mt-6 flex items-center justify-between px-3 py-2 bg-background/50 border border-border rounded-md text-sm text-muted-foreground shadow-sm">
+            <div className="mt-2.5 flex items-center justify-between px-2.5 py-1.5 bg-background/60 hover:bg-background/90 border border-border/80 rounded-md text-xs text-muted-foreground shadow-2xs transition-colors cursor-pointer">
               <div className="flex items-center gap-2">
-                <Search className="w-4 h-4 opacity-70" />
-                <span>Search...</span>
+                <Search className="w-3.5 h-3.5 opacity-70" />
+                <span className="text-[12px]">Search...</span>
               </div>
-              <kbd className="font-sans text-[10px] bg-muted px-1.5 py-0.5 rounded border border-border tracking-widest opacity-70">⌘K</kbd>
+              <kbd className="font-sans text-[9px] bg-muted px-1.5 py-0.5 rounded border border-border/60 tracking-wider opacity-70 font-mono">⌘K</kbd>
             </div>
             {session.role === 'ADMIN' && (
-              <div className="space-y-2 mt-2">
+              <div className="space-y-1.5 mt-2">
                 <AdminLibrarySwitcher 
                   libraries={adminLibraries} 
                   activeLibraryId={activeLibraryId} 
                 />
                 <Link
                   href="/admin"
-                  className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/30 text-xs font-semibold transition-colors"
+                  className="flex items-center justify-between px-2.5 py-1 rounded-md bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/30 text-[11px] font-semibold transition-colors"
                 >
                   <span>Command Center HQ</span>
-                  <span className="text-[10px] font-bold uppercase">Superuser</span>
+                  <span className="text-[9px] font-bold uppercase tracking-wider bg-red-500/20 px-1 py-0.5 rounded">Superuser</span>
                 </Link>
               </div>
             )}
           </div>
           
-        <nav className="flex-1 px-4 space-y-2 mt-4">
-          {isVisible('/dashboard') && (
-            <NavItem href="/dashboard" icon={<LayoutDashboard />}>
-              Overview
-            </NavItem>
-          )}
-          {isVisible('/dashboard/students') && (
-            <NavItem href="/dashboard/students" icon={<Users />}>
-              Students
-            </NavItem>
-          )}
-          {isVisible('/dashboard/notifications') && (
-            <NavItem href="/dashboard/notifications" icon={<Bell />}>
-              Notifications
-            </NavItem>
-          )}
-          {isVisible('/dashboard/queries') && (
-            <NavItem href="/dashboard/queries" icon={<MessageSquare />}>
-              Queries
-            </NavItem>
-          )}
-          {isVisible('/dashboard/inquiries') && (
-            <NavItem href="/dashboard/inquiries" icon={<HelpCircle />}>
-              Inquiries
-            </NavItem>
-          )}
-          {isVisible('/dashboard/financials') && (
+          <nav className="flex-1 px-3 py-1 space-y-0.5 overflow-y-auto overflow-x-hidden min-h-0 focusx-sidebar-scroll">
+            <div className="px-2 pt-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+              Menu
+            </div>
+            {isVisible('/dashboard') && (
+              <NavItem href="/dashboard" icon={<LayoutDashboard />}>
+                Overview
+              </NavItem>
+            )}
+            {isVisible('/dashboard/students') && (
+              <NavItem href="/dashboard/students" icon={<Users />}>
+                Students
+              </NavItem>
+            )}
+            {isVisible('/dashboard/notifications') && (
+              <NavItem href="/dashboard/notifications" icon={<Bell />}>
+                Notifications
+              </NavItem>
+            )}
+            {isVisible('/dashboard/queries') && (
+              <NavItem href="/dashboard/queries" icon={<MessageSquare />}>
+                Queries
+              </NavItem>
+            )}
+            {isVisible('/dashboard/inquiries') && (
+              <NavItem href="/dashboard/inquiries" icon={<HelpCircle />}>
+                Inquiries
+              </NavItem>
+            )}
+            {isVisible('/dashboard/financials') && (
               <NavItem href="/dashboard/financials" icon={<Wallet />}>
                 Financials
               </NavItem>
@@ -221,28 +224,44 @@ async function DashboardAuthWrapper({ children }: { children: ReactNode }) {
                 Automations
               </NavItem>
             )}
+
+            {(isVisible('/dashboard/staff') || isVisible('/dashboard/widgets') || isVisible('/dashboard/settings')) && (
+              <div className="pt-2">
+                <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 border-t border-sidebar-border/40 pt-2">
+                  System
+                </div>
+                {isVisible('/dashboard/staff') && (
+                  <NavItem href="/dashboard/staff" icon={<UserCheck />}>
+                    Staff & Roles
+                  </NavItem>
+                )}
+                {isVisible('/dashboard/widgets') && (
+                  <NavItem href="/dashboard/widgets" icon={<AppWindow />}>
+                    Widgets
+                  </NavItem>
+                )}
+                {isVisible('/dashboard/settings') && (
+                  <NavItem href="/dashboard/settings" icon={<Settings />}>
+                    Settings
+                  </NavItem>
+                )}
+              </div>
+            )}
           </nav>
 
-          <div className="p-4 border-t border-sidebar-border mt-auto">
-            {isVisible('/dashboard/staff') && (
-              <NavItem href="/dashboard/staff" icon={<UserCheck />}>
-                Staff & Roles
-              </NavItem>
-            )}
-            {isVisible('/dashboard/widgets') && (
-              <NavItem href="/dashboard/widgets" icon={<AppWindow />}>
-                Widgets
-              </NavItem>
-            )}
-            {isVisible('/dashboard/settings') && (
-              <NavItem href="/dashboard/settings" icon={<Settings />}>
-                Settings
-              </NavItem>
-            )}
+          <div className="p-2.5 border-t border-sidebar-border shrink-0 bg-sidebar/50">
             <form action={logout}>
-              <button type="submit" className="w-full text-left px-4 py-2.5 mt-2 rounded-lg font-medium text-destructive hover:bg-destructive/10 transition-colors flex items-center gap-3">
-                <span className="w-5 h-5 flex items-center justify-center shrink-0"><LogOut className="w-5 h-5" /></span>
-                Logout
+              <button 
+                type="submit" 
+                className="w-full text-left px-2.5 py-1.5 rounded-md font-medium text-xs text-destructive hover:bg-destructive/10 transition-colors flex items-center justify-between group"
+              >
+                <div className="flex items-center gap-2.5">
+                  <span className="w-4 h-4 flex items-center justify-center shrink-0 [&>svg]:w-4 [&>svg]:h-4">
+                    <LogOut className="w-4 h-4" />
+                  </span>
+                  <span>Logout</span>
+                </div>
+                <span className="text-[10px] text-muted-foreground group-hover:text-destructive opacity-70">Sign out</span>
               </button>
             </form>
           </div>

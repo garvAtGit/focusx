@@ -18,6 +18,7 @@ import {
   ScanLine,
   Bell,
   ShieldCheck,
+  Zap,
 } from "lucide-react"
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet"
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden"
@@ -61,7 +62,10 @@ export function MobileNav({
             />
           </div>
         )}
-        <nav className="flex-1 px-4 space-y-2">
+        <nav className="flex-1 px-3 py-1 space-y-0.5 overflow-y-auto overflow-x-hidden min-h-0 focusx-sidebar-scroll">
+          <div className="px-2 pt-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+            Menu
+          </div>
           {isVisible('/dashboard') && (
             <NavItem onClick={() => setOpen(false)} href="/dashboard" icon={<LayoutDashboard />}>
               Overview
@@ -117,28 +121,44 @@ export function MobileNav({
               Hardware Setup
             </NavItem>
           )}
+          {isVisible('/dashboard/rules') && (
+            <NavItem onClick={() => setOpen(false)} href="/dashboard/rules" icon={<Zap />}>
+              Automations
+            </NavItem>
+          )}
+
+          {(isVisible('/dashboard/staff') || isVisible('/dashboard/widgets') || isVisible('/dashboard/settings')) && (
+            <div className="pt-2">
+              <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 border-t border-sidebar-border/40 pt-2">
+                System
+              </div>
+              {isVisible('/dashboard/staff') && (
+                <NavItem onClick={() => setOpen(false)} href="/dashboard/staff" icon={<UserCheck />}>
+                  Staff & Roles
+                </NavItem>
+              )}
+              {isVisible('/dashboard/widgets') && (
+                <NavItem onClick={() => setOpen(false)} href="/dashboard/widgets" icon={<AppWindow />}>
+                  Widgets
+                </NavItem>
+              )}
+              {isVisible('/dashboard/settings') && (
+                <NavItem onClick={() => setOpen(false)} href="/dashboard/settings" icon={<Settings />}>
+                  Settings
+                </NavItem>
+              )}
+            </div>
+          )}
         </nav>
         
-        <div className="p-4 border-t border-sidebar-border mt-auto">
-          {isVisible('/dashboard/staff') && (
-            <NavItem onClick={() => setOpen(false)} href="/dashboard/staff" icon={<UserCheck />}>
-              Staff & Roles
-            </NavItem>
-          )}
-          {isVisible('/dashboard/widgets') && (
-            <NavItem onClick={() => setOpen(false)} href="/dashboard/widgets" icon={<AppWindow />}>
-              Widgets
-            </NavItem>
-          )}
-          {isVisible('/dashboard/settings') && (
-            <NavItem onClick={() => setOpen(false)} href="/dashboard/settings" icon={<Settings />}>
-              Settings
-            </NavItem>
-          )}
+        <div className="p-2.5 border-t border-sidebar-border shrink-0 bg-sidebar/50">
           <form action={logout}>
-            <button type="submit" className="w-full text-left px-4 py-2.5 mt-2 rounded-lg font-medium text-destructive hover:bg-destructive/10 transition-colors flex items-center gap-3">
-              <span className="w-5 h-5 flex items-center justify-center shrink-0"><LogOut className="w-5 h-5" /></span>
-              Logout
+            <button type="submit" className="w-full text-left px-2.5 py-1.5 rounded-md font-medium text-xs text-destructive hover:bg-destructive/10 transition-colors flex items-center justify-between group">
+              <div className="flex items-center gap-2.5">
+                <span className="w-4 h-4 flex items-center justify-center shrink-0 [&>svg]:w-4 [&>svg]:h-4"><LogOut className="w-4 h-4" /></span>
+                Logout
+              </div>
+              <span className="text-[10px] text-muted-foreground group-hover:text-destructive opacity-70">Sign out</span>
             </button>
           </form>
         </div>
