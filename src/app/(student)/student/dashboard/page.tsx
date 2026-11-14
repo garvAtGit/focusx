@@ -27,7 +27,14 @@ import { calculateSafeSessionMinutes } from "@/lib/attendance-summary";
 const formatDate = (date: Date) => formatStandardDate(date);
 const formatDateTime = (date: Date) => formatStandardDateTime(date);
 
-export default async function StudentDashboardPage() {
+export default async function StudentDashboardPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ view?: string; popup?: string }>;
+}) {
+  const sp = searchParams ? await searchParams : {};
+  const forceStandard = sp.view === 'standard';
+
   // Consumer page: any logged-in user can view their own bookings, including
   // librarians/admins browsing the site as a regular user.
   const session = await getSession();
@@ -45,14 +52,14 @@ export default async function StudentDashboardPage() {
     pledgeData = pledge;
 
     if (hasPledged) {
-const todayStart = startOfDayIST(new Date());
+      const todayStart = startOfDayIST(new Date());
       const weekStart = subDays(todayStart, 6); // 7-day rolling window
       const arcStart = new Date('2026-10-06T00:00:00+05:30');
       const arcEnd = new Date('2026-11-06T23:59:59+05:30');
       const effectiveWeekStart = weekStart < arcStart ? arcStart : weekStart;
       
       const allMonthLogs = await prisma.checkinLog.findMany({
-        where: { timestamp: { gte: arcStart, lte: arcEnd } },
+        where: { timestamp: { gte: arcStart } },
         include: { student: { select: { name: true, profilePhotoUrl: true } } }
       });
 
@@ -101,17 +108,20 @@ const todayStart = startOfDayIST(new Date());
           }));
       };
 
+      // Winter Arc official challenge leaderboard (Oct 6 - Nov 6)
       topScholars.month = getTop(allMonthLogs.filter(l => {
         const t = new Date(l.timestamp);
         return t >= arcStart && t <= arcEnd;
       }));
+      // Rolling week leaderboard (active scholars this week)
       topScholars.week = getTop(allMonthLogs.filter(l => {
         const t = new Date(l.timestamp);
-        return t >= effectiveWeekStart && t <= arcEnd;
+        return t >= effectiveWeekStart;
       }));
+      // Live today leaderboard (active scholars today)
       topScholars.today = getTop(allMonthLogs.filter(l => {
         const t = new Date(l.timestamp);
-        return t >= todayStart && t <= arcEnd;
+        return t >= todayStart;
       }));
     }
   }
@@ -146,7 +156,7 @@ const todayStart = startOfDayIST(new Date());
     })
   ]);
 
-  if (process.env.WINTER_ARC_ACTIVE === "true" && hasPledged) {
+  if (process.env.WINTER_ARC_ACTIVE === "true" && hasPledged && !forceStandard) {
     const activeBooking = allBookings.find(b => b.status === 'CONFIRMED' && new Date(b.endTime) > new Date()) || allBookings[0];
     const libraryId = activeBooking?.libraryId;
     let initialQrPayload = undefined;
@@ -348,6 +358,15 @@ const todayStart = startOfDayIST(new Date());
   return (
     <div className="container mx-auto px-4 py-8 max-w-5xl">
       <Suspense fallback={null}><BookingSuccessToast /></Suspense>
+
+      {hasPledged && (
+        <div className="bg-amber-950/20 border border-amber-600/30 text-amber-200 text-xs px-4 py-2.5 rounded-xl flex items-center justify-between mb-6">
+          <span>❄️ Winter Arc Challenge Enrolled (Oct 6 – Nov 6)</span>
+          <Link href="/student/dashboard" className="font-bold underline text-amber-400 hover:text-amber-200">
+            View Cozy Winter Arc →
+          </Link>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         

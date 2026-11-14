@@ -1,7 +1,7 @@
 "use client";
 
 import { playfair, inter } from "@/lib/fonts";
-
+import Link from "next/link";
 import { motion } from "framer-motion";
 import { useState, useEffect } from "react";
 import { Bell, ScanLine, User, Bluetooth, QrCode, ChevronLeft, ChevronRight, ChevronDown, Clock, BookOpen, Snowflake, ScrollText } from "lucide-react";
@@ -242,14 +242,14 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
     const start = new Date('2026-10-06T00:00:00+05:30').getTime();
     const current = new Date(`${dateKey}T00:00:00+05:30`).getTime();
     const diffDays = Math.round((current - start) / (24 * 60 * 60 * 1000));
-    return Math.min(TOTAL_ARC_DAYS, Math.max(1, diffDays + 1));
+    return Math.max(1, diffDays + 1);
   };
 
-  // Group sessions by the IST date of check-in (scoped strictly to Winter Arc window: Oct 6 to Nov 6)
+  // Group sessions by the IST date of check-in (from challenge start onwards, keeping live daily updates active)
   const groupedByDate: Record<string, SessionItem[]> = {};
   for (const s of builtSessions) {
     const dateKey = toISTDateStr(s.inTime);
-    if (dateKey < ARC_START_KEY || dateKey > ARC_END_KEY) continue; // Filter strictly to challenge dates
+    if (dateKey < ARC_START_KEY) continue; // Only filter out logs prior to challenge start
     if (!groupedByDate[dateKey]) groupedByDate[dateKey] = [];
     groupedByDate[dateKey].push(s);
   }
@@ -291,6 +291,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
   // Build ledger items (sorted newest first)
   const sortedDateKeys = Object.keys(groupedByDate).sort((a, b) => b.localeCompare(a));
   const totalActiveDays = sortedDateKeys.length;
+  const arcActiveDays = sortedDateKeys.filter(k => k >= ARC_START_KEY && k <= ARC_END_KEY).length;
   const activeDatesSet = new Set(sortedDateKeys);
 
   // Compute consecutive days streak within the Winter Arc window up to today (with yesterday grace)
@@ -322,7 +323,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
   }
 
   // Challenge streak reflects student's active days in Winter Arc (or consecutive streak / DB streak if higher)
-  const streak = Math.max(totalActiveDays, consecutiveStreak);
+  const streak = Math.max(arcActiveDays, consecutiveStreak);
   const allLedgerLogs = sortedDateKeys.map((dateKey) => {
     const daySessions = groupedByDate[dateKey];
     const totalMs = daySessions.reduce((sum, s) => sum + s.durationMs, 0);
@@ -339,9 +340,11 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
     const isActive = lastSession.isOngoing && dateKey === todayIST;
     const isToday = dateKey === todayIST;
     const displayDate = isToday ? 'Today' : toISTDisplayDate(firstSession.inTime);
+    const dayNum = getArcDayNumber(dateKey);
+    const dayLabel = dateKey <= ARC_END_KEY ? `Day ${dayNum}` : (isToday ? 'Today' : `Day ${dayNum}`);
 
     return {
-      day: `Day ${getArcDayNumber(dateKey)}`,
+      day: dayLabel,
       dateKey,
       date: displayDate,
       in: inStr,
@@ -396,7 +399,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
               <span className={`${inter.className} text-[9px] uppercase tracking-[0.2em] text-[#8c7c6c] mb-1`}>Streak</span>
               <span className={`${playfair.className} text-2xl font-bold text-[#d9a05b] drop-shadow-[0_0_8px_rgba(217,160,91,0.4)]`}>{streak}</span>
               <span className={`${inter.className} text-[8px] text-[#8c7c6c] tracking-wider mt-0.5`}>
-                {totalActiveDays} of {TOTAL_ARC_DAYS} Days
+                {todayIST > ARC_END_KEY ? `${totalActiveDays} Total Active Days` : `${arcActiveDays} of ${TOTAL_ARC_DAYS} Days`}
               </span>
               {consecutiveStreak > 1 && (
                 <span className={`${inter.className} text-[8px] text-[#d9a05b] tracking-wider mt-0.5`}>
@@ -462,7 +465,7 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
               <h2 className={`${playfair.className} text-xl text-[#f5ecd8]`}>Winter Arc</h2>
             </div>
             <span className={`${inter.className} text-[9px] uppercase tracking-[0.2em] text-[#93c5fd] border border-[#93c5fd]/30 bg-[#93c5fd]/10 px-2 py-1`}>
-              Oct 6 – Nov 6
+              Oct 6 – Nov 6 • Daily Active
             </span>
           </div>
 
@@ -718,10 +721,20 @@ export default function CozyWinterDashboard({ student, pledge, recentLogs, topSc
           </span>
           <div className="flex items-center gap-3">
             <span className={`${inter.className} text-[10px] tracking-widest text-[#a39687] uppercase`}>
-              Day {getArcDayNumber(todayIST)} of {TOTAL_ARC_DAYS}
+              {todayIST <= ARC_END_KEY ? `Day ${getArcDayNumber(todayIST)} of ${TOTAL_ARC_DAYS}` : 'Daily Sitting Active'}
             </span>
           </div>
         </motion.div>
+
+        {/* Switch to standard view toggle */}
+        <div className="text-center pb-4">
+          <Link
+            href="/student/dashboard?view=standard"
+            className="text-[11px] text-[#a39687] hover:text-[#f5ecd8] border border-[#4a3b32] bg-[#140f0c]/60 px-4 py-2 rounded-sm transition-colors uppercase tracking-widest inline-flex items-center gap-2"
+          >
+            Switch to Standard Dashboard →
+          </Link>
+        </div>
 
       </div>
 
