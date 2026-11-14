@@ -3,7 +3,7 @@ import { StudentsClient } from "./StudentsClient";
 import { getSession } from "@/app/actions/auth-actions";
 import { redirect } from "next/navigation";
 import { Prisma } from "@prisma/client";
-import { formatStandardDate } from "@/lib/date-utils";
+import { formatStandardDate, startOfDayIST, getTodayISTDateString } from "@/lib/date-utils";
 import { getActiveLibrary } from "@/lib/dashboard-utils";
 import { getCachedStudentPage, getCachedStudentMetadata } from "@/lib/student-cache";
 
@@ -25,9 +25,9 @@ export default async function StudentsPage(props: { searchParams: Promise<{ [key
   const canView = await hasPermission(session, library.id, 'students.view');
   if (!canView) redirect("/dashboard");
 
-  const now = new Date();
-  now.setHours(0,0,0,0);
-  const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const now = startOfDayIST(new Date());
+  const dateStr = getTodayISTDateString();
+  const serverNow = now.getTime();
   
   const sevenDaysFromNow = new Date(now);
   sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7);
@@ -251,6 +251,9 @@ export default async function StudentsPage(props: { searchParams: Promise<{ [key
         tabCounts={counts}
         currentPage={page} 
         searchQuery={query} 
+        serverNow={serverNow}
+        serverDateStr={dateStr}
+        libraryId={library.id}
       />
     </div>
   );

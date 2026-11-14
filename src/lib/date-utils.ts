@@ -18,6 +18,18 @@ export function startOfDayIST(date: Date) {
   return new Date(istTime.getTime() - 5.5 * 60 * 60 * 1000);
 }
 
+/**
+ * Returns the current date in IST formatted as YYYY-MM-DD.
+ * Deterministic across both Vercel serverless (UTC) and client browsers.
+ */
+export function getTodayISTDateString(): string {
+  const istTime = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+  const year = istTime.getUTCFullYear();
+  const month = String(istTime.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(istTime.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 export function formatStandardDate(dateInput: Date | string | number): string {
   if (!dateInput) return "N/A";
   const date = new Date(dateInput);

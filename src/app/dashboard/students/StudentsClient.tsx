@@ -1,5 +1,5 @@
 'use client'
-import { formatStandardDate } from "@/lib/date-utils";
+import { formatStandardDate, startOfDayIST, getTodayISTDateString } from "@/lib/date-utils";
 import type { Plan, Prisma, Relay, Seat } from "@prisma/client"
 
 import { useState, useEffect, useTransition, useMemo, Fragment } from "react"
@@ -127,6 +127,9 @@ interface StudentsClientProps {
   }
   currentPage?: number
   searchQuery?: string
+  serverNow?: number
+  serverDateStr?: string
+  libraryId?: string
 }
 
 type RecaptchaWindow = Window & {
@@ -164,7 +167,23 @@ export function clearStudentClientCache() {
   clientStudentCache.clear();
 }
 
-export function StudentsClient({ bookings, plans, logs = [], relays = [], seats = [], standaloneLockers = [], occupiedStandaloneLockerIds = [], occupiedSeatIds = [], totalCount = 0, tabCounts = { active: 0, paused: 0, dues: 0, expiring: 0, inactive: 0, expired: 0, revoked: 0 }, currentPage = 1, searchQuery = "" }: StudentsClientProps) {
+export function StudentsClient({ 
+  bookings, 
+  plans, 
+  logs = [], 
+  relays = [], 
+  seats = [], 
+  standaloneLockers = [], 
+  occupiedStandaloneLockerIds = [], 
+  occupiedSeatIds = [], 
+  totalCount = 0, 
+  tabCounts = { active: 0, paused: 0, dues: 0, expiring: 0, inactive: 0, expired: 0, revoked: 0 }, 
+  currentPage = 1, 
+  searchQuery = "",
+  serverNow,
+  serverDateStr,
+  libraryId,
+}: StudentsClientProps) {
   const router = useRouter()
   const searchParamsHook = useSearchParams()
   const [isPending, startTransition] = useTransition()
@@ -177,16 +196,30 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
   const [isClickLocked, setIsClickLocked] = useState(false)
   const [newlyAddedId, setNewlyAddedId] = useState<string | null>(null)
 
-  // Pre-load full lightweight student directory in browser memory (<100KB)
+  // Pre-load full lightweight student directory: 0ms from localStorage, refreshed in background
   useEffect(() => {
-    let active = true
-    getAllStudentsLightweight().then((res) => {
-      if (active && res.success && res.bookings) {
-        setFullDirectoryBookings(res.bookings as unknown as BookingWithDetails[])
+    const storageKey = `focusx_student_dir_${libraryId || 'default'}`;
+    try {
+      const cached = localStorage.getItem(storageKey);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setFullDirectoryBookings(parsed);
+        }
       }
-    })
-    return () => { active = false }
-  }, [])
+    } catch {}
+
+    let active = true;
+    getAllStudentsLightweight(libraryId).then((res) => {
+      if (active && res.success && res.bookings) {
+        setFullDirectoryBookings(res.bookings as unknown as BookingWithDetails[]);
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(res.bookings));
+        } catch {}
+      }
+    });
+    return () => { active = false; };
+  }, [libraryId]);
 
   // Fuse.js index over full library directory for sub-2ms instant search
   const fuseIndex = useMemo(() => {
@@ -473,9 +506,12 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
       setTimeout(() => setIsClickLocked(false), 1800);
       setPhone("+91 "); setOtp(""); setStep(1); setVerifiedAuthId(null); setSelectedPlanId(null); setAddFormStandaloneLockerId(null); setAddFormAmountPaid(""); setAddFormAmountDue("");
       setStudentFormData({ name: "", email: "", dob: "", gender: "", address: "", isKycVerified: false });
-      getAllStudentsLightweight().then((res) => {
+      getAllStudentsLightweight(libraryId).then((res) => {
         if (res.success && res.bookings) {
           setFullDirectoryBookings(res.bookings as unknown as BookingWithDetails[]);
+          try {
+            localStorage.setItem(`focusx_student_dir_${libraryId || 'default'}`, JSON.stringify(res.bookings));
+          } catch {}
         }
       });
       refreshData();
@@ -505,8 +541,7 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
     }
   }
 
-  const now = new Date();
-  now.setHours(0,0,0,0);
+  const now = serverNow ? new Date(serverNow) : startOfDayIST(new Date());
 
   // Handle URL updates for tabs with instant client-side cache
   const handleTabChange = (tab: typeof activeTab) => {
@@ -574,28 +609,23 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
   const uniqueSearchedBookings = Array.from(latestBookingsMap.values());
 
   const activeBookings = uniqueSearchedBookings.filter((b) => {
-    const end = new Date(b.endTime);
-    end.setHours(0,0,0,0);
-    return b.status === 'CONFIRMED' && end >= now && !b.isPaused;
+    const end = startOfDayIST(new Date(b.endTime));
+    return b.status === 'CONFIRMED' && end.getTime() >= now.getTime() && !b.isPaused;
   });
   const pausedBookings = uniqueSearchedBookings.filter((b) => b.status === 'CONFIRMED' && b.isPaused);
   const duesBookings = uniqueSearchedBookings.filter((b) => b.status === 'CONFIRMED' && (b.amountDuePaise ?? 0) > 0);
   const expiringBookings = uniqueSearchedBookings.filter((b) => {
-    const end = new Date(b.endTime);
-    end.setHours(0,0,0,0);
-    const sevenDaysFromNow = new Date(now);
-    sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7);
-    return b.status === 'CONFIRMED' && end >= now && end <= sevenDaysFromNow && !b.isPaused;
+    const end = startOfDayIST(new Date(b.endTime));
+    const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    return b.status === 'CONFIRMED' && end.getTime() >= now.getTime() && end.getTime() <= sevenDaysFromNow.getTime() && !b.isPaused;
   });
   const inactiveBookings = uniqueSearchedBookings.filter((b) => {
-    const end = new Date(b.endTime);
-    end.setHours(0,0,0,0);
-    return b.status !== 'CANCELLED' && end < now && !b.student.isExpiredLead;
+    const end = startOfDayIST(new Date(b.endTime));
+    return b.status !== 'CANCELLED' && end.getTime() < now.getTime() && !b.student.isExpiredLead;
   });
   const expiredBookings = uniqueSearchedBookings.filter((b) => {
-    const end = new Date(b.endTime);
-    end.setHours(0,0,0,0);
-    return b.status !== 'CANCELLED' && end < now && b.student.isExpiredLead;
+    const end = startOfDayIST(new Date(b.endTime));
+    return b.status !== 'CANCELLED' && end.getTime() < now.getTime() && b.student.isExpiredLead;
   });
   const revokedBookings = uniqueSearchedBookings.filter((b) => b.status === 'CANCELLED');
 
@@ -904,7 +934,7 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
                       <div className="space-y-2">
                         <Label htmlFor="startDate">Start Date</Label>
-                        <Input id="startDate" name="startDate" type="date" defaultValue={new Date().toISOString().split('T')[0]} required />
+                        <Input id="startDate" name="startDate" type="date" defaultValue={serverDateStr || getTodayISTDateString()} required />
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="paymentMethod">Payment Method</Label>
@@ -1263,12 +1293,10 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                     <div className="w-48 text-right">Actions</div>
                   </div>
                   {displayedBookings.map((booking, index) => {
-                    const endOfDay = new Date(booking.endTime);
-                    endOfDay.setHours(0,0,0,0);
-                    const today = new Date();
-                    today.setHours(0,0,0,0);
+                    const endOfDay = startOfDayIST(new Date(booking.endTime));
+                    const today = now;
                     const daysLeft = Math.ceil((endOfDay.getTime() - today.getTime()) / (1000 * 3600 * 24)) + 1;
-                    const isExpired = endOfDay < today;
+                    const isExpired = endOfDay.getTime() < today.getTime();
                     
                     const totalDays = Math.ceil((new Date(booking.endTime).getTime() - new Date(booking.startTime).getTime()) / (1000 * 60 * 60 * 24));
                     const progress = Math.min(100, Math.max(0, ((totalDays - Math.max(0, daysLeft)) / totalDays) * 100));
@@ -1379,16 +1407,16 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                         <div className="grid grid-cols-2 gap-4 w-full sm:flex-1 relative z-10">
                           <div className="flex flex-col gap-1">
                             <span className="text-sm font-semibold text-slate-800">{booking.plan?.name}</span>
-                            <span className="text-[11px] font-medium text-slate-500">{formatStandardDate(booking.startTime)} - {formatStandardDate(booking.endTime)}</span>
+                            <span suppressHydrationWarning className="text-[11px] font-medium text-slate-500">{formatStandardDate(booking.startTime)} - {formatStandardDate(booking.endTime)}</span>
                             {booking.isPaused && booking.pausedAt && (
-                              <span className="text-[11px] font-medium text-amber-600 mt-0.5 flex items-center gap-1">
+                              <span suppressHydrationWarning className="text-[11px] font-medium text-amber-600 mt-0.5 flex items-center gap-1">
                                 <Pause className="w-3 h-3" /> 
                                 Paused on {new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(booking.pausedAt))}
                               </span>
                             )}
                             {!booking.isPaused && (booking.resumedAt || (booking.totalPausedDays ?? 0) > 0) && (
                               <div className="flex flex-col gap-0.5 mt-0.5">
-                                <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1">
+                                <span suppressHydrationWarning className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1">
                                   <PlayCircle className="w-3 h-3" />
                                   Resumed on {new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(booking.resumedAt || booking.updatedAt))}
                                   {(booking.totalPausedDays ?? 0) > 0 && (
@@ -1396,7 +1424,7 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                                   )}
                                 </span>
                                 {booking.pausedAt && (
-                                  <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                                  <span suppressHydrationWarning className="text-[10px] text-slate-400 flex items-center gap-1">
                                     (Paused: {new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(booking.pausedAt))})
                                   </span>
                                 )}
@@ -1425,7 +1453,7 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                         <div className="flex items-center justify-between sm:justify-end gap-6 w-full sm:w-auto relative z-10 mt-2 sm:mt-0 pt-4 sm:pt-0 border-t sm:border-0 border-slate-100">
                           {activeTab === 'ACTIVE' && !booking.isPaused && (
                             <div className="flex flex-col items-end">
-                              <span className={`text-lg font-black leading-none ${daysLeft <= 3 ? 'text-rose-500' : daysLeft <= 7 ? 'text-amber-500' : 'text-indigo-600'}`}>
+                              <span suppressHydrationWarning className={`text-lg font-black leading-none ${daysLeft <= 3 ? 'text-rose-500' : daysLeft <= 7 ? 'text-amber-500' : 'text-indigo-600'}`}>
                                 {daysLeft}
                               </span>
                               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mt-0.5">Days Left</span>
@@ -1633,12 +1661,10 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                   className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
                 >
                   {displayedBookings.map((booking, index) => {
-                    const endOfDay = new Date(booking.endTime);
-                    endOfDay.setHours(0,0,0,0);
-                    const today = new Date();
-                    today.setHours(0,0,0,0);
+                    const endOfDay = startOfDayIST(new Date(booking.endTime));
+                    const today = now;
                     const daysLeft = Math.ceil((endOfDay.getTime() - today.getTime()) / (1000 * 3600 * 24)) + 1;
-                    const isExpired = endOfDay < today;
+                    const isExpired = endOfDay.getTime() < today.getTime();
                     const assignedSeat = seats.find(s => s.id === booking.seatId);
 
                     let statusBadge = null;
@@ -1884,16 +1910,16 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                                 {statusBadge}
                               </div>
                               <p className="font-bold text-slate-800">{booking.plan?.name}</p>
-                              <p className="text-xs font-medium text-slate-500 mt-1">{formatStandardDate(booking.startTime)} - {formatStandardDate(booking.endTime)}</p>
+                              <p suppressHydrationWarning className="text-xs font-medium text-slate-500 mt-1">{formatStandardDate(booking.startTime)} - {formatStandardDate(booking.endTime)}</p>
                               {booking.isPaused && booking.pausedAt && (
-                                <p className="text-[11px] font-medium text-amber-600 mt-1.5 flex items-center gap-1">
+                                <p suppressHydrationWarning className="text-[11px] font-medium text-amber-600 mt-1.5 flex items-center gap-1">
                                   <Pause className="w-3 h-3" /> 
                                   Paused on {new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(booking.pausedAt))}
                                 </p>
                               )}
                               {!booking.isPaused && (booking.resumedAt || (booking.totalPausedDays ?? 0) > 0) && (
                                 <div className="flex flex-col gap-0.5 mt-1.5">
-                                  <p className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1">
+                                  <p suppressHydrationWarning className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1">
                                     <PlayCircle className="w-3 h-3" />
                                     Resumed on {new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(booking.resumedAt || booking.updatedAt))}
                                     {(booking.totalPausedDays ?? 0) > 0 && (
@@ -1901,7 +1927,7 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                                     )}
                                   </p>
                                   {booking.pausedAt && (
-                                    <p className="text-[10px] text-slate-400 flex items-center gap-1">
+                                    <p suppressHydrationWarning className="text-[10px] text-slate-400 flex items-center gap-1">
                                       (Paused: {new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(booking.pausedAt))})
                                     </p>
                                   )}
@@ -1921,7 +1947,7 @@ export function StudentsClient({ bookings, plans, logs = [], relays = [], seats 
                               </div>
                               <div className="flex-1 bg-white border border-slate-200 rounded-xl p-3 flex flex-col justify-center">
                                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Days Left</span>
-                                <span className={`font-bold text-sm ${daysLeft <= 3 ? 'text-rose-500' : daysLeft <= 7 ? 'text-amber-500' : 'text-indigo-600'}`}>
+                                <span suppressHydrationWarning className={`font-bold text-sm ${daysLeft <= 3 ? 'text-rose-500' : daysLeft <= 7 ? 'text-amber-500' : 'text-indigo-600'}`}>
                                   {daysLeft}
                                 </span>
                               </div>

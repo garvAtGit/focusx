@@ -340,16 +340,49 @@ export async function addLockerToExistingBookingAction(input: {
   const amountPaise = Math.round(proratedAmount * 100);
 
   if (paymentMode === "RECEPTION") {
-    await prisma.$transaction(async (tx) => {
-      await tx.booking.update({
-        where: { id: booking.id },
-        data: {
-          hasLocker: true,
-          standaloneLockerId: targetStandaloneLockerId,
-          amountDuePaise: (booking.amountDuePaise || 0) + amountPaise,
-        },
+    try {
+      await prisma.$transaction(async (tx) => {
+        if (targetStandaloneLockerId) {
+          const conflicting = await tx.booking.findFirst({
+            where: {
+              standaloneLockerId: targetStandaloneLockerId,
+              status: "CONFIRMED",
+              endTime: { gt: now },
+              id: { not: booking.id },
+            },
+          });
+          if (conflicting) {
+            throw new Error(`Locker ${lockerName} was just taken by another student.`);
+          }
+        }
+
+        await tx.booking.update({
+          where: { id: booking.id },
+          data: {
+            hasLocker: true,
+            standaloneLockerId: targetStandaloneLockerId,
+            amountDuePaise: (booking.amountDuePaise || 0) + amountPaise,
+          },
+        });
+
+        await logActivity({
+          libraryId: booking.libraryId,
+          actorId: session.userId,
+          actorName: session.phone || "Staff Member",
+          actorRole: session.role,
+          studentId: booking.studentId,
+          studentName: session.phone || "Student",
+          actionType: "PLAN_CHANGED",
+          description: `Added ${lockerName} for ₹${proratedAmount} to membership`,
+          metadata: { lockerName, proratedAmount },
+        }, tx);
       });
-    });
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : "Failed to assign locker due to concurrency conflict.",
+      };
+    }
 
     const { createNotification } = await import("@/lib/notifications");
 

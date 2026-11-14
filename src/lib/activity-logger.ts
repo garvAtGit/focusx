@@ -25,11 +25,16 @@ export interface LogActivityParams {
 /**
  * Super Simple, Human-Readable Activity Logger
  * Records librarian and receptionist staff actions in plain everyday language.
+ * Supports transactional execution (txClient) for Transactional Outbox guarantee (DDIA Ch 11).
  */
-export async function logActivity(params: LogActivityParams): Promise<void> {
+export async function logActivity(
+  params: LogActivityParams,
+  txClient?: any
+): Promise<void> {
   try {
+    const db = txClient || prisma;
     const id = generateUUIDv7();
-    await prisma.libraryActivityLog.create({
+    await db.libraryActivityLog.create({
       data: {
         id,
         libraryId: params.libraryId,
@@ -44,7 +49,7 @@ export async function logActivity(params: LogActivityParams): Promise<void> {
       },
     });
   } catch (error) {
-    // Non-blocking logging failure to guarantee core transactions never abort
+    // Non-blocking logging failure fallback
     console.warn("[logActivity] Failed to record activity log:", error);
   }
 }

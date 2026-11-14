@@ -171,7 +171,12 @@ export async function revokeBooking(bookingId: string, reason?: string) {
   const session = await getSession();
   if (!session) return { error: "Unauthorized" };
 
-  const booking = await prisma.booking.findUnique({ where: { id: bookingId } });
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    include: {
+      student: { select: { id: true, name: true } },
+    },
+  });
   if (!booking) return { error: "Invalid booking" };
 
   const authCheck = await requirePermission(session, booking.libraryId, 'bookings.cancel');
@@ -179,33 +184,54 @@ export async function revokeBooking(bookingId: string, reason?: string) {
     return { error: authCheck.error };
   }
 
-  const result = await revokeConfirmedBookings({
-    studentId: booking.studentId,
-    libraryId: booking.libraryId,
-    reason,
-  });
+  const sanitizedReason = reason?.trim() || "ACCESS_REVOKED_BY_STAFF";
+  const now = new Date();
 
-  const studentUser = await prisma.user.findUnique({
-    where: { id: booking.studentId },
-    select: { name: true },
-  });
+  await prisma.$transaction(async (tx) => {
+    // 1. Explicitly cancel the target booking with revocation reason and end it immediately
+    await tx.booking.update({
+      where: { id: bookingId },
+      data: {
+        status: 'CANCELLED',
+        endTime: now,
+        revokedReason: sanitizedReason,
+      },
+    });
 
-  await logActivity({
-    libraryId: booking.libraryId,
-    actorId: session.userId,
-    actorName: session.phone || "Staff Member",
-    actorRole: session.role,
-    studentId: booking.studentId,
-    studentName: studentUser?.name || "Student",
-    actionType: "BOOKING_REVOKED",
-    description: `Revoked membership for ${studentUser?.name || "student"}${reason ? ': ' + reason : ''}`,
-    metadata: { reason },
+    // 2. Also cancel any other active confirmed bookings for this student in this library
+    await tx.booking.updateMany({
+      where: {
+        studentId: booking.studentId,
+        libraryId: booking.libraryId,
+        status: 'CONFIRMED',
+        id: { not: bookingId },
+      },
+      data: {
+        status: 'CANCELLED',
+        endTime: now,
+        revokedReason: sanitizedReason,
+      },
+    });
+
+    // 3. Atomically record staff activity inside transaction (Transactional Outbox)
+    const studentName = booking.student?.name || "Student";
+    await logActivity({
+      libraryId: booking.libraryId,
+      actorId: session.userId,
+      actorName: session.phone || "Staff Member",
+      actorRole: session.role,
+      studentId: booking.studentId,
+      studentName,
+      actionType: "BOOKING_REVOKED",
+      description: `Revoked membership for ${studentName}${reason ? ': ' + reason : ''}`,
+      metadata: { reason: sanitizedReason, bookingId },
+    }, tx);
   });
 
   await invalidateLibraryRuntimeCache(booking.libraryId);
   revalidatePath("/dashboard/students");
   revalidatePath("/dashboard/history");
-  return { success: true, needsRefund: result.needsRefund };
+  return { success: true };
 }
 
 export async function addStudentProfile(formData: FormData) {
@@ -710,6 +736,11 @@ export async function getAllStudentsLightweight(explicitLibraryId?: string) {
             crmNote: true,
             isExpiredLead: true,
             profilePhotoUrl: true,
+            gender: true,
+            dob: true,
+            address: true,
+            digilockerVerified: true,
+            kycAadhaarStatus: true,
           },
         },
         plan: {
@@ -725,6 +756,13 @@ export async function getAllStudentsLightweight(explicitLibraryId?: string) {
           select: {
             id: true,
             name: true,
+          },
+        },
+        standaloneLocker: {
+          select: {
+            id: true,
+            name: true,
+            price: true,
           },
         },
       },
@@ -1136,30 +1174,33 @@ export async function collectDues(bookingId: string, additionalCashPaise: number
     const paymentTotal = additionalCashPaise + additionalOnlinePaise;
     const newDue = Math.max(0, currentDue - paymentTotal);
 
-    const updated = await prisma.booking.update({
-      where: { id: bookingId },
-      data: {
-        amountPaidCashPaise: (booking.amountPaidCashPaise || 0) + additionalCashPaise,
-        amountPaidOnlinePaise: (booking.amountPaidOnlinePaise || 0) + additionalOnlinePaise,
-        amountDuePaise: newDue
-      }
-    });
+    let updatedBooking: any;
+    await prisma.$transaction(async (tx) => {
+      updatedBooking = await tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          amountPaidCashPaise: (booking.amountPaidCashPaise || 0) + additionalCashPaise,
+          amountPaidOnlinePaise: (booking.amountPaidOnlinePaise || 0) + additionalOnlinePaise,
+          amountDuePaise: newDue
+        }
+      });
 
-    const studentUser = await prisma.user.findUnique({
-      where: { id: booking.studentId },
-      select: { name: true },
-    });
-    const paidRupees = paymentTotal / 100;
-    await logActivity({
-      libraryId: booking.libraryId,
-      actorId: session.userId,
-      actorName: session.phone || "Staff Member",
-      actorRole: session.role,
-      studentId: booking.studentId,
-      studentName: studentUser?.name || "Student",
-      actionType: "DUES_COLLECTED",
-      description: `Collected ₹${paidRupees} dues (${additionalCashPaise > 0 ? "Cash" : "Online"}) from ${studentUser?.name || "student"}`,
-      metadata: { additionalCashPaise, additionalOnlinePaise, newDue },
+      const studentUser = await tx.user.findUnique({
+        where: { id: booking.studentId },
+        select: { name: true },
+      });
+      const paidRupees = paymentTotal / 100;
+      await logActivity({
+        libraryId: booking.libraryId,
+        actorId: session.userId,
+        actorName: session.phone || "Staff Member",
+        actorRole: session.role,
+        studentId: booking.studentId,
+        studentName: studentUser?.name || "Student",
+        actionType: "DUES_COLLECTED",
+        description: `Collected ₹${paidRupees} dues (${additionalCashPaise > 0 ? "Cash" : "Online"}) from ${studentUser?.name || "student"}`,
+        metadata: { additionalCashPaise, additionalOnlinePaise, newDue },
+      }, tx);
     });
 
     await invalidateStudentsCache(booking.libraryId);
@@ -1167,7 +1208,7 @@ export async function collectDues(bookingId: string, additionalCashPaise: number
     revalidatePath("/dashboard/financials");
     revalidatePath("/dashboard/history");
     
-    return { success: true, booking: updated };
+    return { success: true, booking: updatedBooking };
   } catch (error) {
     console.error("Failed to collect dues:", error);
     return { error: 'Failed to collect dues' };
