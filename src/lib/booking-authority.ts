@@ -156,6 +156,10 @@ async function serializable<T>(
       if (!isSerializationFailure(error) || attempt === SERIALIZABLE_RETRIES) {
         throw error
       }
+      // Exponential backoff with full random jitter (Kleppmann DDIA Ch 7 / Alex Xu Ch 4)
+      // Prevents concurrent transactions from repeatedly colliding in a lockstep loop.
+      const jitterMs = Math.floor(Math.random() * (Math.pow(2, attempt) * 25)) + 10
+      await new Promise((resolve) => setTimeout(resolve, jitterMs))
     }
   }
 

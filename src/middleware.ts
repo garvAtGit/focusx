@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { rateLimiters } from '@/lib/rate-limit';
+import { checkHardwareRateLimit } from '@/lib/rate-limiter-hardware';
 
 function getClientIp(request: NextRequest): string {
   // On Vercel, `x-real-ip` is set by the platform edge and any client-supplied
@@ -73,6 +74,33 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/api/relay') ||
     pathname.startsWith('/api/student/checkin');
   const isVitals = pathname === '/api/vitals';
+
+  // Dedicated sliding-window rate defense for hardware endpoints (Alex Xu Ch 4)
+  if (isMachineOrHardware) {
+    try {
+      const hwId =
+        request.headers.get('x-reader-id') ||
+        request.headers.get('x-device-id') ||
+        getClientIp(request);
+      const hwLimit = await checkHardwareRateLimit(hwId, 15, 5000);
+      if (!hwLimit.success) {
+        return NextResponse.json(
+          { error: 'Machine rate limit exceeded. Please wait a few seconds.', retryAfterMs: hwLimit.resetMs },
+          {
+            status: 429,
+            headers: {
+              'Retry-After': '5',
+              'X-RateLimit-Limit': String(hwLimit.limit),
+              'X-RateLimit-Remaining': '0',
+            },
+          }
+        );
+      }
+    } catch (err) {
+      console.warn('[middleware] Hardware rate limiter check warning (failing open):', err);
+    }
+  }
+
   if ((isApi || isServerAction) && !isMachineOrHardware && !isVitals) {
     const isSensitive =
       pathname.startsWith('/api/auth') ||

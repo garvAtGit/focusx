@@ -50,13 +50,24 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
-import { StudentProfileModal } from "@/components/StudentProfileModal"
+import dynamic from "next/dynamic"
+
+const StudentProfileModal = dynamic(
+  () => import("@/components/StudentProfileModal").then((m) => m.StudentProfileModal),
+  { ssr: false }
+)
 import { AttendanceCalendar } from "@/components/AttendanceCalendar"
-import { ManualNotifyModal } from "@/components/ManualNotifyModal"
+const ManualNotifyModal = dynamic(
+  () => import("@/components/ManualNotifyModal").then((m) => m.ManualNotifyModal),
+  { ssr: false }
+)
 import { AutoActionsLog } from "@/components/AutoActionsLog"
 import { WhatsAppIcon } from "@/components/icons/WhatsAppIcon"
 import { openWhatsAppChat } from "@/lib/whatsapp"
-import { WhatsAppMessageModal } from "@/components/whatsapp/WhatsAppMessageModal"
+const WhatsAppMessageModal = dynamic(
+  () => import("@/components/whatsapp/WhatsAppMessageModal").then((m) => m.WhatsAppMessageModal),
+  { ssr: false }
+)
 
 type BookingWithDetails = Prisma.BookingGetPayload<{
   include: {

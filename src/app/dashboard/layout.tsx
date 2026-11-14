@@ -25,6 +25,7 @@ import {
   ScanLine,
   Bell,
   Lock,
+  History,
 } from "lucide-react";
 import prisma from "@/lib/prisma";
 import { getActiveLibrary } from "@/lib/dashboard-utils";
@@ -70,6 +71,7 @@ async function DashboardAuthWrapper({ children }: { children: ReactNode }) {
       allowedRoutes.push(
         '/dashboard',
         '/dashboard/students',
+        '/dashboard/history',
         '/dashboard/notifications',
         '/dashboard/queries',
         '/dashboard/inquiries',
@@ -85,7 +87,7 @@ async function DashboardAuthWrapper({ children }: { children: ReactNode }) {
         '/dashboard/rules'
       );
     } else if (resolution && resolution.status === 'ACTIVE') {
-      if (resolution.permissions.length > 0) allowedRoutes.push('/dashboard');
+      if (resolution.permissions.length > 0) allowedRoutes.push('/dashboard', '/dashboard/history');
       if (resolution.permissions.includes('students.view')) allowedRoutes.push('/dashboard/students');
       if (resolution.permissions.includes('notifications.view')) allowedRoutes.push('/dashboard/notifications');
       if (resolution.permissions.includes('queries.view')) allowedRoutes.push('/dashboard/queries');
@@ -107,7 +109,7 @@ async function DashboardAuthWrapper({ children }: { children: ReactNode }) {
       if (resolution.permissions.includes('rules.view')) allowedRoutes.push('/dashboard/rules');
   } else if (session.role === 'RECEPTIONIST') {
     // Safe fallback for legacy receptionists
-    allowedRoutes.push('/dashboard', '/dashboard/students', '/dashboard/notifications', '/dashboard/queries', '/dashboard/inquiries', '/dashboard/approvals', '/dashboard/scanner');
+    allowedRoutes.push('/dashboard', '/dashboard/students', '/dashboard/history', '/dashboard/notifications', '/dashboard/queries', '/dashboard/inquiries', '/dashboard/approvals', '/dashboard/scanner');
   }
 
   const isVisible = (href: string) => allowedRoutes.includes(href);
@@ -172,6 +174,11 @@ async function DashboardAuthWrapper({ children }: { children: ReactNode }) {
             {isVisible('/dashboard/students') && (
               <NavItem href="/dashboard/students" icon={<Users />}>
                 Students
+              </NavItem>
+            )}
+            {isVisible('/dashboard/history') && (
+              <NavItem href="/dashboard/history" icon={<History />}>
+                Activity History
               </NavItem>
             )}
             {isVisible('/dashboard/notifications') && (

@@ -14,6 +14,7 @@ import { loadBookingFacts } from "@/lib/booking-engine/server/server-fact-loader
 import { evaluateBookingSelection } from "@/lib/booking-engine/evaluate-selection"
 import type { BookingDraft, BookingResult } from "@/lib/booking-engine/types"
 import { createManualConfirmedBooking } from "@/lib/booking-authority"
+import { logActivity } from "@/lib/activity-logger"
 import * as Sentry from "@sentry/nextjs"
 import { isNextControlFlowError } from "@/lib/sentry-utils"
 
@@ -33,7 +34,11 @@ async function authorizeBookingMutation(
 
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
-    include: { library: { select: { librarianId: true } } },
+    include: {
+      library: { select: { librarianId: true, id: true } },
+      student: { select: { id: true, name: true } },
+      seat: { select: { id: true, name: true } },
+    },
   })
   if (!booking) throw new Error("Booking not found")
 
@@ -43,13 +48,26 @@ async function authorizeBookingMutation(
   if (!ownsBooking && !ownsLibrary && !isAdmin) {
     throw new Error("Unauthorized to modify this booking")
   }
-  return booking
+  return { ...booking, session }
 }
 
 export async function pauseBooking(bookingId: string) {
   const booking = await authorizeBookingMutation(bookingId)
   await pauseConfirmedBooking(bookingId)
   await invalidateLibraryRuntimeCache(booking.libraryId)
+
+  // Human-readable activity narrative
+  await logActivity({
+    libraryId: booking.libraryId,
+    actorId: booking.session.userId,
+    actorName: booking.session.phone || "Staff Member",
+    actorRole: booking.session.role,
+    studentId: booking.studentId,
+    studentName: booking.student?.name || "Student",
+    actionType: "MEMBERSHIP_PAUSED",
+    description: `Paused ${booking.student?.name || "student"}'s membership`,
+  })
+
   revalidatePath("/")
   revalidatePath("/dashboard/students")
   revalidatePath("/student/dashboard")
@@ -61,6 +79,19 @@ export async function resumeBooking(bookingId: string) {
   try {
     const result = await resumePausedBooking(bookingId)
     await invalidateLibraryRuntimeCache(booking.libraryId)
+
+    // Human-readable activity narrative
+    await logActivity({
+      libraryId: booking.libraryId,
+      actorId: booking.session.userId,
+      actorName: booking.session.phone || "Staff Member",
+      actorRole: booking.session.role,
+      studentId: booking.studentId,
+      studentName: booking.student?.name || "Student",
+      actionType: "MEMBERSHIP_RESUMED",
+      description: `Resumed ${booking.student?.name || "student"}'s membership`,
+    })
+
     revalidatePath("/")
     revalidatePath("/dashboard/students")
     revalidatePath("/student/dashboard")
@@ -82,6 +113,7 @@ export async function updateBookingSeat(
 ) {
   try {
     const booking = await authorizeBookingMutation(bookingId, { staffOnly: true })
+    const oldSeatLabel = booking.seat?.name ? `#${booking.seat.name}` : "Unallocated"
     try {
       await changeBookingSeat(bookingId, seatId)
     } catch (error) {
@@ -99,6 +131,21 @@ export async function updateBookingSeat(
       }
       return { error: "Failed to update seat" }
     }
+
+    const newSeat = seatId ? await prisma.seat.findUnique({ where: { id: seatId }, select: { name: true } }) : null
+    const newSeatLabel = newSeat?.name ? `#${newSeat.name}` : "None"
+
+    await logActivity({
+      libraryId: booking.libraryId,
+      actorId: booking.session.userId,
+      actorName: booking.session.phone || "Staff Member",
+      actorRole: booking.session.role,
+      studentId: booking.studentId,
+      studentName: booking.student?.name || "Student",
+      actionType: "SEAT_CHANGED",
+      description: `Changed ${booking.student?.name || "student"}'s seat to Seat ${newSeatLabel} from Seat ${oldSeatLabel}`,
+      metadata: { oldSeat: oldSeatLabel, newSeat: newSeatLabel },
+    })
 
     await invalidateLibraryRuntimeCache(booking.libraryId)
     revalidatePath("/dashboard/students")

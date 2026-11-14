@@ -985,5 +985,22 @@ model StudentInfoRequest {
   @@index([librarianId, libraryId])
 }
 
+model LibraryActivityLog {
+  id          String   @id @default(uuid())
+  libraryId   String
+  actorId     String?
+  actorName   String?
+  actorRole   String?
+  studentId   String?
+  studentName String?
+  actionType  String
+  description String
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  @@index([libraryId, createdAt(sort: Desc)])
+  @@index([studentId])
+}
+
 
 

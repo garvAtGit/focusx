@@ -20,6 +20,7 @@ import { requirePermission, hasPermission } from "@/lib/permissions"
 import { generateInitialUniqueUsername } from "@/lib/username-validator"
 import { serializeStudentForLibrarian } from "@/lib/student-serializer"
 import { getActiveGrantForLibrarian } from "./student-info-request-actions"
+import { logActivity } from "@/lib/activity-logger"
 import * as Sentry from "@sentry/nextjs"
 import { isNextControlFlowError } from "@/lib/sentry-utils"
 
@@ -442,6 +443,19 @@ export async function addStudentWithBooking(formData: FormData) {
         source: BookingIntentSource.MANUAL,
         paymentRef: manualPaymentReference(`MANUAL_${paymentMethod || "CASH"}`),
       });
+
+      // Record human-readable staff activity with plan
+      await logActivity({
+        libraryId: library.id,
+        actorId: session.userId,
+        actorName: session.phone || "Staff Member",
+        actorRole: session.role,
+        studentId: student.id,
+        studentName: name,
+        actionType: "STUDENT_ADDED",
+        description: `${name} was added as a student with ${plan.name} plan by ${session.phone || "Staff"}`,
+        metadata: { planName: plan.name, seatId },
+      });
     } catch (error) {
       if (
         error instanceof BookingAuthorityError
@@ -455,6 +469,18 @@ export async function addStudentWithBooking(formData: FormData) {
         error: error instanceof Error ? error.message : "Failed to create booking",
       };
     }
+  } else {
+    // Record student addition without plan
+    await logActivity({
+      libraryId: library.id,
+      actorId: session.userId,
+      actorName: session.phone || "Staff Member",
+      actorRole: session.role,
+      studentId: student.id,
+      studentName: name,
+      actionType: "STUDENT_ADDED",
+      description: `${name} was enrolled as a student by ${session.phone || "Staff"}`,
+    });
   }
 
   await invalidateLibraryRuntimeCache(library.id);
@@ -557,6 +583,25 @@ export async function renewPlan(
     }
     return { error: error instanceof Error ? error.message : "Operation failed" };
   }
+
+  // Record human-readable staff activity
+  const studentUser = await prisma.user.findUnique({ where: { id: booking.studentId }, select: { name: true } });
+  const isPlanChange = booking.planId !== targetPlan.id;
+  const description = isPlanChange
+    ? `Changed ${studentUser?.name || "student"}'s plan to ${targetPlan.name} from ${booking.plan.name}`
+    : `Renewed membership for ${studentUser?.name || "student"} with ${targetPlan.name} plan`;
+
+  await logActivity({
+    libraryId: booking.libraryId,
+    actorId: session.userId,
+    actorName: session.phone || "Staff Member",
+    actorRole: session.role,
+    studentId: booking.studentId,
+    studentName: studentUser?.name || "Student",
+    actionType: isPlanChange ? "PLAN_CHANGED" : "RENEWAL_COMPLETED",
+    description,
+    metadata: { oldPlan: booking.plan.name, newPlan: targetPlan.name },
+  });
 
   await invalidateLibraryRuntimeCache(booking.libraryId);
   revalidatePath("/dashboard/students");
