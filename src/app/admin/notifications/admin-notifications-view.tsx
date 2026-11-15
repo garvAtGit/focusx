@@ -23,6 +23,7 @@ import {
   RotateCcw,
   Server,
   Zap,
+  Eye,
 } from 'lucide-react';
 import {
   searchNotificationRecipientsAction,
@@ -34,6 +35,7 @@ import {
   getNotificationSystemHealthAction,
 } from '@/app/actions/notification-actions';
 import { BrowserPushSettings } from '@/components/notifications/BrowserPushSettings';
+import { BroadcastDeliveryModal } from '@/components/notifications/BroadcastDeliveryModal';
 import type { BroadcastAudienceType } from '@/lib/notification-shared';
 
 interface LibraryOption {
@@ -66,6 +68,9 @@ interface BroadcastHistoryItem {
   scheduledFor?: string | Date | null;
   isCancelled?: boolean;
   createdAt: string | Date;
+  readCount?: number;
+  readRate?: number;
+  deliveredCount?: number;
   sender?: {
     name: string;
     email: string | null;
@@ -81,6 +86,7 @@ export default function AdminNotificationsView({
 }) {
   const [activeTab, setActiveTab] = useState<'compose' | 'history' | 'monitoring' | 'push-settings'>('compose');
   const [isPending, startTransition] = useTransition();
+  const [inspectedBroadcast, setInspectedBroadcast] = useState<BroadcastHistoryItem | null>(null);
 
   // Monitoring State
   const [healthData, setHealthData] = useState<any>(null);
@@ -968,6 +974,7 @@ export default function AdminNotificationsView({
                   <th className="px-6 py-4">Audience</th>
                   <th className="px-6 py-4">Targets</th>
                   <th className="px-6 py-4">Delivered</th>
+                  <th className="px-6 py-4">Read Receipts</th>
                   <th className="px-6 py-4">Status</th>
                   <th className="px-6 py-4">Timing</th>
                   <th className="px-6 py-4">Actions</th>
@@ -976,7 +983,7 @@ export default function AdminNotificationsView({
               <tbody className="divide-y divide-border text-xs">
                 {history.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-6 py-12 text-center text-muted-foreground">
+                    <td colSpan={8} className="px-6 py-12 text-center text-muted-foreground">
                       No broadcasts recorded yet.
                     </td>
                   </tr>
@@ -1003,6 +1010,20 @@ export default function AdminNotificationsView({
                             ({bcast.failedCount} failed)
                           </span>
                         )}
+                      </td>
+                      <td className="px-6 py-4">
+                        <button
+                          type="button"
+                          onClick={() => setInspectedBroadcast(bcast)}
+                          className="group flex items-center gap-1.5 font-bold text-xs hover:text-primary transition-colors text-left"
+                          title="Click to inspect recipient read receipts"
+                        >
+                          <Eye className="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary transition-colors" />
+                          <span>{bcast.readCount ?? 0} read</span>
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                            {bcast.readRate ?? 0}%
+                          </span>
+                        </button>
                       </td>
                       <td className="px-6 py-4">
                         <span
@@ -1044,19 +1065,29 @@ export default function AdminNotificationsView({
                         )}
                       </td>
                       <td className="px-6 py-4">
-                        {bcast.status === 'SCHEDULED' && !bcast.isCancelled ? (
+                        <div className="flex items-center gap-1.5">
                           <button
                             type="button"
-                            onClick={() => handleCancelBroadcast(bcast.id)}
-                            className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors"
+                            onClick={() => setInspectedBroadcast(bcast)}
+                            className="px-2 py-1 text-[11px] font-semibold rounded-lg border border-border bg-card hover:bg-muted text-foreground flex items-center gap-1 transition-colors"
+                            title="Inspect recipient delivery and reactions"
                           >
-                            Cancel
+                            <Eye className="w-3 h-3 text-primary" />
+                            Receipts
                           </button>
-                        ) : (bcast.status === 'FAILED' || bcast.status === 'PARTIALLY_FAILED') ? (
-                          <button
-                            type="button"
-                            onClick={() => handleRetryBroadcast(bcast.id)}
-                            disabled={isPending}
+                          {bcast.status === 'SCHEDULED' && !bcast.isCancelled ? (
+                            <button
+                              type="button"
+                              onClick={() => handleCancelBroadcast(bcast.id)}
+                              className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          ) : (bcast.status === 'FAILED' || bcast.status === 'PARTIALLY_FAILED') ? (
+                            <button
+                              type="button"
+                              onClick={() => handleRetryBroadcast(bcast.id)}
+                              disabled={isPending}
                             className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-primary/30 text-primary hover:bg-primary/10 transition-colors flex items-center gap-1 shadow-2xs"
                           >
                             <RotateCcw className="w-3 h-3" /> Retry
@@ -1064,6 +1095,7 @@ export default function AdminNotificationsView({
                         ) : (
                           <span className="text-muted-foreground text-xs">—</span>
                         )}
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -1349,6 +1381,13 @@ export default function AdminNotificationsView({
           </div>
         </div>
       )}
+
+      {/* Recipient Reactions & Delivery Modal */}
+      <BroadcastDeliveryModal
+        isOpen={!!inspectedBroadcast}
+        onClose={() => setInspectedBroadcast(null)}
+        broadcast={inspectedBroadcast}
+      />
     </div>
   );
 }

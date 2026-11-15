@@ -8,6 +8,7 @@ import {
   type WebPushSubscription,
   type PushNotificationPayload,
 } from "./web-push";
+import { dispatchMobilePushToUsers } from "./expo-push";
 
 function getDb(client?: PrismaClient | Prisma.TransactionClient): PrismaClient | Prisma.TransactionClient {
   return client || prisma;
@@ -38,6 +39,7 @@ export interface CreateNotificationInput {
   actionUrl?: string | null;
   eventId?: string | null; // Stable idempotency / deduplication key
   broadcastId?: string | null;
+  skipMobilePush?: boolean;
 }
 
 export interface CreateBroadcastInput {
@@ -733,6 +735,28 @@ export async function createNotification(
       console.warn("[Notifications] Immediate web push dispatch warning:", pushErr);
     }
 
+    // 5. Post-commit: Immediate best-effort dispatch to Expo Mobile Push
+    if (!input.skipMobilePush) {
+      try {
+        const recipientId = notification.userId || notification.studentId;
+        if (recipientId) {
+          await dispatchMobilePushToUsers([recipientId], {
+            title: notification.title,
+            body: notification.message,
+            data: {
+              notificationId: notification.id,
+              eventId: notification.eventId,
+              broadcastId: notification.broadcastId,
+              type: notification.type,
+              url: notification.actionUrl,
+            },
+          });
+        }
+      } catch (mobilePushErr) {
+        console.warn("[Notifications] Mobile push dispatch warning:", mobilePushErr);
+      }
+    }
+
     return { notification, isDuplicate: false };
   } catch (err: unknown) {
     // Handle concurrent insertion race on unique eventId gracefully
@@ -777,6 +801,7 @@ async function executeBroadcastFanout(
               actionUrl: broadcast.actionUrl,
               eventId: perRecipientEventId,
               broadcastId: broadcast.id,
+              skipMobilePush: true,
             },
             db
           );
@@ -790,6 +815,21 @@ async function executeBroadcastFanout(
         }
       })
     );
+  }
+
+  // Batch mobile push dispatch for all targets in chunks of 100
+  try {
+    await dispatchMobilePushToUsers(targetRecipientIds, {
+      title: broadcast.title,
+      body: broadcast.message,
+      data: {
+        broadcastId: broadcast.id,
+        type: broadcast.type,
+        url: broadcast.actionUrl,
+      },
+    });
+  } catch (mobilePushErr) {
+    console.warn("[Notifications] Broadcast mobile push dispatch warning:", mobilePushErr);
   }
 
   const finalStatus =
@@ -1442,7 +1482,7 @@ export async function getBroadcastHistory(
   const limit = Math.min(100, Math.max(1, options?.limit ?? 20));
   const skip = (page - 1) * limit;
 
-  const [broadcasts, totalCount] = await Promise.all([
+  const [rawBroadcasts, totalCount] = await Promise.all([
     db.notificationBroadcast.findMany({
       orderBy: { createdAt: "desc" },
       include: {
@@ -1454,12 +1494,31 @@ export async function getBroadcastHistory(
             role: true,
           },
         },
+        notifications: {
+          select: {
+            isRead: true,
+          },
+        },
       },
       skip,
       take: limit,
     }),
     db.notificationBroadcast.count(),
   ]);
+
+  const broadcasts = rawBroadcasts.map((b: any) => {
+    const notificationsList = b.notifications || [];
+    const readCount = notificationsList.filter((n: any) => n.isRead).length;
+    const deliveredCount = notificationsList.length > 0 ? notificationsList.length : b.sentCount;
+    const readRate = deliveredCount > 0 ? Math.round((readCount / deliveredCount) * 100) : 0;
+    const { notifications, ...rest } = b;
+    return {
+      ...rest,
+      readCount,
+      readRate,
+      deliveredCount,
+    };
+  });
 
   return {
     broadcasts,
@@ -1493,7 +1552,7 @@ export async function getLibrarianBroadcastHistory(
     targetLibraryIds: { has: libraryId },
   };
 
-  const [broadcasts, totalCount] = await Promise.all([
+  const [rawBroadcasts, totalCount] = await Promise.all([
     db.notificationBroadcast.findMany({
       where: whereConditions,
       orderBy: { createdAt: "desc" },
@@ -1501,12 +1560,31 @@ export async function getLibrarianBroadcastHistory(
         sender: {
           select: { id: true, name: true, email: true, role: true },
         },
+        notifications: {
+          select: {
+            isRead: true,
+          },
+        },
       },
       skip,
       take: limit,
     }),
     db.notificationBroadcast.count({ where: whereConditions }),
   ]);
+
+  const broadcasts = rawBroadcasts.map((b: any) => {
+    const notificationsList = b.notifications || [];
+    const readCount = notificationsList.filter((n: any) => n.isRead).length;
+    const deliveredCount = notificationsList.length > 0 ? notificationsList.length : b.sentCount;
+    const readRate = deliveredCount > 0 ? Math.round((readCount / deliveredCount) * 100) : 0;
+    const { notifications, ...rest } = b;
+    return {
+      ...rest,
+      readCount,
+      readRate,
+      deliveredCount,
+    };
+  });
 
   return {
     broadcasts,

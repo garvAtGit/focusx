@@ -18,6 +18,7 @@ import {
   UserMinus,
   RotateCcw,
   Smartphone,
+  Eye,
 } from 'lucide-react';
 import {
   searchLibrarianStudentsAction,
@@ -28,6 +29,7 @@ import {
   cancelScheduledBroadcastAction,
 } from '@/app/actions/notification-actions';
 import { BrowserPushSettings } from '@/components/notifications/BrowserPushSettings';
+import { BroadcastDeliveryModal } from '@/components/notifications/BroadcastDeliveryModal';
 import { WhatsAppIcon } from '@/components/icons/WhatsAppIcon';
 import { openWhatsAppChat, formatNotificationForWhatsApp } from '@/lib/whatsapp';
 
@@ -61,6 +63,9 @@ interface BroadcastHistoryItem {
   scheduledFor?: string | Date | null;
   isCancelled?: boolean;
   createdAt: string | Date;
+  readCount?: number;
+  readRate?: number;
+  deliveredCount?: number;
   sender?: {
     name: string;
     email: string | null;
@@ -79,6 +84,7 @@ export default function LibrarianNotificationsView({
   const [selectedLibraryId, setSelectedLibraryId] = useState(initialLibraryId);
   const [activeTab, setActiveTab] = useState<'compose' | 'history' | 'settings'>('compose');
   const [isPending, startTransition] = useTransition();
+  const [inspectedBroadcast, setInspectedBroadcast] = useState<BroadcastHistoryItem | null>(null);
 
   // Audience counts
   const [audienceCounts, setAudienceCounts] = useState<{
@@ -1014,6 +1020,7 @@ export default function LibrarianNotificationsView({
                   <th className="px-6 py-4">Title & Details</th>
                   <th className="px-6 py-4">Audience</th>
                   <th className="px-6 py-4">Delivered</th>
+                  <th className="px-6 py-4">Read Receipts</th>
                   <th className="px-6 py-4">Status</th>
                   <th className="px-6 py-4">Timing</th>
                   <th className="px-6 py-4">Action</th>
@@ -1022,7 +1029,7 @@ export default function LibrarianNotificationsView({
               <tbody className="divide-y divide-border text-xs">
                 {history.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-12 text-center text-muted-foreground">
+                    <td colSpan={7} className="px-6 py-12 text-center text-muted-foreground">
                       No notifications recorded for this library yet.
                     </td>
                   </tr>
@@ -1048,6 +1055,20 @@ export default function LibrarianNotificationsView({
                             ({bcast.failedCount} failed)
                           </span>
                         )}
+                      </td>
+                      <td className="px-6 py-4">
+                        <button
+                          type="button"
+                          onClick={() => setInspectedBroadcast(bcast)}
+                          className="group flex items-center gap-1.5 font-bold text-xs hover:text-primary transition-colors text-left"
+                          title="Click to inspect student read receipts"
+                        >
+                          <Eye className="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary transition-colors" />
+                          <span>{bcast.readCount ?? 0} read</span>
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                            {bcast.readRate ?? 0}%
+                          </span>
+                        </button>
                       </td>
                       <td className="px-6 py-4">
                         <span
@@ -1089,24 +1110,33 @@ export default function LibrarianNotificationsView({
                         )}
                       </td>
                       <td className="px-6 py-4">
-                        {bcast.status === 'SCHEDULED' && !bcast.isCancelled ? (
+                        <div className="flex items-center gap-1.5">
                           <button
                             type="button"
-                            onClick={() => handleCancelBroadcast(bcast.id)}
-                            className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors"
+                            onClick={() => setInspectedBroadcast(bcast)}
+                            className="px-2 py-1 text-[11px] font-semibold rounded-lg border border-border bg-card hover:bg-muted text-foreground flex items-center gap-1 transition-colors"
+                            title="Inspect recipient delivery and reactions"
                           >
-                            Cancel
+                            <Eye className="w-3 h-3 text-primary" />
+                            Receipts
                           </button>
-                        ) : (bcast.status === 'PROCESSING' || bcast.status === 'PARTIALLY_FAILED' || bcast.status === 'FAILED') ? (
-                          <button
-                            onClick={() => handleRetry(bcast.id)}
-                            className="px-2.5 py-1 bg-secondary text-secondary-foreground text-xs font-semibold rounded-lg hover:bg-secondary/80 flex items-center gap-1"
-                          >
-                            <RotateCcw className="w-3 h-3" /> Resume
-                          </button>
-                        ) : (
-                          <span className="text-muted-foreground text-xs">—</span>
-                        )}
+                          {bcast.status === 'SCHEDULED' && !bcast.isCancelled ? (
+                            <button
+                              type="button"
+                              onClick={() => handleCancelBroadcast(bcast.id)}
+                              className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          ) : (bcast.status === 'PROCESSING' || bcast.status === 'PARTIALLY_FAILED' || bcast.status === 'FAILED') ? (
+                            <button
+                              onClick={() => handleRetry(bcast.id)}
+                              className="px-2.5 py-1 bg-secondary text-secondary-foreground text-xs font-semibold rounded-lg hover:bg-secondary/80 flex items-center gap-1"
+                            >
+                              <RotateCcw className="w-3 h-3" /> Resume
+                            </button>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -1185,6 +1215,13 @@ export default function LibrarianNotificationsView({
           </div>
         </div>
       )}
+
+      {/* Recipient Reactions & Delivery Modal */}
+      <BroadcastDeliveryModal
+        isOpen={!!inspectedBroadcast}
+        onClose={() => setInspectedBroadcast(null)}
+        broadcast={inspectedBroadcast}
+      />
     </div>
   );
 }

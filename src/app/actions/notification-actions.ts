@@ -898,5 +898,88 @@ export async function getNotificationSystemHealthAction(): Promise<{
   }
 }
 
+/**
+ * Returns detailed recipient telemetry and read receipts for a specific broadcast.
+ * Strictly verifies sender permissions (Admin or Library owner).
+ */
+export async function getBroadcastRecipientsAction(broadcastId: string): Promise<{
+  success: boolean;
+  recipients?: Array<{
+    id: string;
+    studentId: string;
+    name: string;
+    phone: string | null;
+    email: string | null;
+    isRead: boolean;
+    readAt: Date | null;
+    deliveredAt: Date;
+  }>;
+  error?: string;
+}> {
+  const session = await getSession();
+  if (!session) {
+    return { success: false, error: 'Unauthorized' };
+  }
+
+  const broadcast = await prisma.notificationBroadcast.findUnique({
+    where: { id: broadcastId },
+    select: { id: true, targetLibraryIds: true },
+  });
+
+  if (!broadcast) {
+    return { success: false, error: 'Broadcast not found' };
+  }
+
+  if (session.role !== 'ADMIN') {
+    const authorizedLibraryIds = await getStaffAuthorizedLibraryIds(session.userId, session.employerLibraryId);
+    const hasAccess = broadcast.targetLibraryIds.some((id) => authorizedLibraryIds.includes(id));
+    if (!hasAccess) {
+      return { success: false, error: 'Forbidden: You do not have access to this broadcast.' };
+    }
+  }
+
+  try {
+    const notifications = await prisma.notification.findMany({
+      where: { broadcastId },
+      select: {
+        id: true,
+        studentId: true,
+        isRead: true,
+        readAt: true,
+        createdAt: true,
+        student: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            email: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+
+    const recipients = notifications.map((n) => ({
+      id: n.id,
+      studentId: n.studentId,
+      name: n.student?.name || 'Student',
+      phone: n.student?.phone || null,
+      email: n.student?.email || null,
+      isRead: n.isRead,
+      readAt: n.readAt,
+      deliveredAt: n.createdAt,
+    }));
+
+    return {
+      success: true,
+      recipients,
+    };
+  } catch (error: any) {
+    console.error('Error fetching broadcast recipients:', error);
+    return { success: false, error: 'Failed to fetch broadcast recipients.' };
+  }
+}
+
 
 
