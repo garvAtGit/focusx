@@ -32,7 +32,7 @@ import {
   Loader2,
   Cpu,
 } from 'lucide-react';
-import { toast } from 'sonner';
+import toast from 'react-hot-toast';
 
 interface RelayItem {
   id: string;

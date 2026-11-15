@@ -29,7 +29,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { addTicketMessageAction, updateTicketStatusAction } from '@/app/actions/ticket-actions';
 import { TicketCategory, TicketPriority, TicketStatus } from '@prisma/client';
-import { toast } from 'sonner';
+import toast from 'react-hot-toast';
 
 export interface TicketDetail {
   id: string;
