@@ -19,6 +19,7 @@ import {
   Bell,
   ShieldCheck,
   Zap,
+  LifeBuoy,
 } from "lucide-react"
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet"
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden"
@@ -89,6 +90,11 @@ export function MobileNav({
           {isVisible('/dashboard/inquiries') && (
             <NavItem onClick={() => setOpen(false)} href="/dashboard/inquiries" icon={<HelpCircle />}>
               Inquiries
+            </NavItem>
+          )}
+          {isVisible('/dashboard/tickets') && (
+            <NavItem onClick={() => setOpen(false)} href="/dashboard/tickets" icon={<LifeBuoy />}>
+              Support Tickets
             </NavItem>
           )}
           {isVisible('/dashboard/financials') && (

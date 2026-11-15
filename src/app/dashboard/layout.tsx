@@ -26,6 +26,7 @@ import {
   Bell,
   Lock,
   History,
+  LifeBuoy,
 } from "lucide-react";
 import prisma from "@/lib/prisma";
 import { getActiveLibrary } from "@/lib/dashboard-utils";
@@ -81,12 +82,14 @@ async function DashboardAuthWrapper({ children }: { children: ReactNode }) {
         '/dashboard/approvals',
         '/dashboard/scanner',
         '/dashboard/hardware',
+        '/dashboard/tickets',
         '/dashboard/staff',
         '/dashboard/widgets',
         '/dashboard/settings',
         '/dashboard/rules'
       );
     } else if (resolution && resolution.status === 'ACTIVE') {
+      allowedRoutes.push('/dashboard/tickets');
       if (resolution.permissions.length > 0) allowedRoutes.push('/dashboard', '/dashboard/history');
       if (resolution.permissions.includes('students.view')) allowedRoutes.push('/dashboard/students');
       if (resolution.permissions.includes('notifications.view')) allowedRoutes.push('/dashboard/notifications');
@@ -109,7 +112,7 @@ async function DashboardAuthWrapper({ children }: { children: ReactNode }) {
       if (resolution.permissions.includes('rules.view')) allowedRoutes.push('/dashboard/rules');
   } else if (session.role === 'RECEPTIONIST') {
     // Safe fallback for legacy receptionists
-    allowedRoutes.push('/dashboard', '/dashboard/students', '/dashboard/history', '/dashboard/notifications', '/dashboard/queries', '/dashboard/inquiries', '/dashboard/approvals', '/dashboard/scanner');
+    allowedRoutes.push('/dashboard', '/dashboard/students', '/dashboard/history', '/dashboard/notifications', '/dashboard/queries', '/dashboard/inquiries', '/dashboard/tickets', '/dashboard/approvals', '/dashboard/scanner');
   }
 
   const isVisible = (href: string) => allowedRoutes.includes(href);
@@ -194,6 +197,11 @@ async function DashboardAuthWrapper({ children }: { children: ReactNode }) {
             {isVisible('/dashboard/inquiries') && (
               <NavItem href="/dashboard/inquiries" icon={<HelpCircle />}>
                 Inquiries
+              </NavItem>
+            )}
+            {isVisible('/dashboard/tickets') && (
+              <NavItem href="/dashboard/tickets" icon={<LifeBuoy />}>
+                Support Tickets
               </NavItem>
             )}
             {isVisible('/dashboard/financials') && (

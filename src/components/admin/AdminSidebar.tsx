@@ -19,6 +19,7 @@ import {
   Menu,
   X,
   ChevronRight,
+  LifeBuoy,
 } from 'lucide-react';
 import { logout } from '@/app/actions/auth-actions';
 
@@ -68,6 +69,11 @@ const NAV_ITEMS = [
     label: 'Notifications',
     href: '/admin/notifications',
     icon: Bell,
+  },
+  {
+    label: 'Support Tickets',
+    href: '/admin/tickets',
+    icon: LifeBuoy,
   },
   {
     label: 'System & Outbox',

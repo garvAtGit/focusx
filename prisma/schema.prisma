@@ -82,6 +82,9 @@ model User {
   staffMemberships            LibraryStaff[]     @relation("UserStaffMemberships")
   grantedStaff                LibraryStaff[]     @relation("StaffGrants")
   staffAuditLogs              StaffAuditLog[]    @relation("StaffAuditActor")
+  createdTickets              SupportTicket[]    @relation("TicketCreator")
+  assignedTickets             SupportTicket[]    @relation("TicketAssignee")
+  ticketMessages              TicketMessage[]
 
   @@index([name])
   @@index([phone])
@@ -137,6 +140,7 @@ model Library {
   staff             User[]             @relation("LibraryStaff")
   staffMemberships  LibraryStaff[]     @relation("LibraryStaffMemberships")
   studentInfoRequests StudentInfoRequest[]
+  supportTickets    SupportTicket[]
 
   @@index([librarianId])
   @@index([kycStatus])
@@ -1001,6 +1005,75 @@ model LibraryActivityLog {
   @@index([libraryId, createdAt(sort: Desc)])
   @@index([studentId])
 }
+
+model SupportTicket {
+  id           String         @id @default(uuid())
+  ticketNumber Int            @default(autoincrement())
+  title        String
+  description  String
+  category     TicketCategory @default(OTHER)
+  priority     TicketPriority @default(MEDIUM)
+  status       TicketStatus   @default(OPEN)
+  libraryId    String
+  library      Library        @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  creatorId    String
+  creator      User           @relation("TicketCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  assignedToId String?
+  assignedTo   User?          @relation("TicketAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  deviceMac    String?
+  resolvedAt   DateTime?
+  closedAt     DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  messages     TicketMessage[]
+
+  @@index([libraryId, status])
+  @@index([creatorId])
+  @@index([status, priority])
+  @@index([ticketNumber])
+}
+
+model TicketMessage {
+  id             String        @id @default(uuid())
+  ticketId       String
+  ticket         SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User          @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  senderRole     String        @default("LIBRARIAN") // LIBRARIAN, STAFF, ADMIN, SUPPORT
+  content        String
+  attachmentUrls String[]      @default([])
+  isInternalNote Boolean       @default(false)
+  createdAt      DateTime      @default(now())
+
+  @@index([ticketId, createdAt(sort: Asc)])
+  @@index([senderId])
+}
+
+enum TicketCategory {
+  HARDWARE
+  BILLING_PAYOUTS
+  STUDENTS_BOOKINGS
+  APP_SOFTWARE
+  KYC_VERIFICATION
+  OTHER
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_ON_LIBRARIAN
+  RESOLVED
+  CLOSED
+}
+
 
 
 
