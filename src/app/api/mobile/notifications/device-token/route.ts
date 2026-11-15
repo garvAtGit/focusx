@@ -63,7 +63,6 @@ export async function POST(req: Request) {
       userId: users[0].id,
       linkedProfilesCount: users.length,
     });
-    });
   } catch (error: any) {
     console.error('[API /api/mobile/notifications/device-token] Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
