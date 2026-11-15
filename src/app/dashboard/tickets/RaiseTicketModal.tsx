@@ -198,7 +198,7 @@ export function RaiseTicketModal({
               <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                 <Cpu className="w-3.5 h-3.5 text-primary" /> Select Affected Scanner / Machine (Optional)
               </label>
-              <Select value={selectedDeviceMac} onValueChange={setSelectedDeviceMac}>
+              <Select value={selectedDeviceMac} onValueChange={(val) => setSelectedDeviceMac(val || '')}>
                 <SelectTrigger className="w-full text-xs bg-background">
                   <SelectValue placeholder="Choose a scanner from your library..." />
                 </SelectTrigger>
@@ -218,7 +218,7 @@ export function RaiseTicketModal({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-foreground">Priority Level</label>
-              <Select value={priority} onValueChange={(val: TicketPriority) => setPriority(val)}>
+              <Select value={priority} onValueChange={(val) => { if (val) setPriority(val as TicketPriority); }}>
                 <SelectTrigger className="w-full text-xs">
                   <SelectValue />
                 </SelectTrigger>

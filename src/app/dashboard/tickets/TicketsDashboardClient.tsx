@@ -286,7 +286,7 @@ export function TicketsDashboardClient({
 
           <div className="flex items-center gap-2">
             {/* Category Filter */}
-            <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+            <Select value={categoryFilter} onValueChange={(val) => { if (val) setCategoryFilter(val as any); }}>
               <SelectTrigger className="h-8 text-xs w-[160px]">
                 <SelectValue placeholder="All Categories" />
               </SelectTrigger>
@@ -302,7 +302,7 @@ export function TicketsDashboardClient({
             </Select>
 
             {/* Priority Filter */}
-            <Select value={priorityFilter} onValueChange={setPriorityFilter}>
+            <Select value={priorityFilter} onValueChange={(val) => { if (val) setPriorityFilter(val as any); }}>
               <SelectTrigger className="h-8 text-xs w-[130px]">
                 <SelectValue placeholder="All Priorities" />
               </SelectTrigger>
