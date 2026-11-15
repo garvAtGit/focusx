@@ -23,8 +23,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Unauthorized: Invalid Firebase credentials' }, { status: 401 });
     }
 
-    // Resolve student account from Firebase UID or phone number
-    const user = await prisma.user.findFirst({
+    // Resolve student accounts from Firebase UID or phone number
+    const users = await prisma.user.findMany({
       where: {
         OR: [
           { authId: decodedToken.uid },
@@ -39,7 +39,7 @@ export async function POST(req: Request) {
       },
     });
 
-    if (!user) {
+    if (users.length === 0) {
       return NextResponse.json({ error: 'User profile not found' }, { status: 404 });
     }
 
@@ -51,13 +51,18 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Validation Error: token string is required' }, { status: 400 });
     }
 
-    // Persist push token in Redis cache and index
-    await registerDevicePushToken(user.id, pushToken, platform);
+    // Persist push token in Redis cache for all resolved user profiles and the Firebase UID
+    await Promise.all([
+      ...users.map((u) => registerDevicePushToken(u.id, pushToken, platform)),
+      ...(decodedToken.uid ? [registerDevicePushToken(decodedToken.uid, pushToken, platform)] : []),
+    ]);
 
     return NextResponse.json({
       success: true,
       message: 'Mobile push device token registered successfully',
-      userId: user.id,
+      userId: users[0].id,
+      linkedProfilesCount: users.length,
+    });
     });
   } catch (error: any) {
     console.error('[API /api/mobile/notifications/device-token] Error:', error);
