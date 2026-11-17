@@ -72,6 +72,15 @@ export function evaluateBookingSelection(
   }
 
   // 6. Calculate Dates & Pricing (Only if all required fields are satisfied)
+  const isPlanChange = (currentDraft.operation === 'UPGRADE_PLAN' || currentDraft.operation === 'CHANGE_PLAN') && Boolean(facts.sourceBooking);
+  if (isPlanChange && facts.sourceBooking && facts.sourceBooking.endTime.getTime() <= facts.authoritativeCurrentTime.getTime()) {
+    return {
+      status: 'BLOCKED',
+      errorCode: 'PLAN_EXPIRED',
+      userFacingExplanation: 'Your current plan has already expired. Please use Renew to start a fresh term.'
+    };
+  }
+
   const dates = calculateBookingDates(currentDraft, facts);
   if (!dates) {
     return {

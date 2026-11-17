@@ -13,8 +13,8 @@
     "lint": "eslint",
     "test:booking": "tsx --test tests/booking-authority.integration.test.ts",
     "postinstall": "prisma generate",
-    "test": "tsx --test tests/professional_e2e_verification.test.ts tests/query-governance.test.ts",
-    "test:ci": "prisma generate && tsx --test tests/professional_e2e_verification.test.ts tests/query-governance.test.ts",
+    "test": "tsx --test tests/professional_e2e_verification.test.ts tests/query-governance.test.ts tests/plan-renew-and-change-proration.test.ts",
+    "test:ci": "prisma generate && tsx --test tests/professional_e2e_verification.test.ts tests/query-governance.test.ts tests/plan-renew-and-change-proration.test.ts",
     "test:governance": "tsx --test tests/query-governance.test.ts"
   },
   "dependencies": {

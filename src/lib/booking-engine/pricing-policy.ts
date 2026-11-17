@@ -11,12 +11,15 @@ export interface PricingBreakdown {
 }
 
 export function getRemainingDays(currentTime: Date, endTime: Date): number {
+  if (endTime.getTime() <= currentTime.getTime()) {
+    return 0;
+  }
   const istTime = new Date(currentTime.getTime() + 5.5 * 60 * 60 * 1000);
   istTime.setUTCHours(0, 0, 0, 0);
   const todayStart = new Date(istTime.getTime() - 5.5 * 60 * 60 * 1000);
 
   const remainingMs = endTime.getTime() - todayStart.getTime();
-  return Math.max(1, Math.round(remainingMs / (24 * 60 * 60 * 1000)));
+  return Math.max(0, Math.round(remainingMs / (24 * 60 * 60 * 1000)));
 }
 
 export function calculatePricingBreakdown(

@@ -147,10 +147,11 @@ export async function POST(req: NextRequest) {
     })
     createdIntentId = intent.id
     if (intent.status === "CONFIRMED" && intent.bookingId) return NextResponse.json({ confirmed: true, reference_id: intent.referenceId, booking: { id: intent.bookingId } });
-    if (intent.expectedAmountPaise === 0 && intent.operation === "UPGRADE_PLAN") {
+    const isPlanChange = intent.operation === "UPGRADE_PLAN" || intent.operation === "CHANGE_PLAN";
+    if (intent.expectedAmountPaise === 0 && isPlanChange) {
       const { confirmZeroCostBooking } = await import("@/lib/zero-cost-booking");
       const result = await confirmZeroCostBooking(intent.referenceId);
-      return NextResponse.json({ ...result, reference_id: intent.referenceId, confirmed: result.status === "CONFIRMED" });
+      return NextResponse.json({ ...result, reference_id: intent.referenceId, confirmed: result.status === "CONFIRMED", zeroCost: true });
     }
 
     // 7. If payment order already exists and is still valid (idempotent retry)
