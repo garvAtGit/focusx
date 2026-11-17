@@ -9,18 +9,20 @@ export function useBookingWorkflow(initialDraft: Partial<BookingDraft>, enabled:
   const [isLoadingFacts, setIsLoadingFacts] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Sync initialDraft updates into draft state (especially for async loaded libraryId)
+  // Sync initialDraft updates into draft state
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDraft(prev => {
       let changed = false;
       const next = { ...prev };
       if (initialDraft.libraryId !== prev.libraryId) { next.libraryId = initialDraft.libraryId; changed = true; }
       if (initialDraft.studentId !== prev.studentId) { next.studentId = initialDraft.studentId; changed = true; }
+      if (initialDraft.sourceBookingId !== prev.sourceBookingId) { next.sourceBookingId = initialDraft.sourceBookingId; changed = true; }
       if (initialDraft.operation !== prev.operation) { next.operation = initialDraft.operation; changed = true; }
+      if (initialDraft.planId !== prev.planId && prev.planId === undefined) { next.planId = initialDraft.planId; changed = true; }
+      if (initialDraft.seatId !== prev.seatId && prev.seatId === undefined) { next.seatId = initialDraft.seatId; changed = true; }
       return changed ? next : prev;
     });
-  }, [initialDraft.libraryId, initialDraft.studentId, initialDraft.operation]);
+  }, [initialDraft.libraryId, initialDraft.studentId, initialDraft.sourceBookingId, initialDraft.operation, initialDraft.planId, initialDraft.seatId]);
 
   // 1. Fetch Facts once (or when primary context changes)
   useEffect(() => {
@@ -34,7 +36,8 @@ export function useBookingWorkflow(initialDraft: Partial<BookingDraft>, enabled:
         const fetchedFacts = await getBookingFacts({ 
           libraryId: draft.libraryId, 
           studentId: draft.studentId,
-          // We don't want to re-fetch when these change, but initial values help
+          sourceBookingId: draft.sourceBookingId,
+          operation: draft.operation,
           planId: draft.planId,
           seatId: draft.seatId,
         });
@@ -53,10 +56,7 @@ export function useBookingWorkflow(initialDraft: Partial<BookingDraft>, enabled:
     fetchFacts();
 
     return () => { active = false; };
-    // We intentionally only depend on libraryId and studentId for facts fetching.
-    // If the user selects a new plan or seat, we evaluate locally.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft.libraryId, draft.studentId, enabled]);
+  }, [draft.libraryId, draft.studentId, draft.sourceBookingId, enabled]);
 
   // 2. Synchronous local evaluation
   const workflowState = useMemo<BookingResult | null>(() => {
@@ -72,7 +72,7 @@ export function useBookingWorkflow(initialDraft: Partial<BookingDraft>, enabled:
     draft,
     facts,
     workflowState,
-    isEvaluating: isLoadingFacts, // Keeping signature compatible
+    isEvaluating: isLoadingFacts,
     error,
     updateDraft
   };

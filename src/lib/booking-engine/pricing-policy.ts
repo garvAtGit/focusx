@@ -1,37 +1,112 @@
 import type { BookingDraft, BookingFacts } from './types';
 import { lockerChargePaise } from '../locker-pricing';
 
-export function calculatePricing(
+export interface PricingBreakdown {
+  expectedAmountPaise: number;
+  isPlanChange: boolean;
+  remainingDays?: number;
+  newPlanProratedPaise?: number;
+  creditPaise?: number;
+  excessCreditPaise?: number;
+}
+
+export function getRemainingDays(currentTime: Date, endTime: Date): number {
+  const istTime = new Date(currentTime.getTime() + 5.5 * 60 * 60 * 1000);
+  istTime.setUTCHours(0, 0, 0, 0);
+  const todayStart = new Date(istTime.getTime() - 5.5 * 60 * 60 * 1000);
+
+  const remainingMs = endTime.getTime() - todayStart.getTime();
+  return Math.max(1, Math.round(remainingMs / (24 * 60 * 60 * 1000)));
+}
+
+export function calculatePricingBreakdown(
   draft: BookingDraft,
   facts: BookingFacts
-): number | null {
+): PricingBreakdown | null {
   if (!draft.planId) return null;
 
   const plan = facts.activePlans.find(p => p.id === draft.planId);
   if (!plan) return null;
 
+  const isPlanChange = (draft.operation === 'UPGRADE_PLAN' || draft.operation === 'CHANGE_PLAN') && Boolean(facts.sourceBooking);
+
+  if (isPlanChange && facts.sourceBooking) {
+    const remainingDays = getRemainingDays(facts.authoritativeCurrentTime, facts.sourceBooking.endTime);
+
+    // 1. Calculate New Plan cost for the remaining days
+    const newPlanActualPrice = plan.discountPercentage
+      ? plan.pricePaise - Math.round((plan.pricePaise * plan.discountPercentage) / 100)
+      : plan.pricePaise;
+    const newPlanDailyRate = newPlanActualPrice / Math.max(1, plan.validityDays);
+    let newPlanProratedPaise = Math.round(remainingDays * newPlanDailyRate);
+
+    if (draft.seatId && plan.type === 'FIXED') {
+      const seat = facts.eligibleSeats.find(s => s.id === draft.seatId);
+      if (seat) {
+        if (draft.attachedLockerSelected === true && seat.lockerPriceDailyPaise) {
+          newPlanProratedPaise += seat.lockerPriceDailyPaise * remainingDays;
+        }
+
+        if (seat.type === 'PREMIUM' && seat.premiumPriceDailyPaise) {
+          let premiumSurchargePaise = Math.round(seat.premiumPriceDailyPaise * remainingDays);
+          if (seat.syncPremiumOffers !== false && plan.discountPercentage) {
+            premiumSurchargePaise -= Math.round((premiumSurchargePaise * plan.discountPercentage) / 100);
+          }
+          newPlanProratedPaise += premiumSurchargePaise;
+        }
+      }
+    }
+
+    if (draft.standaloneLockerId) {
+      const locker = facts.standaloneLockers.find(l => l.id === draft.standaloneLockerId);
+      if (locker) {
+        newPlanProratedPaise += lockerChargePaise(locker.pricePaise / 100, remainingDays);
+      }
+    }
+
+    // 2. Calculate Unused Credit from Old Plan
+    const oldPlan = facts.sourcePlan ?? facts.activePlans.find(p => p.id === facts.sourceBooking!.planId);
+    let creditPaise = 0;
+    if (oldPlan) {
+      const oldPlanActualPrice = oldPlan.discountPercentage
+        ? oldPlan.pricePaise - Math.round((oldPlan.pricePaise * oldPlan.discountPercentage) / 100)
+        : oldPlan.pricePaise;
+      const oldPlanDailyRate = oldPlanActualPrice / Math.max(1, oldPlan.validityDays);
+      creditPaise = Math.round(remainingDays * oldPlanDailyRate);
+    }
+
+    const netDiff = newPlanProratedPaise - creditPaise;
+    const expectedAmountPaise = Math.max(0, netDiff);
+    const excessCreditPaise = Math.max(0, creditPaise - newPlanProratedPaise);
+
+    return {
+      expectedAmountPaise,
+      isPlanChange: true,
+      remainingDays,
+      newPlanProratedPaise,
+      creditPaise,
+      excessCreditPaise,
+    };
+  }
+
+  // Standard non-plan change calculation (e.g. RENEW or ADD_STUDENT)
   let expectedAmountPaise = plan.discountPercentage
     ? plan.pricePaise - Math.round((plan.pricePaise * plan.discountPercentage) / 100)
     : plan.pricePaise;
-
-
 
   if (draft.seatId && plan.type === 'FIXED') {
     const seat = facts.eligibleSeats.find(s => s.id === draft.seatId);
     if (!seat) return null;
 
-    // Attached locker price is ONLY applied if explicitly selected
     if (draft.attachedLockerSelected === true && seat.lockerPriceDailyPaise) {
       expectedAmountPaise += seat.lockerPriceDailyPaise * plan.validityDays;
     }
 
     if (seat.type === 'PREMIUM' && seat.premiumPriceDailyPaise) {
-      // 4b. Daily premium surcharge
       let premiumSurchargePaise = Math.round(seat.premiumPriceDailyPaise * plan.validityDays);
       if (seat.syncPremiumOffers !== false && plan.discountPercentage) {
         premiumSurchargePaise -= Math.round((premiumSurchargePaise * plan.discountPercentage) / 100);
       }
-
       expectedAmountPaise += premiumSurchargePaise;
     }
   }
@@ -39,28 +114,19 @@ export function calculatePricing(
   if (draft.standaloneLockerId) {
     const locker = facts.standaloneLockers.find(l => l.id === draft.standaloneLockerId);
     if (!locker) return null;
-    
-    // Keep historical bookings/intents untouched; new quotes use a 30-day month.
     expectedAmountPaise += lockerChargePaise(locker.pricePaise / 100, plan.validityDays);
   }
 
-  // Handle Prorated Credit for Upgrades
-  if (draft.operation === 'UPGRADE_PLAN' && facts.sourceBooking) {
-    const oldPlan = facts.sourcePlan ?? facts.activePlans.find(p => p.id === facts.sourceBooking!.planId);
-    if (oldPlan) {
-      const unusedMs = facts.sourceBooking.endTime.getTime() - facts.authoritativeCurrentTime.getTime();
-      const unusedDays = Math.max(0, unusedMs / (1000 * 60 * 60 * 24));
-      
-      const oldPlanActualPrice = oldPlan.discountPercentage
-        ? oldPlan.pricePaise - Math.round((oldPlan.pricePaise * oldPlan.discountPercentage) / 100)
-        : oldPlan.pricePaise;
-        
-      const oldPlanDailyRate = oldPlanActualPrice / oldPlan.validityDays;
-      const creditPaise = Math.round(unusedDays * oldPlanDailyRate);
-      
-      expectedAmountPaise = Math.max(0, expectedAmountPaise - creditPaise);
-    }
-  }
+  return {
+    expectedAmountPaise,
+    isPlanChange: false,
+  };
+}
 
-  return expectedAmountPaise;
+export function calculatePricing(
+  draft: BookingDraft,
+  facts: BookingFacts
+): number | null {
+  const breakdown = calculatePricingBreakdown(draft, facts);
+  return breakdown ? breakdown.expectedAmountPaise : null;
 }

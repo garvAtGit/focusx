@@ -674,6 +674,56 @@ export function StudentsClient({
     renewNewExpiryStr = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' }).format(futureEnd);
   }
 
+  // Plan Change Math (Remaining Days & Proration)
+  let changeRemainingDays = 0;
+  let changeOldCredit = 0;
+  let changeNewProratedCost = 0;
+  let changeNetPayable = 0;
+  let changeExcessCredit = 0;
+
+  if (renewBookingData && renewPlanMode === 'CHANGE') {
+    const now = new Date();
+    const istTime = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
+    istTime.setUTCHours(0, 0, 0, 0);
+    const todayStart = new Date(istTime.getTime() - 5.5 * 60 * 60 * 1000);
+    const end = new Date(renewBookingData.endTime);
+    changeRemainingDays = Math.max(1, Math.round((end.getTime() - todayStart.getTime()) / (24 * 60 * 60 * 1000)));
+
+    if (renewBookingData.plan) {
+      const oldActualPrice = renewBookingData.plan.discount
+        ? renewBookingData.plan.price * (1 - renewBookingData.plan.discount / 100)
+        : renewBookingData.plan.price;
+      const oldDailyRate = oldActualPrice / Math.max(1, renewBookingData.plan.validityDays);
+      changeOldCredit = Math.round(changeRemainingDays * oldDailyRate);
+    }
+
+    if (renewTargetPlan) {
+      const newActualPrice = renewTargetPlan.discount
+        ? renewTargetPlan.price * (1 - renewTargetPlan.discount / 100)
+        : renewTargetPlan.price;
+      const newDailyRate = newActualPrice / Math.max(1, renewTargetPlan.validityDays);
+      changeNewProratedCost = Math.round(changeRemainingDays * newDailyRate);
+
+      if (renewSelectedSeatId && renewSelectedSeatId !== "NONE") {
+        const s = seats?.find(seat => seat.id === renewSelectedSeatId);
+        if (s?.hasLocker && renewHasLocker === true && s.lockerPriceDaily) {
+          changeNewProratedCost += Math.round(s.lockerPriceDaily * changeRemainingDays);
+        }
+      }
+
+      if (renewStandaloneLockerId) {
+        const l = standaloneLockers?.find(locker => locker.id === renewStandaloneLockerId);
+        if (l) {
+          changeNewProratedCost += Math.round((l.price / 30) * changeRemainingDays);
+        }
+      }
+
+      const diff = changeNewProratedCost - changeOldCredit;
+      changeNetPayable = Math.max(0, diff);
+      changeExcessCredit = Math.max(0, changeOldCredit - changeNewProratedCost);
+    }
+  }
+
   return (
     <>
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
@@ -2257,28 +2307,67 @@ export function StudentsClient({
             
             {/* Current vs Future State Preview */}
             {renewBookingData && (
-              <div className="bg-primary/5 rounded-xl border border-primary/20 p-4 space-y-3">
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-muted-foreground">Currently on:</span>
-                  <span className="font-medium text-foreground">{renewBookingData.plan?.name}</span>
-                </div>
-                <div className="flex justify-between items-center text-sm pb-3 border-b border-primary/10">
-                  <span className="text-muted-foreground">Current Expiry:</span>
-                  {new Date(renewBookingData.endTime) < new Date() ? (
-                    <span className="font-bold text-destructive bg-destructive/10 px-2 py-0.5 rounded text-xs">Inactive</span>
-                  ) : (
-                    <span className="font-medium text-foreground">{formatStandardDate(renewBookingData.endTime)}</span>
+              renewPlanMode === 'CHANGE' ? (
+                <div className="bg-indigo-50/70 dark:bg-indigo-950/40 rounded-xl border border-indigo-200 dark:border-indigo-800 p-4 space-y-2.5">
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-muted-foreground">Current Plan:</span>
+                    <span className="font-bold text-foreground">{renewBookingData.plan?.name}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-muted-foreground">Cycle Expiry Date:</span>
+                    <span className="font-bold text-foreground">{formatStandardDate(renewBookingData.endTime)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm pb-2 border-b border-indigo-200/60 dark:border-indigo-800/60">
+                    <span className="text-muted-foreground">Remaining Days in Cycle:</span>
+                    <span className="font-black text-indigo-600 dark:text-indigo-400">{changeRemainingDays} Days</span>
+                  </div>
+                  {renewTargetPlan && (
+                    <div className="space-y-1.5 pt-1">
+                      <div className="flex justify-between items-center text-sm">
+                        <span>New Plan ({renewTargetPlan.name} for {changeRemainingDays}d):</span>
+                        <span className="font-bold text-foreground">₹{changeNewProratedCost}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-sm text-emerald-600 dark:text-emerald-400">
+                        <span>Unused Credit from Current Plan:</span>
+                        <span className="font-bold">-₹{changeOldCredit}</span>
+                      </div>
+                      {changeExcessCredit > 0 && (
+                        <div className="flex justify-between items-center text-xs font-bold text-indigo-700 bg-indigo-100/70 dark:bg-indigo-900/60 p-2 rounded-lg">
+                          <span>Excess Balance Credit:</span>
+                          <span>₹{changeExcessCredit}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between items-baseline pt-2 border-t border-indigo-200/60 dark:border-indigo-800/60">
+                        <span className="font-bold text-sm text-foreground">Amount to Collect:</span>
+                        <span className="font-black text-xl text-primary">₹{changeNetPayable}</span>
+                      </div>
+                    </div>
                   )}
                 </div>
-                <div className="flex justify-between items-center text-sm pt-1">
-                  <span className="font-bold text-primary">Selecting this extends by:</span>
-                  <span className="font-bold text-primary">+{renewAddedDays} Days</span>
+              ) : (
+                <div className="bg-primary/5 rounded-xl border border-primary/20 p-4 space-y-3">
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-muted-foreground">Currently on:</span>
+                    <span className="font-medium text-foreground">{renewBookingData.plan?.name}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm pb-3 border-b border-primary/10">
+                    <span className="text-muted-foreground">Current Expiry:</span>
+                    {new Date(renewBookingData.endTime) < new Date() ? (
+                      <span className="font-bold text-destructive bg-destructive/10 px-2 py-0.5 rounded text-xs">Inactive</span>
+                    ) : (
+                      <span className="font-medium text-foreground">{formatStandardDate(renewBookingData.endTime)}</span>
+                    )}
+                  </div>
+                  <div className="flex justify-between items-center text-sm pt-1">
+                    <span className="font-bold text-primary">Selecting this extends by:</span>
+                    <span className="font-bold text-primary">+{renewAddedDays} Days</span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="font-bold text-foreground">New Expiry:</span>
+                    <span className="font-bold text-success bg-success/10 px-2 py-0.5 rounded">{renewNewExpiryStr}</span>
+                  </div>
                 </div>
-                <div className="flex justify-between items-center text-sm">
-                  <span className="font-bold text-foreground">New Expiry:</span>
-                  <span className="font-bold text-success bg-success/10 px-2 py-0.5 rounded">{renewNewExpiryStr}</span>
-                </div>
-              </div>
+              )
             )}
 
             <div className="flex bg-muted p-1 rounded-lg">
@@ -2478,17 +2567,22 @@ export function StudentsClient({
                     renewSelectedSeatId && renewSelectedSeatId !== "NONE" ? renewSelectedSeatId : undefined,
                     renewStartDate,
                     renewHasLocker ?? undefined,
-                    renewStandaloneLockerId
+                    renewStandaloneLockerId,
+                    renewPlanMode === 'CHANGE' ? 'CHANGE_PLAN' : 'RENEW'
                   );
                   if (result?.error) {
                     toast.error(result.error);
                     return;
                   }
-                  toast.success(`Success! ${renewBookingData?.student?.name || 'Student'}'s plan has been extended to ${renewNewExpiryStr}.`);
+                  toast.success(
+                    renewPlanMode === 'CHANGE'
+                      ? `Success! Plan changed to ${renewTargetPlan?.name} for the remaining ${changeRemainingDays} days.`
+                      : `Success! ${renewBookingData?.student?.name || 'Student'}'s plan has been extended to ${renewNewExpiryStr}.`
+                  );
                   setRenewModalBookingId(null);
                   router.refresh();
                 } catch (error: unknown) {
-                  toast.error(getErrorMessage(error, "Failed to renew"));
+                  toast.error(getErrorMessage(error, "Failed to update plan"));
                 } finally {
                   setRenewLoadingMethod(null);
                 }
@@ -2496,7 +2590,11 @@ export function StudentsClient({
               className="w-full bg-primary"
               disabled={!!renewLoadingMethod || (renewTargetPlan?.type === 'FIXED' && seats?.find(s => s.id === renewSelectedSeatId)?.hasLocker && renewHasLocker === null)}
             >
-              {renewLoadingMethod === 'CASH' ? "Renewing..." : "Pay via Cash"}
+              {renewLoadingMethod === 'CASH' 
+                ? "Processing..." 
+                : renewPlanMode === 'CHANGE' 
+                ? `Collect ₹${changeNetPayable} via Cash` 
+                : "Pay via Cash"}
             </Button>
             <Button 
               onClick={async () => {
@@ -2524,17 +2622,22 @@ export function StudentsClient({
                     renewSelectedSeatId && renewSelectedSeatId !== "NONE" ? renewSelectedSeatId : undefined,
                     renewStartDate,
                     renewHasLocker ?? undefined,
-                    renewStandaloneLockerId
+                    renewStandaloneLockerId,
+                    renewPlanMode === 'CHANGE' ? 'CHANGE_PLAN' : 'RENEW'
                   );
                   if (result?.error) {
                     toast.error(result.error);
                     return;
                   }
-                  toast.success(`Success! ${renewBookingData?.student?.name || 'Student'}'s plan has been extended to ${renewNewExpiryStr}.`);
+                  toast.success(
+                    renewPlanMode === 'CHANGE'
+                      ? `Success! Plan changed to ${renewTargetPlan?.name} for the remaining ${changeRemainingDays} days.`
+                      : `Success! ${renewBookingData?.student?.name || 'Student'}'s plan has been extended to ${renewNewExpiryStr}.`
+                  );
                   setRenewModalBookingId(null);
                   router.refresh();
                 } catch (error: unknown) {
-                  toast.error(getErrorMessage(error, "Failed to renew"));
+                  toast.error(getErrorMessage(error, "Failed to update plan"));
                 } finally {
                   setRenewLoadingMethod(null);
                 }
@@ -2543,7 +2646,11 @@ export function StudentsClient({
               className="w-full"
               disabled={!!renewLoadingMethod || (renewTargetPlan?.type === 'FIXED' && seats?.find(s => s.id === renewSelectedSeatId)?.hasLocker && renewHasLocker === null)}
             >
-              {renewLoadingMethod === 'ONLINE' ? "Renewing..." : "Pay via UPI/Card"}
+              {renewLoadingMethod === 'ONLINE' 
+                ? "Processing..." 
+                : renewPlanMode === 'CHANGE' 
+                ? `Pay ₹${changeNetPayable} via UPI/Card` 
+                : "Pay via UPI/Card"}
             </Button>
           </div>
         </DialogContent>

@@ -23,21 +23,6 @@ export function resolvePlanRequirements(
     };
   }
 
-  // If upgrading, ensure the new plan doesn't have fewer hours than the old plan
-  if (draft.operation === 'UPGRADE_PLAN' && facts.sourceBooking) {
-    const oldPlan = facts.sourcePlan ?? facts.activePlans.find(p => p.id === facts.sourceBooking!.planId);
-    if (oldPlan && oldPlan.durationHours && selectedPlan.durationHours && selectedPlan.durationHours < oldPlan.durationHours) {
-      return {
-        nextDraft: draft,
-        error: {
-          status: 'BLOCKED',
-          errorCode: 'INVALID_UPGRADE',
-          userFacingExplanation: 'You cannot upgrade to a plan with fewer hours per day.',
-        }
-      };
-    }
-  }
-
   // Clone draft to mutate safely
   const nextDraft = { ...draft };
 

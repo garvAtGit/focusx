@@ -4,7 +4,7 @@ import { resolvePlanRequirements } from './plan-policy';
 import { validateSeatEligibility } from './seat-policy';
 import { resolveLockerChoices } from './locker-policy';
 import { calculateBookingDates } from './date-policy';
-import { calculatePricing } from './pricing-policy';
+import { calculatePricingBreakdown } from './pricing-policy';
 import crypto from 'crypto'; // Pure crypto hashing for fingerprint
 
 export function evaluateBookingSelection(
@@ -60,17 +60,12 @@ export function evaluateBookingSelection(
     requiredFields.push('standaloneLockerId');
   }
 
-  // NOTE: paymentMethod is intentionally NOT required by the pure policy engine.
-  // It is an operational concern (CASH vs ONLINE) handled by the server authority
-  // and UI workflow separately. The engine only validates booking correctness
-  // (plan, seat, locker, dates, pricing).
-
   if (requiredFields.length > 0) {
     return {
       status: 'NEEDS_INPUT',
       normalizedDraft: currentDraft,
       requiredFields,
-      validOptions: {}, // Can populate with mapped facts for the UI if needed
+      validOptions: {},
       reasons: [],
       previewFragments: {}
     };
@@ -86,14 +81,15 @@ export function evaluateBookingSelection(
     };
   }
 
-  const amountPaise = calculatePricing(currentDraft, facts);
-  if (amountPaise === null) {
+  const breakdown = calculatePricingBreakdown(currentDraft, facts);
+  if (!breakdown) {
     return {
       status: 'BLOCKED',
       errorCode: 'PRICING_UNAVAILABLE',
       userFacingExplanation: 'Could not calculate booking pricing.'
     };
   }
+  const amountPaise = breakdown.expectedAmountPaise;
 
   // 7. Check final Authoritative Availability (from the snapshot provided by the Fact Loader)
   if (currentDraft.seatId && facts.seatAvailabilitySnapshot[currentDraft.seatId] === false) {
@@ -135,7 +131,12 @@ export function evaluateBookingSelection(
       amountPaise,
       startsAt: dates.startsAt,
       endsAt: dates.endsAt,
-      attachedLockerSelected: currentDraft.attachedLockerSelected
+      attachedLockerSelected: currentDraft.attachedLockerSelected,
+      isPlanChange: breakdown.isPlanChange,
+      remainingDays: breakdown.remainingDays,
+      newPlanProratedPaise: breakdown.newPlanProratedPaise,
+      creditPaise: breakdown.creditPaise,
+      excessCreditPaise: breakdown.excessCreditPaise,
     },
     amountPaise,
     dates,

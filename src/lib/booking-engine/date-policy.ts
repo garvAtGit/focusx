@@ -16,6 +16,16 @@ export function calculateBookingDates(
   const selectedPlan = facts.activePlans.find(p => p.id === draft.planId);
   if (!selectedPlan) return null;
 
+  const isPlanChange = (draft.operation === 'UPGRADE_PLAN' || draft.operation === 'CHANGE_PLAN') && Boolean(facts.sourceBooking);
+
+  // If changing plan mid-cycle, the new plan runs for the REMAINING duration of the active cycle
+  // (starts now and ends at the exact same endTime as the original booking)
+  if (isPlanChange && facts.sourceBooking) {
+    const startsAt = facts.authoritativeCurrentTime;
+    const endsAt = facts.sourceBooking.endTime;
+    return { startsAt, endsAt };
+  }
+
   let startsAt: Date;
   
   // If the librarian explicitly requests a start date, honor it exactly.
@@ -24,14 +34,9 @@ export function calculateBookingDates(
   } else {
     // Otherwise, default to current time. If the student has an active booking that hasn't expired, append to it.
     const defaultStart = facts.authoritativeCurrentTime;
-    
-    if (draft.operation === 'UPGRADE_PLAN') {
-      startsAt = defaultStart;
-    } else {
-      startsAt = facts.currentBookingWindow && facts.currentBookingWindow.endsAt >= defaultStart
-        ? new Date(facts.currentBookingWindow.endsAt.getTime() + 1)
-        : defaultStart;
-    }
+    startsAt = facts.currentBookingWindow && facts.currentBookingWindow.endsAt >= defaultStart
+      ? new Date(facts.currentBookingWindow.endsAt.getTime() + 1)
+      : defaultStart;
   }
 
   const validityDays = selectedPlan.validityDays;

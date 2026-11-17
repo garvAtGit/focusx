@@ -101,8 +101,6 @@ export async function loadBookingFacts(
         studentId: draft.studentId,
         libraryId,
         status: 'CONFIRMED',
-        // Only consider bookings that are still active — past bookings must not
-        // be used as the chain base, or new plans would start in the past.
         endTime: { gt: authoritativeCurrentTime },
       },
       orderBy: { endTime: 'desc' },
@@ -117,20 +115,74 @@ export async function loadBookingFacts(
     }
   }
 
+  // 5b. Load Source Booking
+  let sourceBookingFact = null;
+  let sourcePlan = null;
+  if (draft.sourceBookingId) {
+    const sourceBooking = await db.booking.findUnique({
+      where: { id: draft.sourceBookingId },
+      select: {
+        id: true,
+        studentId: true,
+        libraryId: true,
+        planId: true,
+        seatId: true,
+        hasLocker: true,
+        standaloneLockerId: true,
+        startTime: true,
+        endTime: true,
+        status: true,
+        plan: true,
+      }
+    });
+    if (sourceBooking) {
+      const p = sourceBooking.plan;
+      sourcePlan = {
+        id: p.id,
+        libraryId: p.libraryId,
+        name: p.name,
+        type: p.type,
+        validityDays: p.validityDays,
+        durationHours: p.durationHours,
+        pricePaise: Math.round(p.price * 100),
+        discountPercentage: p.discount,
+        isActive: p.isActive
+      };
+      sourceBookingFact = {
+        id: sourceBooking.id,
+        studentId: sourceBooking.studentId,
+        libraryId: sourceBooking.libraryId,
+        planId: sourceBooking.planId,
+        seatId: sourceBooking.seatId,
+        hasLocker: sourceBooking.hasLocker,
+        standaloneLockerId: sourceBooking.standaloneLockerId,
+        startTime: sourceBooking.startTime,
+        endTime: sourceBooking.endTime,
+        status: sourceBooking.status as any,
+      };
+    }
+  }
+
   // 6. Calculate Snapshot Window for Availability Check
-  const validityDays = selectedPlan ? selectedPlan.validityDays : 30; // default assumption for checking
+  const validityDays = selectedPlan ? selectedPlan.validityDays : 30;
+  const isPlanChange = (draft.operation === "UPGRADE_PLAN" || draft.operation === "CHANGE_PLAN") && Boolean(sourceBookingFact);
   
   let startsAt: Date;
-  if (draft.requestedStart) {
+  let endsAt: Date;
+
+  if (isPlanChange && sourceBookingFact) {
+    startsAt = authoritativeCurrentTime;
+    endsAt = sourceBookingFact.endTime;
+  } else if (draft.requestedStart) {
     startsAt = draft.requestedStart;
+    endsAt = endOfDayIST(startsAt, Math.max(0, validityDays - 1));
   } else {
     const defaultStart = authoritativeCurrentTime;
-    startsAt = draft.operation !== "UPGRADE_PLAN" && currentBookingWindow && currentBookingWindow.endsAt >= defaultStart
+    startsAt = currentBookingWindow && currentBookingWindow.endsAt >= defaultStart
       ? new Date(currentBookingWindow.endsAt.getTime() + 1)
       : defaultStart;
+    endsAt = endOfDayIST(startsAt, Math.max(0, validityDays - 1));
   }
-  
-  const endsAt = endOfDayIST(startsAt, Math.max(0, validityDays - 1));
 
   // 7. Load Seat Availability Snapshot
   const seatAvailabilitySnapshot: Record<string, boolean> = {};
@@ -185,44 +237,6 @@ export async function loadBookingFacts(
     });
     if (student) {
       studentFact = { id: student.id, isActive: true };
-    }
-  }
-
-  // 10. Load Source Booking
-  let sourceBookingFact = null;
-  let sourcePlan = null;
-  if (draft.sourceBookingId) {
-    const sourceBooking = await db.booking.findUnique({
-      where: { id: draft.sourceBookingId },
-      select: {
-        id: true,
-        studentId: true,
-        libraryId: true,
-        planId: true,
-        seatId: true,
-        hasLocker: true,
-        standaloneLockerId: true,
-        startTime: true,
-        endTime: true,
-        status: true,
-        plan: true,
-      }
-    });
-    if (sourceBooking) {
-      const p = sourceBooking.plan;
-      sourcePlan = { id: p.id, libraryId: p.libraryId, name: p.name, type: p.type, validityDays: p.validityDays, durationHours: p.durationHours, pricePaise: Math.round(p.price * 100), discountPercentage: p.discount, isActive: p.isActive };
-      sourceBookingFact = {
-        id: sourceBooking.id,
-        studentId: sourceBooking.studentId,
-        libraryId: sourceBooking.libraryId,
-        planId: sourceBooking.planId,
-        seatId: sourceBooking.seatId,
-        hasLocker: sourceBooking.hasLocker,
-        standaloneLockerId: sourceBooking.standaloneLockerId,
-        startTime: sourceBooking.startTime,
-        endTime: sourceBooking.endTime,
-        status: sourceBooking.status as any,
-      };
     }
   }
 

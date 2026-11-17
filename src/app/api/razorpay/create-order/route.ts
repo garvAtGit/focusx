@@ -160,6 +160,18 @@ export async function POST(req: NextRequest) {
     })
     createdIntentId = intent.id
 
+    const isPlanChange = intent.operation === "UPGRADE_PLAN" || intent.operation === "CHANGE_PLAN";
+    if (intent.expectedAmountPaise === 0 && isPlanChange) {
+      const { confirmZeroCostBooking } = await import("@/lib/zero-cost-booking");
+      const result = await confirmZeroCostBooking(intent.referenceId);
+      return NextResponse.json({
+        ...result,
+        reference_id: intent.referenceId,
+        confirmed: result.status === "CONFIRMED",
+        zeroCost: true,
+      });
+    }
+
     if (
       intent.providerShortUrl
       && intent.holdExpiresAt

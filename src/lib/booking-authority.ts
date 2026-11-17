@@ -353,10 +353,11 @@ async function prepareSelection(
     paymentMethod: input.paymentMethod ?? null,
   }
 
-  if (input.operation === "UPGRADE_PLAN") {
+  const isPlanChange = input.operation === "UPGRADE_PLAN" || input.operation === "CHANGE_PLAN";
+  if (isPlanChange) {
     const source = input.sourceBookingId ? await tx.booking.findUnique({ where: { id: input.sourceBookingId } }) : null
-    if (!source || source.isPaused) throw new BookingAuthorityError("INVALID_BOOKING_STATE", "Resume your plan before upgrading.")
-    if ((source.amountDuePaise ?? 0) > 0) throw new BookingAuthorityError("INVALID_BOOKING_STATE", "Settle outstanding dues before upgrading.")
+    if (!source || source.isPaused) throw new BookingAuthorityError("INVALID_BOOKING_STATE", "Resume your plan before changing plans.")
+    if ((source.amountDuePaise ?? 0) > 0) throw new BookingAuthorityError("INVALID_BOOKING_STATE", "Settle outstanding dues before changing plans.")
   }
 
   // Load facts transactionally
@@ -366,8 +367,8 @@ async function prepareSelection(
   if (input.sourceBookingId && (!facts.sourceBooking || facts.sourceBooking.studentId !== input.studentId || facts.sourceBooking.libraryId !== input.libraryId || facts.sourceBooking.status !== "CONFIRMED")) {
     throw new BookingAuthorityError("INVALID_BOOKING_STATE", "The source booking is not available for this account.")
   }
-  if (draft.operation === "UPGRADE_PLAN" && (!facts.sourceBooking || facts.sourceBooking.endTime <= facts.authoritativeCurrentTime || facts.sourceBooking.startTime > facts.authoritativeCurrentTime)) {
-    throw new BookingAuthorityError("INVALID_BOOKING_STATE", "Only a current booking can be upgraded.")
+  if (isPlanChange && (!facts.sourceBooking || facts.sourceBooking.endTime <= facts.authoritativeCurrentTime || facts.sourceBooking.startTime > facts.authoritativeCurrentTime)) {
+    throw new BookingAuthorityError("INVALID_BOOKING_STATE", "Only a current booking can be changed.")
   }
 
   // Pure evaluation
@@ -405,7 +406,7 @@ async function prepareSelection(
     operation: draft.operation,
   }
 
-  if (draft.operation !== 'RENEW') {
+  if (draft.operation !== 'RENEW' && !isPlanChange) {
     await assertNoPendingStudentConflict(tx, prepared)
   }
   return prepared
@@ -1002,21 +1003,22 @@ async function createConfirmedBookingForIntent(
   await lockStudentTimeline(tx, intent.studentId, intent.libraryId)
   const source = intent.sourceBookingId
     ? await tx.booking.findUnique({ where: { id: intent.sourceBookingId } }) : null
-  if (intent.operation === 'UPGRADE_PLAN' && (!source || source.status !== 'CONFIRMED' || source.studentId !== intent.studentId || source.libraryId !== intent.libraryId || source.isPaused || (source.amountDuePaise ?? 0) > 0 || source.endTime <= intent.startsAt)) {
+  const isPlanChange = intent.operation === 'UPGRADE_PLAN' || intent.operation === 'CHANGE_PLAN';
+  if (isPlanChange && (!source || source.status !== 'CONFIRMED' || source.studentId !== intent.studentId || source.libraryId !== intent.libraryId || source.isPaused || (source.amountDuePaise ?? 0) > 0 || source.endTime <= intent.startsAt)) {
     throw new BookingAuthorityError('RESOURCE_TAKEN', 'The original plan changed before payment was confirmed')
   }
   const overlapping = await tx.booking.findFirst({ where: {
     studentId: intent.studentId, libraryId: intent.libraryId, status: 'CONFIRMED',
-    id: intent.operation === 'UPGRADE_PLAN' ? { not: source!.id } : undefined,
+    id: isPlanChange ? { not: source!.id } : undefined,
     startTime: { lt: intent.endsAt }, endTime: { gt: intent.startsAt },
   }, select: { id: true } })
   if (overlapping) throw new BookingAuthorityError('RESOURCE_TAKEN', 'Another confirmed plan overlaps this booking')
   await assertNoBookingConflict(tx, {
     seatId: intent.seatId, standaloneLockerId: intent.standaloneLockerId,
     startsAt: intent.startsAt, endsAt: intent.endsAt,
-  }, intent.operation === 'UPGRADE_PLAN' ? source!.id : undefined)
+  }, isPlanChange ? source!.id : undefined)
   // Replacement and original-plan truncation commit together, only after payment.
-  if (intent.operation === 'UPGRADE_PLAN') {
+  if (isPlanChange) {
     await tx.booking.update({ where: { id: source!.id }, data: { endTime: intent.startsAt, status: 'COMPLETED' } })
   }
 
@@ -1478,21 +1480,24 @@ export async function confirmPendingReceptionBooking(
     }
 
     await lockStudentTimeline(tx, booking.studentId, booking.libraryId)
-    if (booking.bookingIntent?.operation === 'UPGRADE_PLAN') {
-      const source = await tx.booking.findUnique({ where: { id: booking.bookingIntent.sourceBookingId! } })
-      if (!source || source.studentId !== booking.studentId || source.libraryId !== booking.libraryId || source.status !== 'CONFIRMED' || source.isPaused || (source.amountDuePaise ?? 0) > 0 || source.endTime <= booking.startTime) throw new BookingAuthorityError('INVALID_BOOKING_STATE', 'Original plan changed; review this upgrade before collecting payment')
+    const isPlanChange = (booking.bookingIntent?.operation === 'UPGRADE_PLAN' || booking.bookingIntent?.operation === 'CHANGE_PLAN') && Boolean(booking.bookingIntent?.sourceBookingId);
+    if (isPlanChange && booking.bookingIntent?.sourceBookingId) {
+      const source = await tx.booking.findUnique({ where: { id: booking.bookingIntent.sourceBookingId } })
+      if (!source || source.studentId !== booking.studentId || source.libraryId !== booking.libraryId || source.status !== 'CONFIRMED' || source.isPaused || (source.amountDuePaise ?? 0) > 0 || source.endTime <= booking.startTime) throw new BookingAuthorityError('INVALID_BOOKING_STATE', 'Original plan changed; review this change before collecting payment')
       await tx.booking.update({ where: { id: source.id }, data: { status: 'COMPLETED', endTime: booking.startTime } })
     }
-    const window = await bookingWindow(
-      tx,
-      {
-        studentId: booking.studentId,
-        libraryId: booking.libraryId,
-        planId: booking.planId,
-        requestedStart: booking.startTime,
-      },
-      booking.plan.validityDays,
-    )
+    const window = isPlanChange
+      ? { startsAt: booking.startTime, endsAt: booking.endTime }
+      : await bookingWindow(
+          tx,
+          {
+            studentId: booking.studentId,
+            libraryId: booking.libraryId,
+            planId: booking.planId,
+            requestedStart: booking.startTime,
+          },
+          booking.plan.validityDays,
+        )
     await assertNoBookingConflict(
       tx,
       {
@@ -1500,7 +1505,7 @@ export async function confirmPendingReceptionBooking(
         standaloneLockerId: booking.standaloneLockerId,
         ...window,
       },
-      booking.id,
+      isPlanChange ? (booking.bookingIntent?.sourceBookingId || booking.id) : booking.id,
     )
 
     const intent =

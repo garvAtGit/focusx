@@ -569,7 +569,8 @@ export async function renewPlan(
   newSeatId?: string, 
   startDate?: Date,
   hasLocker?: boolean,
-  standaloneLockerId?: string | null
+  standaloneLockerId?: string | null,
+  operation: 'RENEW' | 'CHANGE_PLAN' = 'RENEW'
 ) {
   const session = await getSession();
   if (!session) return { error: "Unauthorized" };
@@ -604,6 +605,9 @@ export async function renewPlan(
     return { error: "Please select a seat for this reserved (fixed-seat) plan." };
   }
 
+  const isPlanChange = operation === 'CHANGE_PLAN' || (newPlanId !== undefined && newPlanId !== booking.planId);
+  const effectiveOperation = isPlanChange ? 'CHANGE_PLAN' : 'RENEW';
+
   try {
     await createManualConfirmedBooking({
       studentId: booking.studentId,
@@ -611,26 +615,25 @@ export async function renewPlan(
       planId: targetPlan.id,
       seatId: targetSeatId,
       sourceBookingId: booking.id,
-      operation: 'RENEW',
+      operation: effectiveOperation,
       standaloneLockerId: standaloneLockerId !== undefined ? standaloneLockerId : booking.standaloneLockerId,
       hasLocker: hasLocker !== undefined ? hasLocker : booking.hasLocker,
       requestedStart: startDate,
-      source: BookingIntentSource.RENEWAL,
-      paymentRef: manualPaymentReference(`RENEWAL_${paymentMethod}`),
+      source: effectiveOperation === 'CHANGE_PLAN' ? BookingIntentSource.MANUAL : BookingIntentSource.RENEWAL,
+      paymentRef: manualPaymentReference(`${effectiveOperation}_${paymentMethod}`),
     });
   } catch (error) {
     if (
       error instanceof BookingAuthorityError
       && error.code === "RESOURCE_TAKEN"
     ) {
-      return { error: "Cannot renew: Seat is already booked for the extended duration" };
+      return { error: isPlanChange ? "Cannot change plan: Seat or locker is already booked for this period" : "Cannot renew: Seat is already booked for the extended duration" };
     }
     return { error: error instanceof Error ? error.message : "Operation failed" };
   }
 
   // Record human-readable staff activity
   const studentUser = await prisma.user.findUnique({ where: { id: booking.studentId }, select: { name: true } });
-  const isPlanChange = booking.planId !== targetPlan.id;
   const description = isPlanChange
     ? `Changed ${studentUser?.name || "student"}'s plan to ${targetPlan.name} from ${booking.plan.name}`
     : `Renewed membership for ${studentUser?.name || "student"} with ${targetPlan.name} plan`;
