@@ -3,6 +3,7 @@ import { getActiveLibrary } from '@/lib/dashboard-utils';
 import prisma from '@/lib/prisma';
 import { redirect } from 'next/navigation';
 import { TicketsDashboardClient } from './TicketsDashboardClient';
+import { getTicketMessageWhereClause } from '@/lib/ticket-query-helpers';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
@@ -28,12 +29,17 @@ export default async function DashboardTicketsPage() {
         select: { name: true, phone: true, profilePhotoUrl: true },
       },
       messages: {
+        where: getTicketMessageWhereClause(false),
         orderBy: { createdAt: 'desc' },
         take: 1,
         select: { content: true, senderRole: true, createdAt: true },
       },
       _count: {
-        select: { messages: true },
+        select: {
+          messages: {
+            where: getTicketMessageWhereClause(false),
+          },
+        },
       },
     },
   });

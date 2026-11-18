@@ -3,6 +3,7 @@ import { getActiveLibrary } from '@/lib/dashboard-utils';
 import prisma from '@/lib/prisma';
 import { notFound, redirect } from 'next/navigation';
 import { TicketThreadClient } from './TicketThreadClient';
+import { getTicketMessageWhereClause } from '@/lib/ticket-query-helpers';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
@@ -20,6 +21,8 @@ export default async function TicketDetailPage({
 
   const { id } = await params;
   if (!id) notFound();
+
+  const isAdmin = session.role === 'ADMIN';
 
   const ticket = await prisma.supportTicket.findUnique({
     where: { id },
@@ -41,6 +44,7 @@ export default async function TicketDetailPage({
         },
       },
       messages: {
+        where: getTicketMessageWhereClause(isAdmin),
         orderBy: { createdAt: 'asc' },
         include: {
           sender: {
@@ -62,7 +66,6 @@ export default async function TicketDetailPage({
 
   // Permission check:
   // Must be an ADMIN, the ticket creator, or belong to the ticket's library.
-  const isAdmin = session.role === 'ADMIN';
   const isCreator = session.userId === ticket.creatorId;
 
   if (!isAdmin && !isCreator) {
