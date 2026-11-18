@@ -46,6 +46,7 @@ export interface TicketItem {
   deviceMac: string | null;
   createdAt: Date | string;
   updatedAt: Date | string;
+  escalatedAt?: Date | string | null;
   creator: {
     name: string;
     phone: string | null;
@@ -107,6 +108,11 @@ const STATUS_META: Record<
     badgeClass: 'bg-amber-500/15 text-amber-500 border-amber-500/30 font-semibold',
     dotClass: 'bg-amber-500',
   },
+  BOT_REPLIED: {
+    label: 'Bot Replied',
+    badgeClass: 'bg-cyan-500/15 text-cyan-500 border-cyan-500/30 font-semibold',
+    dotClass: 'bg-cyan-500',
+  },
   RESOLVED: {
     label: 'Resolved',
     badgeClass: 'bg-green-500/10 text-green-500 border-green-500/20',
@@ -156,6 +162,7 @@ export function TicketsDashboardClient({
       open: tickets.filter((t) => t.status === 'OPEN').length,
       inProgress: tickets.filter((t) => t.status === 'IN_PROGRESS').length,
       awaiting: tickets.filter((t) => t.status === 'WAITING_ON_LIBRARIAN').length,
+      botReplied: tickets.filter((t) => t.status === 'BOT_REPLIED').length,
       resolved: tickets.filter((t) => t.status === 'RESOLVED' || t.status === 'CLOSED').length,
     };
   }, [tickets]);
@@ -167,6 +174,7 @@ export function TicketsDashboardClient({
       if (selectedStatusTab === 'OPEN' && t.status !== 'OPEN') return false;
       if (selectedStatusTab === 'IN_PROGRESS' && t.status !== 'IN_PROGRESS') return false;
       if (selectedStatusTab === 'WAITING' && t.status !== 'WAITING_ON_LIBRARIAN') return false;
+      if (selectedStatusTab === 'BOT_REPLIED' && t.status !== 'BOT_REPLIED') return false;
       if (selectedStatusTab === 'RESOLVED' && t.status !== 'RESOLVED' && t.status !== 'CLOSED') return false;
 
       // Category filter
@@ -251,6 +259,7 @@ export function TicketsDashboardClient({
             { id: 'OPEN', label: 'Open', count: counts.open },
             { id: 'IN_PROGRESS', label: 'In Progress', count: counts.inProgress },
             { id: 'WAITING', label: 'Awaiting Your Reply', count: counts.awaiting },
+            { id: 'BOT_REPLIED', label: 'Bot Replied', count: counts.botReplied },
             { id: 'RESOLVED', label: 'Resolved / Closed', count: counts.resolved },
           ].map((tab) => (
             <button
@@ -375,6 +384,13 @@ export function TicketsDashboardClient({
                       <span className={`px-2 py-0.5 rounded-md text-[11px] border ${priority.badgeClass}`}>
                         {priority.label}
                       </span>
+
+                      {/* Escalation Badge */}
+                      {ticket.escalatedAt && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold border bg-rose-500/10 text-rose-500 border-rose-500/20 animate-pulse">
+                          ⚡ Escalated
+                        </span>
+                      )}
                     </div>
 
                     <h3 className="text-sm font-bold text-foreground group-hover:text-primary transition-colors line-clamp-1">
@@ -384,7 +400,9 @@ export function TicketsDashboardClient({
                     {lastMsg && (
                       <p className="text-xs text-muted-foreground line-clamp-1 flex items-center gap-1.5">
                         <span className="font-semibold text-foreground/80">
-                          {lastMsg.senderRole === 'SUPPORT' || lastMsg.senderRole === 'ADMIN'
+                          {lastMsg.senderRole === 'BOT'
+                            ? 'FocusX Bot:'
+                            : lastMsg.senderRole === 'SUPPORT' || lastMsg.senderRole === 'ADMIN'
                             ? 'FocusX Support:'
                             : 'You:'}
                         </span>

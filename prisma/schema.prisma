@@ -1023,6 +1023,10 @@ model SupportTicket {
   deviceMac    String?
   resolvedAt   DateTime?
   closedAt     DateTime?
+  escalatedAt    DateTime?
+  botProcessedAt DateTime?
+  botAction      String?
+  autoResolved   Boolean        @default(false)
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 
@@ -1032,6 +1036,8 @@ model SupportTicket {
   @@index([creatorId])
   @@index([status, priority])
   @@index([ticketNumber])
+  @@index([escalatedAt])
+  @@index([botProcessedAt])
 }
 
 model TicketMessage {
@@ -1040,7 +1046,7 @@ model TicketMessage {
   ticket         SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   senderId       String
   sender         User          @relation(fields: [senderId], references: [id], onDelete: Cascade)
-  senderRole     String        @default("LIBRARIAN") // LIBRARIAN, STAFF, ADMIN, SUPPORT
+  senderRole     String        @default("LIBRARIAN") // LIBRARIAN, STAFF, ADMIN, SUPPORT, BOT, SYSTEM
   content        String
   attachmentUrls String[]      @default([])
   isInternalNote Boolean       @default(false)
@@ -1070,6 +1076,7 @@ enum TicketStatus {
   OPEN
   IN_PROGRESS
   WAITING_ON_LIBRARIAN
+  BOT_REPLIED
   RESOLVED
   CLOSED
 }

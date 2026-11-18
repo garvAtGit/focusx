@@ -11,6 +11,8 @@ export const metadata: Metadata = {
   description: 'Raise and manage B2B operations and hardware support tickets for your library.',
 };
 
+export const maxDuration = 30;
+
 export default async function DashboardTicketsPage() {
   const session = await getSession();
   if (!session) redirect('/login');

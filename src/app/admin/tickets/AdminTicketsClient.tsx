@@ -38,6 +38,7 @@ export interface AdminTicketItem {
   createdAt: string | Date;
   updatedAt: string | Date;
   resolvedAt: string | Date | null;
+  escalatedAt?: string | Date | null;
   library: {
     id: string;
     name: string;
@@ -80,6 +81,7 @@ const STATUS_BADGES: Record<TicketStatus, { label: string; badgeClass: string; d
   OPEN: { label: 'Open', badgeClass: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20', dotClass: 'bg-emerald-500' },
   IN_PROGRESS: { label: 'In Progress', badgeClass: 'bg-blue-500/10 text-blue-500 border-blue-500/20', dotClass: 'bg-blue-500' },
   WAITING_ON_LIBRARIAN: { label: 'Waiting on Library', badgeClass: 'bg-amber-500/10 text-amber-500 border-amber-500/20', dotClass: 'bg-amber-500' },
+  BOT_REPLIED: { label: 'Bot Replied', badgeClass: 'bg-cyan-500/10 text-cyan-500 border-cyan-500/20', dotClass: 'bg-cyan-500' },
   RESOLVED: { label: 'Resolved', badgeClass: 'bg-green-500/10 text-green-500 border-green-500/20', dotClass: 'bg-green-500' },
   CLOSED: { label: 'Closed', badgeClass: 'bg-slate-500/10 text-slate-400 border-slate-500/20', dotClass: 'bg-slate-400' },
 };
@@ -234,6 +236,7 @@ export function AdminTicketsClient({ tickets }: { tickets: AdminTicketItem[] }) 
               { key: 'OPEN', label: 'Open' },
               { key: 'IN_PROGRESS', label: 'In Progress' },
               { key: 'WAITING_ON_LIBRARIAN', label: 'Waiting on Library' },
+              { key: 'BOT_REPLIED', label: 'Bot Replied' },
               { key: 'RESOLVED', label: 'Resolved' },
               { key: 'CLOSED', label: 'Closed' },
             ] as const
@@ -303,6 +306,11 @@ export function AdminTicketsClient({ tickets }: { tickets: AdminTicketItem[] }) 
                       <span className={`w-1.5 h-1.5 rounded-full ${stat.dotClass}`} />
                       {stat.label}
                     </span>
+                    {t.escalatedAt && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold border bg-rose-500/10 text-rose-500 border-rose-500/20 animate-pulse">
+                        ⚡ Escalated
+                      </span>
+                    )}
                   </div>
 
                   <h3 className="text-sm font-semibold text-foreground group-hover:text-primary transition-colors truncate">
@@ -338,7 +346,7 @@ export function AdminTicketsClient({ tickets }: { tickets: AdminTicketItem[] }) 
 
                   {lastMsg && (
                     <p className="text-xs text-muted-foreground/80 line-clamp-1 italic pt-0.5">
-                      Latest: &ldquo;{lastMsg.content}&rdquo;
+                      Latest {lastMsg.senderRole === 'BOT' ? '(FocusX Bot): ' : ''}&ldquo;{lastMsg.content}&rdquo;
                     </p>
                   )}
                 </div>

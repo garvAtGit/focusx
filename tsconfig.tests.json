@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "tests/ticket-foundation.test.ts",
+    "tests/ticket-bot-replay.test.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}
+

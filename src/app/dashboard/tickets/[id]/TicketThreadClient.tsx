@@ -24,10 +24,12 @@ import {
   HelpCircle,
   CornerDownRight,
   Info,
+  Bot,
+  ShieldAlert,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { addTicketMessageAction, updateTicketStatusAction } from '@/app/actions/ticket-actions';
+import { addTicketMessageAction, updateTicketStatusAction, reopenTicketAction } from '@/app/actions/ticket-actions';
 import { TicketCategory, TicketPriority, TicketStatus } from '@prisma/client';
 import toast from 'react-hot-toast';
 
@@ -44,6 +46,10 @@ export interface TicketDetail {
   deviceMac: string | null;
   resolvedAt: Date | string | null;
   closedAt: Date | string | null;
+  escalatedAt?: Date | string | null;
+  botProcessedAt?: Date | string | null;
+  autoResolved?: boolean | null;
+  botAction?: string | null;
   createdAt: Date | string;
   updatedAt: Date | string;
   library: {
@@ -112,6 +118,11 @@ const STATUS_META: Record<
     badgeClass: 'bg-amber-500/15 text-amber-500 border-amber-500/30 font-semibold',
     dotClass: 'bg-amber-500',
   },
+  BOT_REPLIED: {
+    label: 'Bot Replied',
+    badgeClass: 'bg-cyan-500/15 text-cyan-500 border-cyan-500/30 font-semibold',
+    dotClass: 'bg-cyan-500',
+  },
   RESOLVED: {
     label: 'Resolved',
     badgeClass: 'bg-green-500/10 text-green-500 border-green-500/20',
@@ -154,7 +165,26 @@ export function TicketThreadClient({
   const [replyText, setReplyText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [isReopening, setIsReopening] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const handleReopen = async (reason?: string) => {
+    setIsReopening(true);
+    try {
+      const res = await reopenTicketAction(ticket.id, reason);
+      if (res.success) {
+        setStatus('OPEN');
+        toast.success('Ticket reopened for human support.');
+        router.refresh();
+      } else {
+        toast.error(res.error || 'Failed to reopen ticket.');
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to reopen ticket.');
+    } finally {
+      setIsReopening(false);
+    }
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -363,6 +393,36 @@ export function TicketThreadClient({
                 );
               }
 
+              if (msg.senderRole === 'BOT') {
+                return (
+                  <div key={msg.id || index} className="my-3.5 rounded-xl border border-cyan-500/30 bg-cyan-950/15 p-4 shadow-sm">
+                    <div className="flex items-center justify-between pb-2 mb-2 border-b border-cyan-500/20">
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-lg bg-cyan-500/20 text-cyan-400 flex items-center justify-center">
+                          <Bot className="w-3.5 h-3.5" />
+                        </div>
+                        <span className="font-bold text-xs text-foreground">FocusX Autonomous Assistant</span>
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-400 font-semibold border border-cyan-500/30">
+                          AI Bot
+                        </span>
+                        {isAdminView && msg.isInternalNote && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/30 flex items-center gap-1">
+                            <ShieldAlert className="w-3 h-3 text-amber-400" />
+                            Internal / shadow
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-muted-foreground">
+                        {formatISTDateTime(msg.createdAt)}
+                      </span>
+                    </div>
+                    <div className="text-xs text-foreground/90 whitespace-pre-wrap leading-relaxed">
+                      {msg.content}
+                    </div>
+                  </div>
+                );
+              }
+
               const isSupport = msg.senderRole === 'SUPPORT' || msg.senderRole === 'ADMIN';
               const isMe = msg.senderId === sessionUserId;
 
@@ -419,6 +479,26 @@ export function TicketThreadClient({
 
           {/* Composer at Bottom */}
           <div className="p-3 sm:p-4 border-t border-border bg-muted/15">
+            {/* Reopen banner if bot replied or resolved */}
+            {(status === 'BOT_REPLIED' || (status === 'RESOLVED' && Boolean(ticket.botProcessedAt))) && (
+              <div className="mb-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>Still having this issue or need human administrator review?</span>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={isReopening}
+                  onClick={() => handleReopen('Assistance required from human administrator.')}
+                  className="text-xs h-7 border-amber-500/30 text-amber-600 dark:text-amber-400 hover:bg-amber-500/15"
+                >
+                  {isReopening ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+                  Re-open for Human Admin
+                </Button>
+              </div>
+            )}
+
             {status === 'CLOSED' ? (
               <div className="p-3 text-center rounded-xl bg-muted/40 border border-border text-xs text-muted-foreground flex items-center justify-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-green-500" />
@@ -426,9 +506,21 @@ export function TicketThreadClient({
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => handleStatusChange('OPEN')}
+                  disabled={isReopening || isUpdatingStatus}
+                  onClick={() => {
+                    const isBotHandled = Boolean(
+                      ticket.autoResolved ||
+                      (ticket.botAction && !ticket.botAction.startsWith('SHADOW_') && ticket.botAction !== 'UNPROCESSED')
+                    );
+                    if (isBotHandled) {
+                      handleReopen('Reopened closed bot-handled ticket for human assistance.');
+                    } else {
+                      handleStatusChange('OPEN');
+                    }
+                  }}
                   className="text-xs h-7 ml-2"
                 >
+                  {isReopening ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
                   Reopen Ticket
                 </Button>
               </div>
