@@ -63,72 +63,81 @@ export async function GET(request: Request) {
     }
 
     let createdCount = 0;
+    let failedCount = 0;
     const affectedLibraries = new Set<string>();
 
     for (const { studentId, libraryId } of pendingCheckouts) {
-      affectedLibraries.add(libraryId);
+      try {
+        affectedLibraries.add(libraryId);
 
-      // Execute checkout in an atomic transaction to avoid race conditions
-      await prisma.$transaction(async (tx) => {
-        // Double-check latest state inside transaction
-        const latestLog = await tx.checkinLog.findFirst({
-          where: { studentId, libraryId },
-          orderBy: { timestamp: 'desc' },
-          select: { status: true }
-        });
+        // Execute checkout in an atomic transaction to avoid race conditions
+        await prisma.$transaction(async (tx) => {
+          // Double-check latest state inside transaction
+          const latestLog = await tx.checkinLog.findFirst({
+            where: { studentId, libraryId },
+            orderBy: { timestamp: 'desc' },
+            select: { status: true }
+          });
 
-        if (latestLog && latestLog.status !== 'CHECK_IN') {
-          return;
-        }
-
-        const checkoutLog = await tx.checkinLog.create({
-          data: {
-            studentId,
-            libraryId,
-            status: 'CHECK_OUT',
-            isOfflineSync: false,
-            timestamp: now
+          if (latestLog && latestLog.status !== 'CHECK_IN') {
+            return;
           }
-        });
 
-        // Also record in EntryLog so physical access logs reflect checkout
-        await tx.entryLog.create({
-          data: {
-            libraryId,
-            userId: studentId,
-            timestamp: now,
-            status: 'OUT',
-            reason: 'AUTO_CHECKOUT'
-          }
-        });
-
-        // Publish to realtime outbox so live monitors and mobile update immediately
-        const logicalEventId = `autocheckout_${checkoutLog.id}`;
-        await tx.realtimeOutbox.create({
-          data: {
-            eventId: logicalEventId,
-            checkinLogId: checkoutLog.id,
-            studentId,
-            type: "REALTIME",
-            payload: {
-              type: 'ATTENDANCE_UPDATE',
-              action: 'CHECK_OUT',
-              status: 'CHECK_OUT',
+          const checkoutLog = await tx.checkinLog.create({
+            data: {
               studentId,
               libraryId,
-              timestamp: now.toISOString(),
+              status: 'CHECK_OUT',
+              isOfflineSync: false,
+              timestamp: now
+            }
+          });
+
+          // Also record in EntryLog so physical access logs reflect checkout
+          await tx.entryLog.create({
+            data: {
+              libraryId,
+              userId: studentId,
+              timestamp: now,
+              status: 'OUT',
               reason: 'AUTO_CHECKOUT'
             }
-          }
+          });
+
+          // Publish to realtime outbox so live monitors and mobile update immediately
+          const logicalEventId = `autocheckout_${checkoutLog.id}`;
+          await tx.realtimeOutbox.create({
+            data: {
+              eventId: logicalEventId,
+              checkinLogId: checkoutLog.id,
+              studentId,
+              type: "REALTIME",
+              payload: {
+                type: 'ATTENDANCE_UPDATE',
+                action: 'CHECK_OUT',
+                status: 'CHECK_OUT',
+                studentId,
+                libraryId,
+                timestamp: now.toISOString(),
+                reason: 'AUTO_CHECKOUT'
+              }
+            }
+          });
+
+          createdCount++;
         });
 
-        createdCount++;
-      });
-
-      // Calculate overstay/duration & notify (non-blocking)
-      checkDurationAndNotify(studentId, libraryId).catch((err) => {
-        console.error(`[Auto-Checkout] Duration notification failed for ${studentId}:`, err);
-      });
+        // Calculate overstay/duration & notify (non-blocking)
+        checkDurationAndNotify(studentId, libraryId).catch((err) => {
+          console.error(`[Auto-Checkout] Duration notification failed for ${studentId}:`, err);
+        });
+      } catch (studentErr) {
+        failedCount++;
+        Sentry.captureException(studentErr, {
+          tags: { feature: 'cron-auto-checkout', studentId, libraryId }
+        });
+        console.error(`[Auto-Checkout] Transaction failed for student ${studentId}:`, studentErr);
+      }
     }
 
     // Invalidate runtime cache and increment revision for all affected libraries
@@ -143,12 +152,19 @@ export async function GET(request: Request) {
       })
     );
 
-    return NextResponse.json({
-      success: true,
-      checkedOutCount: createdCount,
-      librariesProcessed: affectedLibraries.size,
-      timestamp: now.toISOString()
-    });
+    return NextResponse.json(
+      {
+        success: failedCount === 0,
+        hasFailures: failedCount > 0,
+        checkedOutCount: createdCount,
+        failedCount,
+        librariesProcessed: affectedLibraries.size,
+        timestamp: now.toISOString(),
+      },
+      // Vercel Cron treats any 2xx response (including 207) as SUCCESS without firing alerts.
+      // We return 500 when failedCount > 0 so Vercel Cron monitoring flags the job as failed.
+      { status: failedCount > 0 ? 500 : 200 }
+    );
   } catch (error) {
     if (isNextControlFlowError(error)) throw error;
     Sentry.captureException(error, { tags: { feature: 'cron-auto-checkout' } });
